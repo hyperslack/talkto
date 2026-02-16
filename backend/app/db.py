@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC
 
 from sqlalchemy import text
@@ -5,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from backend.app.config import DATA_DIR, DATABASE_URL
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -32,13 +35,13 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db() -> None:
-    """Create all tables and apply pragmas."""
+    """Run Alembic migrations, apply SQLite pragmas, and seed defaults."""
     import backend.app.models  # noqa: F401 — ensure models are registered
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     async with engine.begin() as conn:
-        # SQLite performance & safety pragmas
+        # SQLite performance & safety pragmas (per-connection, not schema)
         await conn.execute(text("PRAGMA journal_mode = WAL"))
         await conn.execute(text("PRAGMA synchronous = NORMAL"))
         await conn.execute(text("PRAGMA foreign_keys = ON"))
@@ -46,10 +49,52 @@ async def init_db() -> None:
         await conn.execute(text("PRAGMA cache_size = -64000"))
         await conn.execute(text("PRAGMA temp_store = MEMORY"))
 
-        await conn.run_sync(Base.metadata.create_all)
+    # Run Alembic migrations to HEAD (sync — uses separate sync engine)
+    _run_migrations()
 
     # Seed default channels
     await _seed_defaults()
+
+
+def _run_migrations() -> None:
+    """Run Alembic migrations using a sync engine.
+
+    Uses a separate sync SQLite connection for Alembic (standard pattern
+    for async SQLAlchemy projects) to avoid event loop conflicts.
+
+    Handles existing databases created by ``create_all`` (before Alembic was
+    added) by stamping them at the initial revision.
+    """
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    alembic_cfg = Config(str(project_root / "alembic.ini"))
+    alembic_cfg.set_main_option("script_location", str(project_root / "migrations"))
+
+    # Use sync SQLite URL for migrations (strip 'aiosqlite' driver)
+    sync_url = DATABASE_URL.replace("+aiosqlite", "")
+    alembic_cfg.set_main_option("sqlalchemy.url", sync_url)
+
+    sync_engine = create_engine(sync_url)
+    with sync_engine.begin() as connection:
+        alembic_cfg.attributes["connection"] = connection
+        inspector = inspect(connection)
+        tables = inspector.get_table_names()
+
+        # If tables exist but no alembic_version, this is a pre-migration DB
+        if tables and "alembic_version" not in tables:
+            logger.info("Existing database found without migration history — stamping HEAD.")
+            command.stamp(alembic_cfg, "head")
+        else:
+            logger.info("Running database migrations...")
+            command.upgrade(alembic_cfg, "head")
+            logger.info("Database migrations complete.")
+
+    sync_engine.dispose()
 
 
 async def _seed_defaults() -> None:

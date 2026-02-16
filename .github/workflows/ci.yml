@@ -28,7 +28,7 @@ jobs:
         run: uv sync --dev
 
       - name: Lint (ruff)
-        run: uv run ruff check backend/ cli/
+        run: uv run ruff check backend/ cli/ migrations/
 
       - name: Test (pytest)
         run: uv run pytest --cov --cov-report=term-missing

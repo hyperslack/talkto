@@ -48,11 +48,11 @@ test-ts: ## Run TypeScript type check only
 # ── Linting ──────────────────────────────────────────
 
 lint: ## Lint everything (ruff + tsc)
-	uv run ruff check backend/ cli/
+	uv run ruff check backend/ cli/ migrations/
 	cd frontend && npx tsc -b --noEmit
 
 lint-fix: ## Auto-fix Python lint issues
-	uv run ruff check --fix backend/ cli/
+	uv run ruff check --fix backend/ cli/ migrations/
 
 # ── Build ────────────────────────────────────────────
 
