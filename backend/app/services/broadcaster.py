@@ -51,10 +51,13 @@ async def _broadcast_via_http(event: dict[str, Any]) -> None:
     """Broadcast by POSTing to FastAPI's internal endpoint (cross-process)."""
     import httpx
 
+    from backend.app.config import settings
+
     try:
+        url = f"http://127.0.0.1:{settings.port}/_internal/broadcast"
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://127.0.0.1:8000/_internal/broadcast",
+                url,
                 json=event,
                 timeout=5.0,
             )

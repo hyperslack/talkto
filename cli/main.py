@@ -1,14 +1,16 @@
 """TalkTo CLI — start/stop the platform, generate MCP configs."""
+
 import json
 import os
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 import typer
 import uvicorn
+
+from backend.app.config import settings
 
 app = typer.Typer(
     help="TalkTo - Slack for AI Agents",
@@ -17,7 +19,7 @@ app = typer.Typer(
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
-PIDFILE = PROJECT_ROOT / "data" / "talkto.pid"
+PIDFILE = settings.data_dir / "talkto.pid"
 
 
 def _find_vite_bin() -> list[str]:
@@ -32,13 +34,13 @@ def _find_vite_bin() -> list[str]:
 def start(
     api_only: bool = typer.Option(False, "--api-only", help="Only start the API server"),
     no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open browser"),
-    port: int = typer.Option(8000, "--port", "-p", help="API server port"),
+    port: int = typer.Option(settings.port, "--port", "-p", help="API server port"),
 ) -> None:
     """Start TalkTo — boots FastAPI + Vite dev server.
 
     Both servers run with hot reload enabled:
       - Backend: uvicorn --reload watches backend/ and prompts/
-      - Frontend: Vite HMR on port 3000
+      - Frontend: Vite HMR on the configured frontend port
 
     The Vite dev server proxies /api and /ws to the FastAPI backend.
     """
@@ -47,10 +49,11 @@ def start(
 
     pids: list[int] = []
     vite_proc = None
+    fe_port = str(settings.frontend_port)
 
     # Start Vite dev server (unless api-only)
     if not api_only and FRONTEND_DIR.exists():
-        vite_cmd = _find_vite_bin() + ["--port", "3000", "--host"]
+        vite_cmd = _find_vite_bin() + ["--port", fe_port, "--host"]
         typer.secho("Starting Vite dev server...", fg=typer.colors.CYAN)
         vite_proc = subprocess.Popen(
             vite_cmd,
@@ -70,17 +73,20 @@ def start(
 
     # Auto-open browser after a short delay
     if not no_open and not api_only:
+
         def _open_browser() -> None:
             time.sleep(3)
             import webbrowser
-            webbrowser.open("http://localhost:3000")
+
+            webbrowser.open(f"http://localhost:{fe_port}")
 
         import threading
+
         threading.Thread(target=_open_browser, daemon=True).start()
 
     typer.echo("")
     typer.secho("TalkTo is starting up", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  UI:      http://localhost:3000")
+    typer.echo(f"  UI:      http://localhost:{fe_port}")
     typer.echo(f"  API:     http://localhost:{port}")
     typer.echo(f"  API docs: http://localhost:{port}/docs")
     typer.echo(f"  Health:  http://localhost:{port}/api/health")
@@ -140,7 +146,7 @@ def mcp_config(
     project_path: str = typer.Argument(
         ..., help="Absolute path to the project the agent is working on"
     ),
-    port: int = typer.Option(8000, "--port", "-p", help="API server port"),
+    port: int = typer.Option(settings.port, "--port", "-p", help="API server port"),
 ) -> None:
     """Generate MCP server config JSON for connecting an agent.
 
@@ -196,7 +202,7 @@ def status() -> None:
 
     # Check API
     try:
-        resp = httpx.get("http://localhost:8000/api/health", timeout=3)
+        resp = httpx.get(f"http://localhost:{settings.port}/api/health", timeout=3)
         data = resp.json()
         typer.secho("API server:  running", fg=typer.colors.GREEN)
         typer.echo(f"  WebSocket clients: {data.get('ws_clients', '?')}")
@@ -205,7 +211,7 @@ def status() -> None:
 
     # Check Vite
     try:
-        resp = httpx.get("http://localhost:3000", timeout=3)
+        resp = httpx.get(f"http://localhost:{settings.frontend_port}", timeout=3)
         typer.secho("Vite server: running", fg=typer.colors.GREEN)
     except Exception:
         typer.secho("Vite server: not running", fg=typer.colors.RED)

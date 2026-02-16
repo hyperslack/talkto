@@ -1,4 +1,5 @@
 """Integration tests for WebSocket functionality."""
+
 import json
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -24,6 +25,7 @@ async def test_health_endpoint_includes_ws_count():
         data = resp.json()
         assert "ws_clients" in data
         assert data["ws_clients"] == "0"
+        assert "database" in data
 
 
 def test_websocket_connect_disconnect(client):
@@ -40,19 +42,27 @@ def test_websocket_subscribe_unsubscribe(client):
     """Test channel subscription management."""
     with client.websocket_connect("/ws") as ws:
         # Subscribe to channels
-        ws.send_text(json.dumps({
-            "action": "subscribe",
-            "channel_ids": ["chan-1", "chan-2"],
-        }))
+        ws.send_text(
+            json.dumps(
+                {
+                    "action": "subscribe",
+                    "channel_ids": ["chan-1", "chan-2"],
+                }
+            )
+        )
         resp = json.loads(ws.receive_text())
         assert resp["type"] == "subscribed"
         assert set(resp["data"]["channel_ids"]) == {"chan-1", "chan-2"}
 
         # Unsubscribe from one
-        ws.send_text(json.dumps({
-            "action": "unsubscribe",
-            "channel_ids": ["chan-1"],
-        }))
+        ws.send_text(
+            json.dumps(
+                {
+                    "action": "unsubscribe",
+                    "channel_ids": ["chan-1"],
+                }
+            )
+        )
         resp = json.loads(ws.receive_text())
         assert resp["type"] == "unsubscribed"
 
@@ -99,18 +109,26 @@ def test_message_broadcast_filtered_by_channel(client):
     """Test that new_message broadcasts respect channel subscriptions."""
     with client.websocket_connect("/ws") as ws1:
         # ws1 subscribes to chan-A only
-        ws1.send_text(json.dumps({
-            "action": "subscribe",
-            "channel_ids": ["chan-A"],
-        }))
+        ws1.send_text(
+            json.dumps(
+                {
+                    "action": "subscribe",
+                    "channel_ids": ["chan-A"],
+                }
+            )
+        )
         ws1.receive_text()  # consume subscribed response
 
         with client.websocket_connect("/ws") as ws2:
             # ws2 subscribes to chan-B only
-            ws2.send_text(json.dumps({
-                "action": "subscribe",
-                "channel_ids": ["chan-B"],
-            }))
+            ws2.send_text(
+                json.dumps(
+                    {
+                        "action": "subscribe",
+                        "channel_ids": ["chan-B"],
+                    }
+                )
+            )
             ws2.receive_text()  # consume subscribed response
 
             # Broadcast a message to chan-A
