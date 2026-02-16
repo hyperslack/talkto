@@ -1,6 +1,7 @@
 /** Message input with @-mention autocomplete. */
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useSendMessage, useAgents, useMe } from "@/hooks/use-queries";
+import { getMentionQuery } from "@/lib/message-utils";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -10,15 +11,6 @@ import { useAppStore } from "@/stores/app-store";
 
 interface MessageInputProps {
   channelId: string;
-}
-
-/** Extract the @-mention query being typed at the cursor position. */
-export function getMentionQuery(text: string, cursorPos: number): { query: string; start: number } | null {
-  // Walk backwards from cursor to find the @ trigger
-  const before = text.slice(0, cursorPos);
-  const match = before.match(/@([\w-]*)$/);
-  if (!match) return null;
-  return { query: match[1].toLowerCase(), start: cursorPos - match[0].length };
 }
 
 export function MessageInput({ channelId }: MessageInputProps) {
@@ -72,8 +64,11 @@ export function MessageInput({ channelId }: MessageInputProps) {
     return mentionables.filter((m) => m.name.toLowerCase().includes(mentionQuery));
   }, [mentionables, mentionQuery]);
 
-  // Reset selection when filtered list changes
+  // Reset selection when filtered list changes.
+  // setState in effect is intentional — we need to reset the dropdown index
+  // when the filter results change, which is driven by user input.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedIdx(0);
   }, [filtered.length, mentionQuery]);
 

@@ -1,6 +1,6 @@
 /** Tests for message-bubble pure utility functions. */
 import { describe, it, expect } from "vitest";
-import { isPlainText, formatTime } from "./message-bubble";
+import { isPlainText, formatTime } from "@/lib/message-utils";
 
 describe("isPlainText", () => {
   it("returns true for simple text", () => {

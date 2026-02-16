@@ -1,6 +1,6 @@
 /** Tests for getMentionQuery — @-mention detection at cursor. */
 import { describe, it, expect } from "vitest";
-import { getMentionQuery } from "./message-input";
+import { getMentionQuery } from "@/lib/message-utils";
 
 describe("getMentionQuery", () => {
   it("returns null when no @ is being typed", () => {

@@ -39,7 +39,10 @@ export function ProfilePanel({ open, onOpenChange }: ProfilePanelProps) {
   const [instructions, setInstructions] = useState("");
   const [saved, setSaved] = useState(false);
 
-  // Sync form state when user data loads or sheet opens
+  // Sync form state when user data loads or sheet opens.
+  // setState here is intentional — we're syncing external data (server response)
+  // into local form state when the sheet opens. This is a standard form pattern.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (me && open) {
       setName(me.name);
@@ -49,6 +52,7 @@ export function ProfilePanel({ open, onOpenChange }: ProfilePanelProps) {
       setSaved(false);
     }
   }, [me, open]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const hasChanges =
     me &&

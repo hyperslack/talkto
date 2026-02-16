@@ -36,7 +36,7 @@ export function useWebSocket(enabled: boolean = true) {
   // Keep a ref to the latest queryClient so the WS handlers always use
   // the current one without needing it in dependency arrays.
   const qcRef = useRef(qc);
-  qcRef.current = qc;
+  useEffect(() => { qcRef.current = qc; }, [qc]);
 
   const handleEvent = useCallback(
     (event: WSEvent) => {
@@ -95,9 +95,13 @@ export function useWebSocket(enabled: boolean = true) {
     [addRealtimeMessage, setAgentStatus, setAgentTyping],
   );
 
-  // Keep a ref so connect's recursive reconnect always calls latest version
+  // Keep refs so the WS handlers always use the latest versions without
+  // needing them in useCallback dependency arrays.
   const handleEventRef = useRef(handleEvent);
-  handleEventRef.current = handleEvent;
+  useEffect(() => { handleEventRef.current = handleEvent; }, [handleEvent]);
+
+  // Ref for recursive reconnect — avoids referencing `connect` before declaration.
+  const connectRef = useRef<() => void>(undefined);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -129,7 +133,7 @@ export function useWebSocket(enabled: boolean = true) {
       if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
       // Auto-reconnect (only if still mounted)
       if (mountedRef.current) {
-        reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY);
+        reconnectTimer.current = setTimeout(() => connectRef.current?.(), RECONNECT_DELAY);
       }
     };
 
@@ -139,6 +143,8 @@ export function useWebSocket(enabled: boolean = true) {
 
     wsRef.current = ws;
   }, [setWsConnected]);
+
+  useEffect(() => { connectRef.current = connect; }, [connect]);
 
   const subscribe = useCallback((channelIds: string[]) => {
     const ws = wsRef.current;

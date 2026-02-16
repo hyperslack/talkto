@@ -2,6 +2,7 @@
 import type { Message } from "@/lib/types";
 import { Bot, User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isPlainText, formatTime } from "@/lib/message-utils";
 import { highlightMentions } from "@/lib/highlight-mentions";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { lazy, Suspense } from "react";
@@ -9,17 +10,6 @@ import { lazy, Suspense } from "react";
 const MarkdownRenderer = lazy(
   () => import("@/components/workspace/markdown-renderer"),
 );
-
-/**
- * Detect if content is "plain" — no markdown syntax at all.
- * Plain messages render as a simple span (no markdown overhead).
- */
-const MARKDOWN_PATTERN =
-  /[*_~`#\-\[\]!|>]|^\d+\.\s|^-\s/m;
-
-export function isPlainText(content: string): boolean {
-  return !MARKDOWN_PATTERN.test(content);
-}
 
 interface MessageBubbleProps {
   message: Message;
@@ -132,14 +122,4 @@ function MessageContent({
   );
 }
 
-export function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "";
-  }
-}
+
