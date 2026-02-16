@@ -14,6 +14,11 @@ class User(Base):
     type: Mapped[str] = mapped_column(String, nullable=False)  # "human" or "agent"
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
+    # Human-only profile fields (nullable for agent users)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    about: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    agent_instructions: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
     # Relationships
     agent: Mapped[Agent | None] = relationship("Agent", back_populates="user", uselist=False)
     messages: Mapped[list[Message]] = relationship("Message", back_populates="sender")
