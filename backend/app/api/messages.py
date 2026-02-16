@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db import get_db
@@ -37,7 +37,10 @@ async def _fetch_recent_context(channel_id: str, limit: int = 5) -> str:
 
     async with get_session() as db:
         query = (
-            select(Message, User.name.label("sender_name"))
+            select(
+                Message,
+                func.coalesce(User.display_name, User.name).label("sender_name"),
+            )
             .join(User, Message.sender_id == User.id)
             .where(Message.channel_id == channel_id)
             .order_by(desc(Message.created_at))
@@ -157,7 +160,10 @@ async def get_messages(
         raise HTTPException(status_code=404, detail="Channel not found")
 
     query = (
-        select(Message, User.name.label("sender_name"))
+        select(
+            Message,
+            func.coalesce(User.display_name, User.name).label("sender_name"),
+        )
         .join(User, Message.sender_id == User.id)
         .where(Message.channel_id == channel_id)
     )
@@ -231,7 +237,7 @@ async def send_message(
             message_id=msg.id,
             channel_id=msg.channel_id,
             sender_id=msg.sender_id,
-            sender_name=user.name,
+            sender_name=user.display_name or user.name,
             content=msg.content,
             mentions=data.mentions,
             parent_id=msg.parent_id,
@@ -258,7 +264,7 @@ async def send_message(
         "id": msg.id,
         "channel_id": msg.channel_id,
         "sender_id": msg.sender_id,
-        "sender_name": user.name,
+        "sender_name": user.display_name or user.name,
         "content": msg.content,
         "mentions": data.mentions,
         "parent_id": msg.parent_id,

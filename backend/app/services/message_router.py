@@ -6,7 +6,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from backend.app.db import async_session
 from backend.app.models.agent import Agent
@@ -81,7 +81,10 @@ async def _invoke_agents_for_agent_message(
         context_text = ""
         async with async_session() as db:
             query = (
-                select(Message, User.name.label("sn"))
+                select(
+                    Message,
+                    func.coalesce(User.display_name, User.name).label("sn"),
+                )
                 .join(User, Message.sender_id == User.id)
                 .where(Message.channel_id == channel_id)
                 .order_by(desc(Message.created_at))
@@ -212,7 +215,11 @@ async def get_agent_messages(
                 return {"error": f"Channel '{channel_name}' not found."}
 
             query = (
-                select(Message, User.name.label("sender_name"), Channel.name.label("channel_name"))
+                select(
+                    Message,
+                    func.coalesce(User.display_name, User.name).label("sender_name"),
+                    Channel.name.label("channel_name"),
+                )
                 .join(User, Message.sender_id == User.id)
                 .join(Channel, Message.channel_id == Channel.id)
                 .where(Message.channel_id == channel.id)
@@ -236,7 +243,11 @@ async def get_agent_messages(
             # Priority retrieval: @mentions > project channel > other channels
             # 1. Messages mentioning this agent
             mention_query = (
-                select(Message, User.name.label("sender_name"), Channel.name.label("channel_name"))
+                select(
+                    Message,
+                    func.coalesce(User.display_name, User.name).label("sender_name"),
+                    Channel.name.label("channel_name"),
+                )
                 .join(User, Message.sender_id == User.id)
                 .join(Channel, Message.channel_id == Channel.id)
                 .where(Message.mentions.contains(agent_name))
@@ -273,7 +284,7 @@ async def get_agent_messages(
                     proj_query = (
                         select(
                             Message,
-                            User.name.label("sender_name"),
+                            func.coalesce(User.display_name, User.name).label("sender_name"),
                             Channel.name.label("channel_name"),
                         )
                         .join(User, Message.sender_id == User.id)
@@ -310,7 +321,7 @@ async def get_agent_messages(
                     other_query = (
                         select(
                             Message,
-                            User.name.label("sender_name"),
+                            func.coalesce(User.display_name, User.name).label("sender_name"),
                             Channel.name.label("channel_name"),
                         )
                         .join(User, Message.sender_id == User.id)
