@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from backend.app.config import settings
+from backend.app.config import get_lan_ip, settings
 
 app = typer.Typer(
     help="TalkTo - Slack for AI Agents",
@@ -35,6 +35,11 @@ def start(
     api_only: bool = typer.Option(False, "--api-only", help="Only start the API server"),
     no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open browser"),
     port: int = typer.Option(settings.port, "--port", "-p", help="API server port"),
+    network: bool = typer.Option(
+        settings.network,
+        "--network",
+        help="Expose on local network (LAN) so agents on other machines can connect",
+    ),
 ) -> None:
     """Start TalkTo — boots FastAPI + Vite dev server.
 
@@ -43,13 +48,21 @@ def start(
       - Frontend: Vite HMR on the configured frontend port
 
     The Vite dev server proxies /api and /ws to the FastAPI backend.
+
+    Use --network to expose TalkTo on your local network. This allows
+    agents on other machines to connect via your machine's LAN IP.
     """
+    # Propagate --network flag to settings so the rest of the app sees it
+    if network:
+        os.environ["TALKTO_NETWORK"] = "true"
+
     # Ensure data dir exists
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
 
     pids: list[int] = []
     vite_proc = None
     fe_port = str(settings.frontend_port)
+    host_display = get_lan_ip() if network else "localhost"
 
     # Start Vite dev server (unless api-only)
     if not api_only and FRONTEND_DIR.exists():
@@ -86,10 +99,23 @@ def start(
 
     typer.echo("")
     typer.secho("TalkTo is starting up", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  UI:      http://localhost:{fe_port}")
-    typer.echo(f"  API:     http://localhost:{port}")
-    typer.echo(f"  API docs: http://localhost:{port}/docs")
-    typer.echo(f"  Health:  http://localhost:{port}/api/health")
+
+    if network:
+        typer.secho("  Mode:    NETWORK (exposed on LAN)", fg=typer.colors.YELLOW, bold=True)
+        typer.echo(f"  LAN IP:  {host_display}")
+    else:
+        typer.echo("  Mode:    local only")
+
+    typer.echo(f"  UI:      http://{host_display}:{fe_port}")
+    typer.echo(f"  API:     http://{host_display}:{port}")
+    typer.echo(f"  MCP:     http://{host_display}:{port}/mcp")
+    typer.echo(f"  API docs: http://{host_display}:{port}/docs")
+
+    if network:
+        typer.echo("")
+        typer.secho("  Agents on other machines can connect to:", fg=typer.colors.CYAN)
+        typer.echo(f"    http://{host_display}:{port}/mcp")
+
     typer.echo("")
     typer.echo("  Ctrl+C to stop both servers")
     typer.echo("")
@@ -147,15 +173,24 @@ def mcp_config(
         ..., help="Absolute path to the project the agent is working on"
     ),
     port: int = typer.Option(settings.port, "--port", "-p", help="API server port"),
+    network: bool = typer.Option(
+        settings.network,
+        "--network",
+        help="Use LAN IP instead of localhost (for agents on other machines)",
+    ),
 ) -> None:
     """Generate MCP server config JSON for connecting an agent.
 
     Outputs the JSON block to add to your agent's MCP config file.
     The MCP server runs over HTTP on the same port as the API (streamable-http).
 
+    Use --network to generate configs with your LAN IP, so agents
+    on other machines in your network can connect.
+
     Works with: Claude Code (.mcp.json), OpenCode (opencode.json), etc.
     """
-    url = f"http://localhost:{port}/mcp"
+    host = get_lan_ip() if network else "localhost"
+    url = f"http://{host}:{port}/mcp"
 
     # Claude Code / generic format
     claude_config = {
@@ -179,6 +214,11 @@ def mcp_config(
 
     typer.secho("TalkTo MCP — HTTP Transport", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  Endpoint: {url}")
+    if network:
+        typer.secho(
+            f"  Network mode: agents on any machine can connect via {host}",
+            fg=typer.colors.YELLOW,
+        )
     typer.echo("")
 
     typer.secho("Claude Code (.mcp.json):", fg=typer.colors.CYAN, bold=True)

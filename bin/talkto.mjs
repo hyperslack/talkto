@@ -202,10 +202,12 @@ Commands:
 Options (for start):
   --api-only     Start API server only (no frontend)
   --no-open      Don't auto-open browser
+  --network      Expose on local network (agents on other machines can connect)
   --port, -p     API server port (default: 8000)
 
 Examples:
   npx talkto                          # Start with defaults
+  npx talkto start --network          # Expose on LAN
   npx talkto start --port 9000        # Custom port
   npx talkto mcp-config /path/to/project  # Generate MCP config
   npx talkto stop                     # Stop servers

@@ -60,9 +60,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Build CORS origins — always allow localhost, add LAN origins in network mode
+_cors_origins: list[str] = [
+    "http://localhost:3000",
+    f"http://localhost:{settings.port}",
+]
+if settings.network:
+    # In network mode, allow any origin on the LAN.
+    # This is safe because TalkTo is designed for local/LAN use only — no auth.
+    _cors_origins.append(f"http://{settings.advertise_host}:{settings.frontend_port}")
+    _cors_origins.append(f"http://{settings.advertise_host}:{settings.port}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:3000"],
+    allow_origins=["*"] if settings.network else _cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

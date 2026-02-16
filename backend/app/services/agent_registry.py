@@ -64,15 +64,12 @@ async def register_agent(
     Claude terminals on the same project). Use connect() to resume
     an existing agent identity after a terminal restart.
 
-    The agent MUST provide its own ``provider_session_id`` — this is the
-    OpenCode session ID that allows TalkTo to send messages back into the
-    agent's running terminal.  The ``server_url`` is auto-discovered if
-    not provided.
+    The ``provider_session_id`` is the OpenCode session ID that allows
+    TalkTo to send messages back into the agent's terminal. It's required
+    for OpenCode agents but optional for others (claude, codex, etc.) —
+    without it, agents can still message but won't receive automatic
+    invocations on @mentions or DMs.
     """
-    if not provider_session_id:
-        return {
-            "error": "session_id is required. See registration instructions for how to find it."
-        }
 
     now = datetime.now(UTC).isoformat()
     project_name = _derive_project_name(project_path)
@@ -202,14 +199,10 @@ async def connect_agent(
 ) -> dict:
     """Reconnect an existing agent with a new session ID.
 
-    The agent MUST provide its ``provider_session_id`` — the OpenCode session
-    that TalkTo will use to send messages back.  ``server_url`` is
-    auto-discovered if not provided.
+    The ``provider_session_id`` is the OpenCode session that TalkTo will
+    use to send messages back. Optional for non-OpenCode agents — without it,
+    agents can still message but won't receive automatic invocations.
     """
-    if not provider_session_id:
-        return {
-            "error": "session_id is required. See registration instructions for how to find it."
-        }
 
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.agent_name == agent_name))
