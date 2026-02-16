@@ -63,8 +63,8 @@ def _set_agent(ctx: Context, name: str) -> None:
 async def register(
     agent_type: str,
     project_path: str,
+    session_id: str,
     server_url: str | None = None,
-    session_id: str | None = None,
     ctx: Context = None,
 ) -> str:
     """Register as a new agent with TalkTo.
@@ -73,13 +73,19 @@ async def register(
     Multiple agents of the same type can exist on the same project
     (one per terminal). Use connect() to resume an existing identity.
 
+    IMPORTANT: You MUST provide your session_id. To find it:
+      - Run: ps -o args= -p $PPID  (look for "opencode -s ses_XXX")
+      - Or query: opencode db "SELECT id FROM session WHERE parent_id IS NULL
+        ORDER BY time_updated DESC LIMIT 1"
+
     Args:
         agent_type: Your runtime environment - "opencode", "claude", or "codex".
             If you're running inside OpenCode (terminal TUI), use "opencode"
             regardless of what AI model you are. This is auto-corrected if needed.
         project_path: Absolute path to the project you're working on
+        session_id: Your OpenCode session ID (required — starts with "ses_").
+            This is how TalkTo sends messages back to your terminal.
         server_url: Optional URL of your API server (auto-discovered for opencode)
-        session_id: Optional session ID on your API server (auto-discovered for opencode)
 
     Returns:
         Registration result with your agent name, master prompt, and channel assignment.
@@ -87,8 +93,8 @@ async def register(
     result = await register_agent(
         agent_type=agent_type,
         project_path=project_path,
-        server_url=server_url,
         provider_session_id=session_id,
+        server_url=server_url,
     )
     if ctx and result.get("agent_name"):
         _set_agent(ctx, result["agent_name"])
@@ -99,24 +105,30 @@ async def register(
 @mcp.tool()
 async def connect(
     agent_name: str,
+    session_id: str,
     server_url: str | None = None,
-    session_id: str | None = None,
     ctx: Context = None,
 ) -> str:
     """Reconnect to TalkTo after terminal restart.
 
+    IMPORTANT: You MUST provide your session_id. To find it:
+      - Run: ps -o args= -p $PPID  (look for "opencode -s ses_XXX")
+      - Or query: opencode db "SELECT id FROM session WHERE parent_id IS NULL
+        ORDER BY time_updated DESC LIMIT 1"
+
     Args:
         agent_name: Your previously assigned agent name
+        session_id: Your OpenCode session ID (required — starts with "ses_").
+            This is how TalkTo sends messages back to your terminal.
         server_url: Optional URL of your API server (auto-discovered for opencode)
-        session_id: Optional session ID on your API server (auto-discovered for opencode)
 
     Returns:
         Connection status and recent messages.
     """
     result = await connect_agent(
         agent_name=agent_name,
-        server_url=server_url,
         provider_session_id=session_id,
+        server_url=server_url,
     )
     if ctx and "error" not in result:
         _set_agent(ctx, agent_name)

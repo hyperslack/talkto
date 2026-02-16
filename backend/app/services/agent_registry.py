@@ -54,10 +54,8 @@ def _make_channel_name(project_name: str) -> str:
 async def register_agent(
     agent_type: str,
     project_path: str,
-    pid: int | None = None,
-    tty: str | None = None,
+    provider_session_id: str,
     server_url: str | None = None,
-    provider_session_id: str | None = None,
 ) -> dict:
     """Register a new agent.
 
@@ -65,19 +63,32 @@ async def register_agent(
     of the same type already exists for this project (e.g., multiple
     Claude terminals on the same project). Use connect() to resume
     an existing agent identity after a terminal restart.
+
+    The agent MUST provide its own ``provider_session_id`` — this is the
+    OpenCode session ID that allows TalkTo to send messages back into the
+    agent's running terminal.  The ``server_url`` is auto-discovered if
+    not provided.
     """
+    if not provider_session_id:
+        return {
+            "error": "session_id is required. See registration instructions for how to find it."
+        }
+
     now = datetime.now(UTC).isoformat()
     project_name = _derive_project_name(project_path)
     channel_name = _make_channel_name(project_name)
 
-    # Detect TTY and PID if not provided
-    if tty is None:
+    # Auto-discover OpenCode server URL if not provided
+    if not server_url:
         try:
-            tty = os.ttyname(0)
-        except OSError:
-            tty = "unknown"
-    if pid is None:
-        pid = os.getpid()
+            discovery = await auto_discover(project_path)
+            if discovery:
+                server_url = discovery.get("server_url")
+                if server_url and agent_type != "opencode":
+                    agent_type = "opencode"
+                logger.info("Auto-discovered server_url for registration: %s", server_url)
+        except Exception:
+            logger.exception("Auto-discovery failed during registration")
 
     async with async_session() as db:
         # Generate a unique quirky name (includes random entropy to avoid races)
@@ -95,46 +106,6 @@ async def register_agent(
         user = User(id=user_id, name=agent_name, type="agent", created_at=now)
         db.add(user)
 
-        # Auto-discover OpenCode server + session if not provided.
-        # Agents often don't know their runtime (e.g., Claude model running
-        # inside OpenCode reports agent_type="claude"). Auto-detect and correct.
-        if not server_url:
-            # Collect sessions already claimed by other agents to avoid conflicts
-            claimed_result = await db.execute(
-                select(Agent.provider_session_id).where(
-                    Agent.provider_session_id.isnot(None),
-                    Agent.provider_session_id != "",
-                )
-            )
-            exclude_ids = {sid for (sid,) in claimed_result.all()}
-
-            try:
-                discovery = await auto_discover(
-                    project_path,
-                    pid=pid,
-                    tty=tty,
-                    exclude_session_ids=exclude_ids,
-                )
-                if discovery:
-                    server_url = discovery.get("server_url")
-                    provider_session_id = discovery.get("session_id")
-                    # If we found an OpenCode server, this agent runs on OpenCode
-                    if server_url and agent_type != "opencode":
-                        logger.info(
-                            "Auto-correcting agent_type for %s: %s -> opencode",
-                            agent_name,
-                            agent_type,
-                        )
-                        agent_type = "opencode"
-                    logger.info(
-                        "Auto-discovered OpenCode for %s: server=%s session=%s",
-                        agent_name,
-                        server_url,
-                        provider_session_id,
-                    )
-            except Exception:
-                logger.exception("Auto-discovery failed for %s", agent_name)
-
         # Create agent
         agent = Agent(
             id=user_id,
@@ -147,18 +118,6 @@ async def register_agent(
             provider_session_id=provider_session_id,
         )
         db.add(agent)
-
-        # Create session
-        session_record = Session(
-            id=str(uuid.uuid4()),
-            agent_id=user_id,
-            pid=pid,
-            tty=tty,
-            is_active=1,
-            started_at=now,
-            last_heartbeat=now,
-        )
-        db.add(session_record)
 
         # Ensure project channel exists
         ch_result = await db.execute(select(Channel).where(Channel.name == channel_name))
@@ -238,21 +197,19 @@ async def register_agent(
 
 async def connect_agent(
     agent_name: str,
-    pid: int | None = None,
-    tty: str | None = None,
+    provider_session_id: str,
     server_url: str | None = None,
-    provider_session_id: str | None = None,
 ) -> dict:
-    """Reconnect an existing agent with new TTY/PID."""
-    now = datetime.now(UTC).isoformat()
+    """Reconnect an existing agent with a new session ID.
 
-    if tty is None:
-        try:
-            tty = os.ttyname(0)
-        except OSError:
-            tty = "unknown"
-    if pid is None:
-        pid = os.getpid()
+    The agent MUST provide its ``provider_session_id`` — the OpenCode session
+    that TalkTo will use to send messages back.  ``server_url`` is
+    auto-discovered if not provided.
+    """
+    if not provider_session_id:
+        return {
+            "error": "session_id is required. See registration instructions for how to find it."
+        }
 
     async with async_session() as db:
         result = await db.execute(select(Agent).where(Agent.agent_name == agent_name))
@@ -260,62 +217,20 @@ async def connect_agent(
         if not agent:
             return {"error": f"Agent '{agent_name}' not found. Use register first."}
 
-        # Deactivate old sessions
-        await db.execute(
-            update(Session)
-            .where(Session.agent_id == agent.id, Session.is_active == 1)
-            .values(is_active=0, ended_at=now)
-        )
-
-        # Create new session
-        session_record = Session(
-            id=str(uuid.uuid4()),
-            agent_id=agent.id,
-            pid=pid,
-            tty=tty,
-            is_active=1,
-            started_at=now,
-            last_heartbeat=now,
-        )
-        db.add(session_record)
-
-        # Auto-discover OpenCode server + session on reconnect if not provided.
-        # Agents may register with any agent_type but still run inside OpenCode.
+        # Auto-discover server_url now that we have the agent's project_path
         if not server_url:
-            # Exclude sessions already claimed by other agents
-            claimed_result = await db.execute(
-                select(Agent.provider_session_id).where(
-                    Agent.agent_name != agent_name,
-                    Agent.provider_session_id.isnot(None),
-                    Agent.provider_session_id != "",
-                )
-            )
-            exclude_ids = {sid for (sid,) in claimed_result.all()}
-
             try:
-                discovery = await auto_discover(
-                    agent.project_path,
-                    pid=pid,
-                    tty=tty,
-                    exclude_session_ids=exclude_ids,
-                )
+                discovery = await auto_discover(agent.project_path)
                 if discovery:
                     server_url = discovery.get("server_url")
-                    provider_session_id = discovery.get("session_id")
-                    logger.info(
-                        "Auto-discovered OpenCode for %s: server=%s session=%s",
-                        agent_name,
-                        server_url,
-                        provider_session_id,
-                    )
+                    logger.info("Auto-discovered server_url for %s: %s", agent_name, server_url)
             except Exception:
                 logger.exception("Auto-discovery failed for %s", agent_name)
 
-        # Update invocation fields if we have new values
+        # Update invocation fields
         if server_url:
             agent.server_url = server_url
-        if provider_session_id:
-            agent.provider_session_id = provider_session_id
+        agent.provider_session_id = provider_session_id
 
         # Mark agent online
         agent.status = "online"
