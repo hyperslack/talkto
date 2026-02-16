@@ -26,6 +26,7 @@ dev = [
     "mypy",
     "pytest",
     "pytest-asyncio",
+    "pytest-cov",
     "httpx",
 ]
 
@@ -41,6 +42,19 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "UP", "B"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+
+[tool.coverage.run]
+source = ["backend"]
+omit = ["backend/app/services/agent_discovery.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
 
 [tool.mypy]
 python_version = "3.12"

@@ -24,5 +24,9 @@ data/
 .env
 .dev.vars
 
+# Coverage
+.coverage
+htmlcov/
+
 # OS
 .DS_Store
