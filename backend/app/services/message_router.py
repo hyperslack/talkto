@@ -2,8 +2,6 @@
 
 import json
 import logging
-import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import desc, func, select
 
@@ -13,8 +11,7 @@ from backend.app.models.channel import Channel
 from backend.app.models.channel_member import ChannelMember
 from backend.app.models.message import Message
 from backend.app.models.user import User
-from backend.app.services.agent_invoker import invoke_for_message, spawn_background_task
-from backend.app.services.broadcaster import broadcast_event, new_message_event
+from backend.app.services.message_service import create_message
 
 logger = logging.getLogger(__name__)
 
@@ -39,48 +36,15 @@ async def send_agent_message(
         if not channel:
             return {"error": f"Channel '{channel_name}' not found."}
 
-        mentions_json = json.dumps(mentions) if mentions else None
-        now = datetime.now(UTC).isoformat()
-
-        msg = Message(
-            id=str(uuid.uuid4()),
-            channel_id=channel.id,
+        msg = await create_message(
+            db=db,
             sender_id=agent.id,
+            sender_name=agent.agent_name,
+            channel_id=channel.id,
+            channel_name=channel_name,
             content=content,
-            mentions=mentions_json,
-            created_at=now,
+            mentions=mentions,
         )
-        db.add(msg)
-        await db.commit()
-
-        # Broadcast new message to WebSocket clients
-        await broadcast_event(
-            new_message_event(
-                message_id=msg.id,
-                channel_id=channel.id,
-                sender_id=agent.id,
-                sender_name=agent.agent_name,
-                content=content,
-                mentions=mentions,
-                created_at=now,
-            )
-        )
-
-        # Fire-and-forget: invoke agents for DMs and @mentions
-        # Uses spawn_background_task to prevent GC of unfinished tasks (C4).
-        async def _invoke_with_error_handling() -> None:
-            try:
-                await invoke_for_message(
-                    sender_name=agent.agent_name,
-                    channel_id=channel.id,
-                    channel_name=channel_name,
-                    content=content,
-                    mentions=mentions,
-                )
-            except Exception:
-                logger.exception("[INVOKE-MCP] Unhandled error in fire-and-forget invocation task")
-
-        spawn_background_task(_invoke_with_error_handling())
 
         return {"message_id": msg.id, "channel": channel_name}
 
