@@ -74,36 +74,38 @@ def format_invocation_prompt(
     return "\n".join(lines)
 
 
-async def _is_session_alive(session_id: str) -> bool:
-    """Check whether a running opencode TUI process is handling this session.
+async def _is_session_alive(session_id: str, server_url: str | None = None) -> bool:
+    """Check whether an OpenCode session is still active.
 
-    OpenCode's prompt_async returns 204 even for dead sessions (it queues
-    them in the DB), so we can't rely on HTTP status. Instead, scan `ps aux`
-    for a running opencode process with `-s <session_id>` in its command line.
+    Queries the OpenCode REST API at ``GET {server_url}/session`` and checks
+    whether the ``session_id`` appears in the list of sessions. This is more
+    reliable than scanning ``ps aux`` because OpenCode doesn't always put the
+    session ID in its command-line arguments.
 
-    For sessions started without `-s` flag, we can't verify — assume alive
-    if we can't tell (those sessions won't be matched here, but they also
-    won't typically be stored as provider_session_id because our discovery
-    only finds sessions with `-s` flags).
+    Falls back to assuming alive if the server_url is unavailable.
     """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ps",
-            "aux",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-    except (FileNotFoundError, TimeoutError):
-        logger.debug("[LIVENESS] ps command failed, assuming session alive")
+    if not server_url:
+        logger.debug("[LIVENESS] No server_url, assuming session alive")
         return True  # Can't verify — assume alive
 
-    for line in stdout.decode(errors="replace").splitlines():
-        if session_id in line and "opencode" in line and "serve" not in line:
-            logger.debug("[LIVENESS] Session %s is alive (process found)", session_id)
-            return True
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{server_url}/session")
+            if resp.status_code != 200:
+                logger.debug(
+                    "[LIVENESS] OpenCode API returned %s, assuming alive", resp.status_code
+                )
+                return True  # Can't verify — assume alive
+            sessions = resp.json()
+            for sess in sessions:
+                if sess.get("id") == session_id:
+                    logger.debug("[LIVENESS] Session %s is alive (found in API)", session_id)
+                    return True
+    except Exception:
+        logger.debug("[LIVENESS] OpenCode API unreachable at %s, assuming dead", server_url)
+        return False  # Server unreachable — session is dead
 
-    logger.info("[LIVENESS] Session %s is DEAD (no matching process)", session_id)
+    logger.info("[LIVENESS] Session %s is DEAD (not in OpenCode API)", session_id)
     return False
 
 
@@ -247,7 +249,7 @@ async def _get_agent_invocation_info(agent_name: str) -> dict | None:
 
     # If we have credentials, verify the session is actually alive
     if server_url and session_id:
-        alive = await _is_session_alive(session_id)
+        alive = await _is_session_alive(session_id, server_url)
         if not alive:
             logger.warning(
                 "[INVOKER] Session %s for '%s' is DEAD — clearing stale credentials",
@@ -546,7 +548,7 @@ async def is_agent_ghost(agent_name: str) -> bool:
         if agent.server_url and agent.provider_session_id:
             # Verify the session is actually alive — OpenCode accepts prompts
             # for dead sessions (returns 204) but nothing processes them.
-            alive = await _is_session_alive(agent.provider_session_id)
+            alive = await _is_session_alive(agent.provider_session_id, agent.server_url)
             if alive:
                 logger.debug(
                     "[GHOST] '%s' has live credentials (session=%s) — not a ghost",

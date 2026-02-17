@@ -1,7 +1,8 @@
 """Ghost detection and agent invocation pipeline tests.
 
-Tests is_pid_alive, _is_session_alive, is_agent_ghost, _compute_ghost,
-format_invocation_prompt, and spawn_background_task.
+Tests is_pid_alive, _is_session_alive (httpx-based), is_agent_ghost,
+_compute_ghost (OpenCode API-based), format_invocation_prompt,
+and spawn_background_task.
 """
 
 import asyncio
@@ -9,6 +10,7 @@ import os
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,72 +137,78 @@ def test_is_pid_alive_os_error():
 
 
 async def test_is_session_alive_found():
-    """_is_session_alive returns True when ps aux shows matching process."""
-    fake_ps_output = (
-        "user  12345  0.0  0.5 ... opencode -s ses_abc123\nuser  12346  0.0  0.1 ... vim file.py\n"
-    )
+    """_is_session_alive returns True when OpenCode API lists the session."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = [
+        {"id": "ses_abc123", "modelID": "anthropic/claude-sonnet"},
+        {"id": "ses_other", "modelID": "anthropic/claude-sonnet"},
+    ]
 
-    async def _fake_subprocess(*args, **kwargs):
-        proc = MagicMock()
-        proc.communicate = AsyncMock(return_value=(fake_ps_output.encode(), b""))
-        proc.returncode = 0
-        return proc
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch(
-        "backend.app.services.agent_invoker.asyncio.create_subprocess_exec", _fake_subprocess
-    ):
-        result = await _is_session_alive("ses_abc123")
+    with patch("backend.app.services.agent_invoker.httpx.AsyncClient", return_value=mock_client):
+        result = await _is_session_alive("ses_abc123", "http://localhost:19877")
 
     assert result is True
 
 
 async def test_is_session_alive_not_found():
-    """_is_session_alive returns False when no matching process."""
-    fake_ps_output = (
-        "user  12345  0.0  0.5 ... python server.py\nuser  12346  0.0  0.1 ... vim file.py\n"
-    )
+    """_is_session_alive returns False when session not in OpenCode API response."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = [
+        {"id": "ses_other1", "modelID": "anthropic/claude-sonnet"},
+        {"id": "ses_other2", "modelID": "anthropic/claude-sonnet"},
+    ]
 
-    async def _fake_subprocess(*args, **kwargs):
-        proc = MagicMock()
-        proc.communicate = AsyncMock(return_value=(fake_ps_output.encode(), b""))
-        proc.returncode = 0
-        return proc
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch(
-        "backend.app.services.agent_invoker.asyncio.create_subprocess_exec", _fake_subprocess
-    ):
-        result = await _is_session_alive("ses_xyz789")
-
-    assert result is False
-
-
-async def test_is_session_alive_excludes_serve():
-    """_is_session_alive should exclude 'opencode serve' processes."""
-    fake_ps_output = "user  12345  0.0  0.5 ... opencode serve -s ses_abc123\n"
-
-    async def _fake_subprocess(*args, **kwargs):
-        proc = MagicMock()
-        proc.communicate = AsyncMock(return_value=(fake_ps_output.encode(), b""))
-        proc.returncode = 0
-        return proc
-
-    with patch(
-        "backend.app.services.agent_invoker.asyncio.create_subprocess_exec", _fake_subprocess
-    ):
-        result = await _is_session_alive("ses_abc123")
+    with patch("backend.app.services.agent_invoker.httpx.AsyncClient", return_value=mock_client):
+        result = await _is_session_alive("ses_xyz789", "http://localhost:19877")
 
     assert result is False
 
 
-async def test_is_session_alive_ps_fails():
-    """_is_session_alive should return True (assume alive) if ps fails."""
-    with patch(
-        "backend.app.services.agent_invoker.asyncio.create_subprocess_exec",
-        side_effect=FileNotFoundError("ps not found"),
-    ):
-        result = await _is_session_alive("ses_abc123")
+async def test_is_session_alive_no_server_url():
+    """_is_session_alive returns True (assume alive) when no server_url provided."""
+    result = await _is_session_alive("ses_abc123", None)
+    assert result is True  # Conservative: assume alive when we can't check
 
-    assert result is True  # Conservative: assume alive
+
+async def test_is_session_alive_server_unreachable():
+    """_is_session_alive returns False when OpenCode server is unreachable."""
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("backend.app.services.agent_invoker.httpx.AsyncClient", return_value=mock_client):
+        result = await _is_session_alive("ses_abc123", "http://localhost:19877")
+
+    assert result is False  # Server unreachable = session dead
+
+
+async def test_is_session_alive_api_error_status():
+    """_is_session_alive returns True (assume alive) on non-200 API response."""
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("backend.app.services.agent_invoker.httpx.AsyncClient", return_value=mock_client):
+        result = await _is_session_alive("ses_abc123", "http://localhost:19877")
+
+    assert result is True  # Non-200 = can't verify, assume alive
 
 
 # ---------------------------------------------------------------------------
@@ -324,12 +332,12 @@ async def test_compute_ghost_system_agent(db: AsyncSession):
     )
     await db.flush()
 
-    result = await _compute_ghost(agent, db, "")
+    result = await _compute_ghost(agent, db, {})
     assert result is False
 
 
-async def test_compute_ghost_with_live_session_in_ps(db: AsyncSession):
-    """_compute_ghost: agent with session visible in ps output is not a ghost."""
+async def test_compute_ghost_with_live_session_in_api(db: AsyncSession):
+    """_compute_ghost: agent with session in OpenCode API response is not a ghost."""
     from backend.app.api.agents import _compute_ghost
 
     user, agent = await create_agent(
@@ -341,13 +349,16 @@ async def test_compute_ghost_with_live_session_in_ps(db: AsyncSession):
     )
     await db.flush()
 
-    ps_output = "user 12345 0.0 0.5 ... opencode -s ses_live456\n"
-    result = await _compute_ghost(agent, db, ps_output)
+    # Pre-populate the opencode_sessions cache with this server's sessions
+    opencode_sessions: dict[str, set[str]] = {
+        "http://localhost:1234": {"ses_live456", "ses_other"},
+    }
+    result = await _compute_ghost(agent, db, opencode_sessions)
     assert result is False
 
 
-async def test_compute_ghost_session_not_in_ps(db: AsyncSession):
-    """_compute_ghost: agent with session NOT in ps output is a ghost."""
+async def test_compute_ghost_session_not_in_api(db: AsyncSession):
+    """_compute_ghost: agent with session NOT in OpenCode API response is a ghost."""
     from backend.app.api.agents import _compute_ghost
 
     user, agent = await create_agent(
@@ -359,9 +370,39 @@ async def test_compute_ghost_session_not_in_ps(db: AsyncSession):
     )
     await db.flush()
 
-    ps_output = "user 12345 0.0 0.5 ... vim file.py\n"
-    result = await _compute_ghost(agent, db, ps_output)
+    # Server's sessions don't include this agent's session
+    opencode_sessions: dict[str, set[str]] = {
+        "http://localhost:1234": {"ses_other1", "ses_other2"},
+    }
+    result = await _compute_ghost(agent, db, opencode_sessions)
     assert result is True
+
+
+async def test_compute_ghost_lazy_fetches_sessions(db: AsyncSession):
+    """_compute_ghost: lazily fetches sessions from OpenCode when not cached."""
+    from backend.app.api.agents import _compute_ghost
+
+    user, agent = await create_agent(
+        db,
+        agent_name="lazy-bot",
+        agent_type="opencode",
+        server_url="http://localhost:5678",
+        provider_session_id="ses_lazy123",
+    )
+    await db.flush()
+
+    # Pass empty cache — _compute_ghost should call _fetch_opencode_sessions
+    opencode_sessions: dict[str, set[str]] = {}
+    with patch(
+        "backend.app.api.agents._fetch_opencode_sessions",
+        new_callable=AsyncMock,
+        return_value={"ses_lazy123", "ses_other"},
+    ):
+        result = await _compute_ghost(agent, db, opencode_sessions)
+
+    assert result is False
+    # Verify the cache was populated
+    assert "http://localhost:5678" in opencode_sessions
 
 
 async def test_compute_ghost_no_credentials_no_talkto_session(db: AsyncSession):
@@ -377,7 +418,7 @@ async def test_compute_ghost_no_credentials_no_talkto_session(db: AsyncSession):
     )
     await db.flush()
 
-    result = await _compute_ghost(agent, db, "")
+    result = await _compute_ghost(agent, db, {})
     assert result is True
 
 
@@ -408,37 +449,8 @@ async def test_compute_ghost_no_credentials_with_alive_pid(db: AsyncSession):
     db.add(session)
     await db.flush()
 
-    result = await _compute_ghost(agent, db, "")
+    result = await _compute_ghost(agent, db, {})
     assert result is False
-
-
-# ---------------------------------------------------------------------------
-# _is_session_in_ps() helper (from agents.py)
-# ---------------------------------------------------------------------------
-
-
-def test_is_session_in_ps_found():
-    """_is_session_in_ps finds session in ps output."""
-    from backend.app.api.agents import _is_session_in_ps
-
-    ps = "user 12345 0.0 0.5 ... opencode -s ses_abc\nuser 12346 ... vim\n"
-    assert _is_session_in_ps("ses_abc", ps) is True
-
-
-def test_is_session_in_ps_not_found():
-    """_is_session_in_ps returns False when no match."""
-    from backend.app.api.agents import _is_session_in_ps
-
-    ps = "user 12345 0.0 0.5 ... python server.py\n"
-    assert _is_session_in_ps("ses_xyz", ps) is False
-
-
-def test_is_session_in_ps_excludes_serve():
-    """_is_session_in_ps excludes 'opencode serve' lines."""
-    from backend.app.api.agents import _is_session_in_ps
-
-    ps = "user 12345 0.0 0.5 ... opencode serve ses_abc\n"
-    assert _is_session_in_ps("ses_abc", ps) is False
 
 
 # ---------------------------------------------------------------------------

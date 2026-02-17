@@ -5,6 +5,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,32 +33,36 @@ _ghost_cache: dict[str, bool] = {}
 _liveness_task: asyncio.Task | None = None
 
 
-async def _get_ps_output() -> str:
-    """Run ps aux once and return the output for batch liveness checks."""
+async def _fetch_opencode_sessions(server_url: str) -> set[str]:
+    """Fetch the set of active session IDs from an OpenCode server."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ps", "aux",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-        return stdout.decode(errors="replace")
-    except (FileNotFoundError, TimeoutError):
-        return ""
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{server_url}/session")
+            if resp.status_code == 200:
+                return {sess.get("id", "") for sess in resp.json()}
+    except Exception:
+        logger.debug("[LIVENESS] OpenCode API unreachable at %s", server_url)
+    return set()
 
 
-def _is_session_in_ps(session_id: str, ps_output: str) -> bool:
-    for line in ps_output.splitlines():
-        if session_id in line and "opencode" in line and "serve" not in line:
-            return True
-    return False
+async def _compute_ghost(
+    agent: Agent,
+    db: AsyncSession,
+    opencode_sessions: dict[str, set[str]],
+) -> bool:
+    """Determine whether an agent is a ghost.
 
-
-async def _compute_ghost(agent: Agent, db: AsyncSession, ps_output: str) -> bool:
+    For agents with server_url + session_id, check if the session exists
+    in the OpenCode server's session list (fetched once per server_url).
+    """
     if agent.agent_type == "system":
         return False
     if agent.server_url and agent.provider_session_id:
-        return not _is_session_in_ps(agent.provider_session_id, ps_output)
+        # Lazily fetch sessions from this OpenCode server (cached per server_url)
+        if agent.server_url not in opencode_sessions:
+            opencode_sessions[agent.server_url] = await _fetch_opencode_sessions(agent.server_url)
+        return agent.provider_session_id not in opencode_sessions[agent.server_url]
+    # No invocation credentials — check for an active Session row (legacy)
     sess_result = await db.execute(
         select(Session)
         .where(Session.agent_id == agent.id, Session.is_active == 1)
@@ -73,13 +78,15 @@ async def _compute_ghost(agent: Agent, db: AsyncSession, ps_output: str) -> bool
 async def _refresh_ghost_cache() -> None:
     """Refresh the ghost cache for all agents."""
     try:
-        ps_output = await _get_ps_output()
+        # Dict to cache OpenCode sessions per server_url (avoids hitting
+        # the same server multiple times for agents sharing a server).
+        opencode_sessions: dict[str, set[str]] = {}
         async with async_session() as db:
             result = await db.execute(select(Agent))
             agents = list(result.scalars().all())
             new_cache: dict[str, bool] = {}
             for agent in agents:
-                new_cache[agent.id] = await _compute_ghost(agent, db, ps_output)
+                new_cache[agent.id] = await _compute_ghost(agent, db, opencode_sessions)
             _ghost_cache.clear()
             _ghost_cache.update(new_cache)
     except Exception:
