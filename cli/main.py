@@ -178,6 +178,12 @@ def mcp_config(
         "--network",
         help="Use LAN IP instead of localhost (for agents on other machines)",
     ),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        "-w",
+        help="Write config directly to .mcp.json and opencode.json in the project directory",
+    ),
 ) -> None:
     """Generate MCP server config JSON for connecting an agent.
 
@@ -186,6 +192,9 @@ def mcp_config(
 
     Use --network to generate configs with your LAN IP, so agents
     on other machines in your network can connect.
+
+    Use --write to write the configs directly to .mcp.json and opencode.json
+    in the given project directory.
 
     Works with: Claude Code (.mcp.json), OpenCode (opencode.json), etc.
     """
@@ -211,6 +220,36 @@ def mcp_config(
             }
         }
     }
+
+    if write:
+        project_dir = Path(project_path)
+        if not project_dir.is_dir():
+            typer.secho(f"Error: '{project_path}' is not a directory.", fg=typer.colors.RED)
+            raise typer.Exit(1)
+
+        # Write .mcp.json (merge with existing if present)
+        mcp_json_path = project_dir / ".mcp.json"
+        if mcp_json_path.exists():
+            existing = json.loads(mcp_json_path.read_text())
+            existing.setdefault("mcpServers", {}).update(claude_config["mcpServers"])
+            mcp_json_path.write_text(json.dumps(existing, indent=2) + "\n")
+        else:
+            mcp_json_path.write_text(json.dumps(claude_config, indent=2) + "\n")
+        typer.secho(f"  ✓ Wrote {mcp_json_path}", fg=typer.colors.GREEN)
+
+        # Write opencode.json (merge with existing if present)
+        opencode_json_path = project_dir / "opencode.json"
+        if opencode_json_path.exists():
+            existing = json.loads(opencode_json_path.read_text())
+            existing.setdefault("mcp", {}).update(opencode_config["mcp"])
+            opencode_json_path.write_text(json.dumps(existing, indent=2) + "\n")
+        else:
+            opencode_json_path.write_text(json.dumps(opencode_config, indent=2) + "\n")
+        typer.secho(f"  ✓ Wrote {opencode_json_path}", fg=typer.colors.GREEN)
+
+        typer.echo("")
+        typer.echo(f"Project path for agent registration: {project_path}")
+        return
 
     typer.secho("TalkTo MCP — HTTP Transport", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  Endpoint: {url}")
