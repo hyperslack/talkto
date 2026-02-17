@@ -120,11 +120,13 @@ export function WorkspaceLayout({
       </main>
 
       {/* Right panel: features */}
-      {featuresOpen && (
-        <aside className="w-80 shrink-0">
-          <FeaturePanel onClose={() => setFeaturesOpen(false)} />
-        </aside>
-      )}
+      <aside
+        className={`shrink-0 border-l border-border/50 transition-all duration-200 ${
+          featuresOpen ? "w-80" : "w-0 overflow-hidden border-l-0"
+        }`}
+      >
+        <FeaturePanel onClose={() => setFeaturesOpen(false)} />
+      </aside>
     </div>
   );
 }

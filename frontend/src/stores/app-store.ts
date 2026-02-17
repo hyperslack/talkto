@@ -7,6 +7,30 @@
 import { create } from "zustand";
 import type { Message } from "@/lib/types";
 
+function readDarkMode(): boolean {
+  try {
+    return localStorage.getItem("talkto-dark-mode") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeDarkMode(value: boolean): void {
+  try {
+    localStorage.setItem("talkto-dark-mode", String(value));
+  } catch {
+    // Storage unavailable (test env, etc.)
+  }
+}
+
+function applyDarkClass(dark: boolean): void {
+  try {
+    document.documentElement.classList.toggle("dark", dark);
+  } catch {
+    // DOM unavailable (test env, etc.)
+  }
+}
+
 interface AppState {
   // ── Onboarding ──
   isOnboarded: boolean;
@@ -36,6 +60,10 @@ interface AppState {
   // ── Invocation errors (transient, auto-clear) ──
   invocationError: { channelId: string; message: string } | null;
   clearInvocationError: () => void;
+
+  // ── Dark mode ──
+  darkMode: boolean;
+  toggleDarkMode: () => void;
 
   // ── Connection status ──
   wsConnected: boolean;
@@ -98,6 +126,16 @@ export const useAppStore = create<AppState>((set) => ({
   // Invocation errors
   invocationError: null,
   clearInvocationError: () => set({ invocationError: null }),
+
+  // Dark mode — read initial value from localStorage
+  darkMode: readDarkMode(),
+  toggleDarkMode: () =>
+    set((s) => {
+      const next = !s.darkMode;
+      writeDarkMode(next);
+      applyDarkClass(next);
+      return { darkMode: next };
+    }),
 
   // WebSocket
   wsConnected: false,

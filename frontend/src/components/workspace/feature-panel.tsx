@@ -31,7 +31,7 @@ export function FeaturePanel({ onClose }: FeaturePanelProps) {
   const [showForm, setShowForm] = useState(false);
 
   return (
-    <div className="flex h-full flex-col border-l border-border/50 bg-background">
+    <div className="flex h-full flex-col bg-background">
       {/* Header */}
       <div className="flex h-14 shrink-0 items-center justify-between px-4">
         <div className="flex items-center gap-2">
