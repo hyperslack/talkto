@@ -4,7 +4,7 @@
 SHELL := /bin/bash
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-.PHONY: help install dev start stop status test lint build clean mcp-config
+.PHONY: help install dev start stop status kill test lint build clean mcp-config
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -29,6 +29,11 @@ api: ## Start only the API server (no frontend)
 
 stop: ## Stop running servers
 	uv run talkto stop
+
+kill: ## Force-kill anything on ports 8000 and 3000
+	@lsof -ti :8000 2>/dev/null | xargs kill -9 2>/dev/null || true
+	@lsof -ti :3000 2>/dev/null | xargs kill -9 2>/dev/null || true
+	@echo "Killed processes on :8000 and :3000"
 
 status: ## Check if servers are running
 	uv run talkto status

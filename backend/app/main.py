@@ -7,9 +7,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from starlette.routing import Route
+from starlette.types import Receive, Scope, Send
 
 from backend.app.api.agents import router as agents_router
 from backend.app.api.agents import start_liveness_task, stop_liveness_task
@@ -37,7 +39,7 @@ logging.getLogger("backend").setLevel(logging.DEBUG)
 
 # Create the MCP Starlette app once (needed for lifespan composition)
 # path="/" means the MCP endpoint is at the root of this Starlette sub-app,
-# which we mount at /mcp — so final URL is http://host:8000/mcp
+# which we mount at /mcp — so final URL is http://host:8000/mcp/
 mcp_starlette = mcp_server.http_app(path="/", transport="streamable-http")
 
 # Frontend build directory (created by `pnpm build` in frontend/)
@@ -107,8 +109,12 @@ app.include_router(features_router, prefix="/api")
 app.include_router(internal_router)  # /_internal prefix (no /api)
 app.include_router(ws_router)  # /ws endpoint (no /api prefix)
 
-# Mount MCP server at /mcp (streamable-http transport for agents)
-app.mount("/mcp", mcp_starlette)
+# Register the MCP endpoint as a Starlette Route at /mcp.
+# We add the route directly (instead of using app.mount("/mcp", ...)) to
+# avoid Starlette's trailing-slash issue where /mcp wouldn't match a mount
+# at "/mcp" — only /mcp/ would. A direct Route matches /mcp exactly.
+_mcp_handler = mcp_starlette.routes[0].app  # StreamableHTTPASGIApp
+app.routes.append(Route("/mcp", endpoint=_mcp_handler))
 
 
 # --- Health check ---
@@ -136,21 +142,29 @@ async def health() -> dict[str, str]:
 # Mount the built frontend (frontend/dist/) as static files.
 # This allows single-port deployment: backend serves both API and UI.
 # In development, Vite's dev server handles this instead.
+#
+# IMPORTANT: We use app.mount() — NOT @app.get("/{path:path}") — because
+# FastAPI routes take precedence over mounts and a catch-all route would
+# shadow the MCP sub-app mounted at /mcp (causing 405 errors).
+# Mounts are matched by path prefix in registration order, so /mcp wins
+# over / when the path starts with /mcp.
 
 if _FRONTEND_DIST.is_dir():
-    # Serve static assets (JS, CSS, images) under /assets
-    app.mount(
-        "/assets",
-        StaticFiles(directory=str(_FRONTEND_DIST / "assets")),
-        name="frontend-assets",
-    )
 
-    @app.get("/{path:path}")
-    async def _serve_spa(path: str) -> FileResponse:
-        """SPA fallback — serve index.html for any unmatched route."""
-        # If the path matches a real file in dist/, serve it
-        file_path = _FRONTEND_DIST / path
-        if file_path.is_file():
-            return FileResponse(str(file_path))
-        # Otherwise serve index.html (client-side routing)
-        return FileResponse(str(_FRONTEND_DIST / "index.html"))
+    class _SPAStaticFiles(StaticFiles):
+        """StaticFiles subclass that falls back to index.html for SPA routing."""
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            # Try to serve the file normally; on 404, serve index.html
+            try:
+                await super().__call__(scope, receive, send)
+            except Exception:
+                # File not found — serve index.html for client-side routing
+                scope["path"] = "/index.html"
+                await super().__call__(scope, receive, send)
+
+    app.mount(
+        "/",
+        _SPAStaticFiles(directory=str(_FRONTEND_DIST), html=True),
+        name="frontend-spa",
+    )
