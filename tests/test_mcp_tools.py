@@ -134,16 +134,15 @@ async def human_user(db: AsyncSession) -> User:
 
 async def _register_agent(
     fake_ctx,
-    agent_type: str = "claude",
     project_path: str = "/tmp/test-project",
 ) -> dict:
     """Call the register MCP tool and return the result."""
     from backend.mcp_server import register
 
     return await register.fn(
-        agent_type=agent_type,
+        session_id=f"ses_test_{id(fake_ctx):x}",
         project_path=project_path,
-        session_id=None,
+        agent_name=None,
         server_url=None,
         ctx=fake_ctx,
     )
@@ -182,28 +181,28 @@ async def test_register_creates_agent(
     agent = agent_result.scalar_one_or_none()
     assert agent is not None
     assert agent.status == "online"
-    assert agent.agent_type == "claude"
+    assert agent.agent_type == "opencode"
 
 
-async def test_register_invalid_agent_type(fake_ctx):
-    """register() should reject invalid agent_type values."""
+async def test_register_requires_session_id(fake_ctx):
+    """register() should reject calls without session_id."""
     from backend.mcp_server import register
 
     result = await register.fn(
-        agent_type="invalid",
+        session_id="",
         project_path="/tmp",
         ctx=fake_ctx,
     )
     assert "error" in result
-    assert "Invalid agent_type" in result["error"]
+    assert "session_id is required" in result["error"]
 
 
-async def test_register_rejects_system_type(fake_ctx):
-    """register() should reject 'system' agent_type (reserved)."""
+async def test_register_rejects_empty_session_id(fake_ctx):
+    """register() should reject whitespace-only session_id."""
     from backend.mcp_server import register
 
     result = await register.fn(
-        agent_type="system",
+        session_id="   ",
         project_path="/tmp",
         ctx=fake_ctx,
     )
@@ -211,11 +210,11 @@ async def test_register_rejects_system_type(fake_ctx):
 
 
 # ---------------------------------------------------------------------------
-# 2. connect()
+# 2. reconnect via register(agent_name=...)
 # ---------------------------------------------------------------------------
 
 
-async def test_connect_existing_agent(
+async def test_reconnect_existing_agent(
     mock_session,
     mock_broadcast,
     mock_auto_discover,
@@ -225,16 +224,17 @@ async def test_connect_existing_agent(
     human_user,
     db: AsyncSession,
 ):
-    """connect() should reconnect an existing agent and return prompts."""
+    """register(agent_name=...) should reconnect an existing agent and return prompts."""
     # First register
     reg = await _register_agent(fake_ctx)
     agent_name = reg["agent_name"]
 
-    from backend.mcp_server import connect
+    from backend.mcp_server import register
 
-    result = await connect.fn(
+    result = await register.fn(
+        session_id="ses_reconnect123",
+        project_path="/tmp/test-project",
         agent_name=agent_name,
-        session_id="ses_test123",
         server_url=None,
         ctx=fake_ctx,
     )
@@ -245,23 +245,29 @@ async def test_connect_existing_agent(
     assert "master_prompt" in result
 
 
-async def test_connect_nonexistent_agent(
+async def test_reconnect_nonexistent_creates_new(
     mock_session,
     mock_broadcast,
+    mock_auto_discover,
+    mock_derive_project,
     fake_ctx,
+    general_channel,
+    human_user,
 ):
-    """connect() should return error for non-existent agent."""
-    from backend.mcp_server import connect
+    """register(agent_name="nonexistent") should create a new agent (not error)."""
+    from backend.mcp_server import register
 
-    result = await connect.fn(
+    result = await register.fn(
+        session_id="ses_test_new",
+        project_path="/tmp/test-project",
         agent_name="nonexistent-agent",
-        session_id=None,
         server_url=None,
         ctx=fake_ctx,
     )
 
-    assert "error" in result
-    assert "not found" in result["error"].lower()
+    # Should create a new agent since the name doesn't exist
+    assert "error" not in result
+    assert "agent_name" in result
 
 
 # ---------------------------------------------------------------------------

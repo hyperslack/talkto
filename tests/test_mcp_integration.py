@@ -5,16 +5,13 @@ the same services as the MCP tools), and verifies MCP tool handlers return
 structured dicts.
 """
 
-import json
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.conftest import (
     create_channel,
-    create_channel_member,
     create_user,
 )
 
@@ -67,9 +64,7 @@ async def test_send_and_get_messages(mock_create, client: AsyncClient, db: Async
     # Create a message directly (not through the patched endpoint)
     from tests.conftest import create_message
 
-    msg = await create_message(
-        db, channel_id=channel.id, sender_id=user.id, content="Hello from test!"
-    )
+    await create_message(db, channel_id=channel.id, sender_id=user.id, content="Hello from test!")
     await db.flush()
 
     # Get messages
@@ -169,7 +164,7 @@ async def test_mcp_tools_return_dicts():
     assert isinstance(result, dict)
     assert "error" in result
 
-    # Invalid agent_type
-    result = await _register(agent_type="invalid", project_path="/tmp", ctx=None)
+    # Missing session_id
+    result = await _register(session_id="", project_path="/tmp", ctx=None)
     assert isinstance(result, dict)
     assert "error" in result

@@ -113,13 +113,13 @@ async def human_user(db: AsyncSession) -> User:
 # ---------------------------------------------------------------------------
 
 
-async def _register(ctx, agent_type="claude", project_path="/tmp/test-project") -> dict:
+async def _register(ctx, project_path="/tmp/test-project") -> dict:
     from backend.mcp_server import register
 
     return await register.fn(
-        agent_type=agent_type,
+        session_id=f"ses_test_{id(ctx):x}",
         project_path=project_path,
-        session_id=None,
+        agent_name=None,
         server_url=None,
         ctx=ctx,
     )
@@ -253,8 +253,8 @@ async def test_register_disconnect_reconnect(
     human_user,
     db: AsyncSession,
 ):
-    """Agent registers, disconnects, then reconnects with connect()."""
-    from backend.mcp_server import connect, disconnect, send_message
+    """Agent registers, disconnects, then reconnects with register(agent_name=...)."""
+    from backend.mcp_server import disconnect, register, send_message
 
     ctx1 = _make_ctx()
 
@@ -275,9 +275,10 @@ async def test_register_disconnect_reconnect(
 
     # Reconnect with new context (simulating new terminal session)
     ctx2 = _make_ctx()
-    conn = await connect.fn(
-        agent_name=name,
+    conn = await register.fn(
         session_id="ses_new123",
+        project_path="/tmp/test-project",
+        agent_name=name,
         server_url=None,
         ctx=ctx2,
     )
@@ -493,7 +494,7 @@ async def test_connect_preserves_profile(
     db: AsyncSession,
 ):
     """Profile data survives disconnect/reconnect cycle."""
-    from backend.mcp_server import connect, disconnect, update_profile
+    from backend.mcp_server import disconnect, register, update_profile
 
     ctx1 = _make_ctx()
     reg = await _register(ctx1)
@@ -511,9 +512,15 @@ async def test_connect_preserves_profile(
     # Disconnect
     await disconnect.fn(agent_name=name, ctx=ctx1)
 
-    # Reconnect
+    # Reconnect via register with agent_name
     ctx2 = _make_ctx()
-    conn = await connect.fn(agent_name=name, session_id=None, server_url=None, ctx=ctx2)
+    conn = await register.fn(
+        session_id="ses_reconnect_test",
+        project_path="/tmp/test-project",
+        agent_name=name,
+        server_url=None,
+        ctx=ctx2,
+    )
 
     assert conn["status"] == "connected"
     assert conn["profile"] is not None

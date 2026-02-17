@@ -11,16 +11,14 @@ import logging
 
 from fastmcp import Context, FastMCP
 
-from backend.app.models.agent import VALID_AGENT_TYPES
 from backend.app.services.agent_registry import (
     agent_create_feature,
     agent_vote_feature,
-    connect_agent,
     disconnect_agent,
     heartbeat_agent,
     list_all_agents,
     list_all_features,
-    register_agent,
+    register_or_connect_agent,
     update_agent_profile,
 )
 from backend.app.services.channel_manager import (
@@ -73,84 +71,46 @@ def _set_agent(ctx: Context, name: str) -> None:
 
 @mcp.tool()
 async def register(
-    agent_type: str,
+    session_id: str,
     project_path: str,
-    session_id: str | None = None,
+    agent_name: str | None = None,
     server_url: str | None = None,
     ctx: Context = None,
 ) -> dict:
-    """Register as a new agent with TalkTo.
+    """Register with TalkTo. This is your login — call it every session.
 
-    Each call creates a fresh agent identity with a unique name.
-    Multiple agents of the same type can exist on the same project
-    (one per terminal). Use connect() to resume an existing identity.
+    If you have a previous agent_name (from a .talkto file or prior session),
+    pass it to reconnect as that identity. Otherwise, omit it to get a new name.
 
     Args:
-        agent_type: Your runtime environment - "opencode", "claude", or "codex".
-            If you're running inside OpenCode (terminal TUI), use "opencode"
-            regardless of what AI model you are. This is auto-corrected if needed.
+        session_id: Your OpenCode session ID (required — this is your login).
+            Find it by running: opencode db "SELECT id FROM session
+            WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1"
         project_path: Absolute path to the project you're working on
-        session_id: Your OpenCode session ID (starts with "ses_"). Required for
-            OpenCode agents (enables automatic message invocation). Optional for
-            other agent types — without it, you can still send/receive messages
-            but won't be automatically invoked on @mentions or DMs.
-        server_url: Optional URL of your API server (auto-discovered for opencode)
+        agent_name: Your previously assigned agent name (optional).
+            Pass this to reconnect as the same identity after a restart.
+            Omit it to get a fresh name.
+        server_url: Optional URL of your API server (auto-discovered if omitted)
 
     Returns:
         Registration result with your agent name, master prompt, and channel assignment.
     """
-    # Validate agent_type (system is reserved for internal use)
-    allowed = [t for t in VALID_AGENT_TYPES if t != "system"]
-    if agent_type not in allowed:
-        return {"error": f"Invalid agent_type '{agent_type}'. Must be one of: {allowed}"}
-
-    # OpenCode agents MUST provide a session_id — without it, the server
-    # can't invoke them on @mentions/DMs and they become ghosts immediately.
-    if agent_type == "opencode" and not session_id:
+    if not session_id or not session_id.strip():
         return {
-            "error": "session_id is required for OpenCode agents. "
-            'Find it with: opencode db "SELECT id FROM session '
+            "error": "session_id is required — it's your login to TalkTo. "
+            "Find it by running: "
+            'opencode db "SELECT id FROM session '
             'WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1"'
         }
 
-    result = await register_agent(
-        agent_type=agent_type,
+    result = await register_or_connect_agent(
+        session_id=session_id.strip(),
         project_path=project_path,
-        provider_session_id=session_id or "",
+        agent_name=agent_name,
         server_url=server_url,
     )
     if ctx and result.get("agent_name"):
         _set_agent(ctx, result["agent_name"])
-
-    return result
-
-
-@mcp.tool()
-async def connect(
-    agent_name: str,
-    session_id: str | None = None,
-    server_url: str | None = None,
-    ctx: Context = None,
-) -> dict:
-    """Reconnect to TalkTo after terminal restart.
-
-    Args:
-        agent_name: Your previously assigned agent name
-        session_id: Your OpenCode session ID (starts with "ses_"). Required for
-            OpenCode agents (enables automatic message invocation). Optional for
-            other agent types.
-        server_url: Optional URL of your API server (auto-discovered for opencode)
-
-    Returns:
-        Connection status and recent messages.
-    """
-    result = await connect_agent(
-        agent_name=agent_name,
-        provider_session_id=session_id or "",
-        server_url=server_url,
-    )
-    if ctx and "error" not in result:
-        _set_agent(ctx, agent_name)
 
     return result
 

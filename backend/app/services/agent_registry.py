@@ -55,49 +55,143 @@ def _make_channel_name(project_name: str) -> str:
     return f"#project-{clean}"
 
 
-async def register_agent(
-    agent_type: str,
+async def register_or_connect_agent(
+    session_id: str,
     project_path: str,
-    provider_session_id: str,
+    agent_name: str | None = None,
     server_url: str | None = None,
 ) -> dict:
-    """Register a new agent.
+    """Register a new agent or reconnect an existing one.
 
-    Each call creates a new agent with a unique name, even if an agent
-    of the same type already exists for this project (e.g., multiple
-    Claude terminals on the same project). Use connect() to resume
-    an existing agent identity after a terminal restart.
+    This is the single entry point for agent login. The ``session_id`` is
+    required — it's the agent's login credential.
 
-    The ``provider_session_id`` is the OpenCode session ID that allows
-    TalkTo to send messages back into the agent's terminal. It's required
-    for OpenCode agents but optional for others (claude, codex, etc.) —
-    without it, agents can still message but won't receive automatic
-    invocations on @mentions or DMs.
+    - If ``agent_name`` is provided and exists in the DB, reconnect that
+      identity with the new session_id (like the old ``connect()``).
+    - Otherwise, create a fresh agent with a new unique name.
+
+    The ``agent_type`` is always set to ``"opencode"`` — all agents run
+    inside OpenCode and the type is determined server-side.
     """
+    agent_type = "opencode"
 
-    now = datetime.now(UTC).isoformat()
-    project_name = await _derive_project_name(project_path)
-    channel_name = _make_channel_name(project_name)
-
-    # Auto-discover OpenCode server URL if not provided.
-    # Only attempt auto-discovery for opencode agents — non-OpenCode agents
-    # (claude, codex) shouldn't be re-classified just because an OpenCode
-    # instance happens to be running on the same machine.
-    if not server_url and agent_type == "opencode":
+    # Auto-discover server_url if not provided
+    if not server_url:
         try:
             discovery = await auto_discover(project_path)
             if discovery:
                 server_url = discovery.get("server_url")
-                logger.info("Auto-discovered server_url for registration: %s", server_url)
+                logger.info("Auto-discovered server_url: %s", server_url)
         except Exception:
             logger.exception("Auto-discovery failed during registration")
 
+    # --- Reconnect path: agent_name provided and exists ---
+    if agent_name:
+        async with async_session() as db:
+            result = await db.execute(select(Agent).where(Agent.agent_name == agent_name))
+            agent = result.scalar_one_or_none()
+            if agent:
+                return await _reconnect_agent(db, agent, session_id, server_url, project_path)
+        # Agent name was provided but doesn't exist — fall through to create new
+
+    # --- New registration path ---
+    return await _create_new_agent(
+        session_id=session_id,
+        project_path=project_path,
+        agent_type=agent_type,
+        server_url=server_url,
+    )
+
+
+async def _reconnect_agent(
+    db,
+    agent: Agent,
+    session_id: str,
+    server_url: str | None,
+    project_path: str,
+) -> dict:
+    """Reconnect an existing agent with a new session_id."""
+    # Update invocation fields
+    if server_url:
+        agent.server_url = server_url
+    agent.provider_session_id = session_id
+    agent.agent_type = "opencode"  # Normalize — all agents are opencode now
+
+    # Update project_path if provided (agent may have moved)
+    if project_path:
+        agent.project_path = project_path
+        agent.project_name = await _derive_project_name(project_path)
+
+    agent.status = "online"
+    await db.commit()
+
+    # Broadcast agent online status
+    await broadcast_event(
+        agent_status_event(
+            agent_name=agent.agent_name,
+            status="online",
+            agent_type=agent.agent_type,
+            project_name=agent.project_name,
+        )
+    )
+
+    # Look up human operator for prompt context
+    human_result = await db.execute(select(User).where(User.type == "human"))
+    human = human_result.scalar_one_or_none()
+
+    channel_name = _make_channel_name(agent.project_name)
+    master_prompt = prompt_engine.render_master_prompt(
+        agent_name=agent.agent_name,
+        agent_type=agent.agent_type,
+        project_name=agent.project_name,
+        project_channel=channel_name,
+        operator_name=human.name if human else "",
+        operator_display_name=human.display_name or "" if human else "",
+        operator_about=human.about or "" if human else "",
+        operator_instructions=human.agent_instructions or "" if human else "",
+    )
+    inject_prompt = prompt_engine.render_registration_rules(
+        agent_name=agent.agent_name,
+        project_channel=channel_name,
+    )
+
+    # Build profile reminder so agent knows what they previously set
+    profile: dict[str, str] = {}
+    if agent.description:
+        profile["description"] = agent.description
+    if agent.personality:
+        profile["personality"] = agent.personality
+    if agent.current_task:
+        profile["current_task"] = agent.current_task
+    if agent.gender:
+        profile["gender"] = agent.gender
+
+    return {
+        "status": "connected",
+        "agent_name": agent.agent_name,
+        "project_channel": channel_name,
+        "master_prompt": master_prompt,
+        "inject_prompt": inject_prompt,
+        "profile": profile if profile else None,
+    }
+
+
+async def _create_new_agent(
+    session_id: str,
+    project_path: str,
+    agent_type: str,
+    server_url: str | None,
+) -> dict:
+    """Create a brand new agent identity."""
+    now = datetime.now(UTC).isoformat()
+    project_name = await _derive_project_name(project_path)
+    channel_name = _make_channel_name(project_name)
+
     async with async_session() as db:
-        # Generate a unique quirky name (includes random entropy to avoid races)
+        # Generate a unique quirky name
         attempt = 0
         while True:
             agent_name = generate_unique_name(project_name, agent_type, attempt)
-            # Verify uniqueness in DB (collision extremely unlikely but be safe)
             collision = await db.execute(select(Agent).where(Agent.agent_name == agent_name))
             if collision.scalar_one_or_none() is None:
                 break
@@ -117,7 +211,7 @@ async def register_agent(
             project_name=project_name,
             status="online",
             server_url=server_url,
-            provider_session_id=provider_session_id,
+            provider_session_id=session_id,
         )
         db.add(agent)
 
@@ -194,104 +288,6 @@ async def register_agent(
             "master_prompt": master_prompt,
             "project_channel": channel_name,
             "inject_prompt": inject_prompt,
-        }
-
-
-async def connect_agent(
-    agent_name: str,
-    provider_session_id: str,
-    server_url: str | None = None,
-) -> dict:
-    """Reconnect an existing agent with a new session ID.
-
-    The ``provider_session_id`` is the OpenCode session that TalkTo will
-    use to send messages back. Optional for non-OpenCode agents — without it,
-    agents can still message but won't receive automatic invocations.
-    """
-
-    async with async_session() as db:
-        result = await db.execute(select(Agent).where(Agent.agent_name == agent_name))
-        agent = result.scalar_one_or_none()
-        if not agent:
-            return {"error": f"Agent '{agent_name}' not found. Use register first."}
-
-        # OpenCode agents MUST provide a session_id — without it, the server
-        # can't invoke them on @mentions/DMs and they become ghosts immediately.
-        if agent.agent_type == "opencode" and not provider_session_id:
-            return {
-                "error": "session_id is required for OpenCode agents. "
-                'Find it with: opencode db "SELECT id FROM session '
-                'WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1"'
-            }
-
-        # Auto-discover server_url for OpenCode agents only
-        if not server_url and agent.agent_type == "opencode":
-            try:
-                discovery = await auto_discover(agent.project_path)
-                if discovery:
-                    server_url = discovery.get("server_url")
-                    logger.info("Auto-discovered server_url for %s: %s", agent_name, server_url)
-            except Exception:
-                logger.exception("Auto-discovery failed for %s", agent_name)
-
-        # Update invocation fields
-        if server_url:
-            agent.server_url = server_url
-        agent.provider_session_id = provider_session_id
-
-        # Mark agent online
-        agent.status = "online"
-        await db.commit()
-
-        # Broadcast agent online status
-        await broadcast_event(
-            agent_status_event(
-                agent_name=agent_name,
-                status="online",
-                agent_type=agent.agent_type,
-                project_name=agent.project_name,
-            )
-        )
-
-        # Look up human operator for prompt context
-        human_result = await db.execute(select(User).where(User.type == "human"))
-        human = human_result.scalar_one_or_none()
-
-        # Render prompts so reconnecting agents get fresh context + rules
-        channel_name = _make_channel_name(agent.project_name)
-        master_prompt = prompt_engine.render_master_prompt(
-            agent_name=agent_name,
-            agent_type=agent.agent_type,
-            project_name=agent.project_name,
-            project_channel=channel_name,
-            operator_name=human.name if human else "",
-            operator_display_name=human.display_name or "" if human else "",
-            operator_about=human.about or "" if human else "",
-            operator_instructions=human.agent_instructions or "" if human else "",
-        )
-        inject_prompt = prompt_engine.render_registration_rules(
-            agent_name=agent_name,
-            project_channel=channel_name,
-        )
-
-        # Build profile reminder so agent knows what they previously set
-        profile: dict[str, str] = {}
-        if agent.description:
-            profile["description"] = agent.description
-        if agent.personality:
-            profile["personality"] = agent.personality
-        if agent.current_task:
-            profile["current_task"] = agent.current_task
-        if agent.gender:
-            profile["gender"] = agent.gender
-
-        return {
-            "status": "connected",
-            "agent_name": agent_name,
-            "project_channel": channel_name,
-            "master_prompt": master_prompt,
-            "inject_prompt": inject_prompt,
-            "profile": profile if profile else None,
         }
 
 

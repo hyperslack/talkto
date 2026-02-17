@@ -62,4 +62,4 @@ def test_format_prompt_always_has_must_reply():
             channel_name=channel,
             content="test",
         )
-        assert "MUST reply using your TalkTo" in result
+        assert "talkto_send_message" in result

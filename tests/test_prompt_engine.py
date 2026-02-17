@@ -90,14 +90,14 @@ def test_render_registration_rules():
     assert "FIRST THINGS FIRST" in result
 
 
-def test_render_registration_rules_agents_md():
-    """Registration rules should include AGENTS.md template."""
+def test_render_registration_rules_talkto_file():
+    """Registration rules should include .talkto file reference."""
     engine = PromptEngine()
     result = engine.render_registration_rules(
         agent_name="grumpy-fox",
         project_channel="#project-myapp",
     )
-    assert "AGENTS.md" in result
+    assert ".talkto" in result or "register" in result.lower()
     assert "grumpy-fox" in result
 
 

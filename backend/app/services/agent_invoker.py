@@ -59,8 +59,9 @@ def format_invocation_prompt(
     lines = [
         header,
         "",
-        f'You MUST reply using your TalkTo `send_message` tool to channel "{channel_name}".',
-        "Do NOT reply inline in this conversation — the sender will not see it.",
+        f'Reply using your `talkto_send_message` MCP tool to channel "{channel_name}".',
+        "This tool is provided by the talkto MCP server already configured in your environment.",
+        "Do NOT reply inline — the sender will not see it. Use the MCP tool.",
         "",
     ]
 
@@ -429,8 +430,6 @@ async def invoke_for_message(
         target = channel_name.removeprefix("#dm-")
         if target == sender_name:
             logger.info("[INVOKE] Skipping self-invocation for '%s'", target)
-        elif await is_agent_ghost(target):
-            logger.info("[INVOKE] Skipping ghost agent '%s'", target)
         else:
             await broadcast_event(agent_typing_event(target, channel_id, True))
             prompt = format_invocation_prompt(sender_name, channel_name, content)
@@ -453,9 +452,6 @@ async def invoke_for_message(
 
         for mentioned in mentions:
             if mentioned in invoked or mentioned == sender_name:
-                continue
-            if await is_agent_ghost(mentioned):
-                logger.info("[INVOKE] Skipping ghost '%s' via @mention", mentioned)
                 continue
             await broadcast_event(agent_typing_event(mentioned, channel_id, True))
             prompt = format_invocation_prompt(

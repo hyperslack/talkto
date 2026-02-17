@@ -104,7 +104,7 @@ async def human_user(db: AsyncSession) -> User:
 
 
 # ---------------------------------------------------------------------------
-# agent_registry.register_agent()
+# agent_registry.register_or_connect_agent()
 # ---------------------------------------------------------------------------
 
 
@@ -117,13 +117,12 @@ async def test_register_agent_creates_user_and_agent(
     human_user,
     db: AsyncSession,
 ):
-    """register_agent should create both User and Agent records."""
-    from backend.app.services.agent_registry import register_agent
+    """register_or_connect_agent should create both User and Agent records."""
+    from backend.app.services.agent_registry import register_or_connect_agent
 
-    result = await register_agent(
-        agent_type="claude",
+    result = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     assert "agent_name" in result
@@ -139,7 +138,7 @@ async def test_register_agent_creates_user_and_agent(
     agent_result = await db.execute(select(Agent).where(Agent.agent_name == name))
     agent = agent_result.scalar_one_or_none()
     assert agent is not None
-    assert agent.agent_type == "claude"
+    assert agent.agent_type == "opencode"
     assert agent.status == "online"
     assert agent.project_name == "test-project"
 
@@ -153,13 +152,12 @@ async def test_register_agent_creates_project_channel(
     human_user,
     db: AsyncSession,
 ):
-    """register_agent should create a project channel if it doesn't exist."""
-    from backend.app.services.agent_registry import register_agent
+    """register_or_connect_agent should create a project channel if it doesn't exist."""
+    from backend.app.services.agent_registry import register_or_connect_agent
 
-    result = await register_agent(
-        agent_type="opencode",
+    result = await register_or_connect_agent(
+        session_id="ses_123",
         project_path="/tmp/myapp",
-        provider_session_id="ses_123",
     )
 
     assert result["project_channel"] == "#project-test-project"
@@ -178,13 +176,12 @@ async def test_register_agent_joins_general_and_project(
     human_user,
     db: AsyncSession,
 ):
-    """register_agent should auto-join agent to #general and project channel."""
-    from backend.app.services.agent_registry import register_agent
+    """register_or_connect_agent should auto-join agent to #general and project channel."""
+    from backend.app.services.agent_registry import register_or_connect_agent
 
-    result = await register_agent(
-        agent_type="claude",
+    result = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
     name = result["agent_name"]
 
@@ -222,13 +219,12 @@ async def test_register_agent_renders_prompts(
     human_user,
     db: AsyncSession,
 ):
-    """register_agent should return rendered master_prompt and inject_prompt."""
-    from backend.app.services.agent_registry import register_agent
+    """register_or_connect_agent should return rendered master_prompt and inject_prompt."""
+    from backend.app.services.agent_registry import register_or_connect_agent
 
-    result = await register_agent(
-        agent_type="claude",
+    result = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     assert "master_prompt" in result
@@ -238,7 +234,7 @@ async def test_register_agent_renders_prompts(
 
 
 # ---------------------------------------------------------------------------
-# agent_registry.connect_agent()
+# agent_registry.register_or_connect_agent() — reconnect path
 # ---------------------------------------------------------------------------
 
 
@@ -251,13 +247,12 @@ async def test_connect_agent_updates_session(
     human_user,
     db: AsyncSession,
 ):
-    """connect_agent should update session ID and mark agent online."""
-    from backend.app.services.agent_registry import connect_agent, register_agent
+    """register_or_connect_agent (reconnect) should update session ID and mark agent online."""
+    from backend.app.services.agent_registry import register_or_connect_agent
 
-    reg = await register_agent(
-        agent_type="opencode",
+    reg = await register_or_connect_agent(
+        session_id="ses_old",
         project_path="/tmp/test",
-        provider_session_id="ses_old",
     )
     name = reg["agent_name"]
 
@@ -268,9 +263,10 @@ async def test_connect_agent_updates_session(
     await db.flush()
 
     # Reconnect
-    result = await connect_agent(
+    result = await register_or_connect_agent(
+        session_id="ses_new",
+        project_path="/tmp/test",
         agent_name=name,
-        provider_session_id="ses_new",
     )
 
     assert result["status"] == "connected"
@@ -291,17 +287,15 @@ async def test_connect_agent_returns_profile(
     human_user,
     db: AsyncSession,
 ):
-    """connect_agent should return saved profile data."""
+    """register_or_connect_agent (reconnect) should return saved profile data."""
     from backend.app.services.agent_registry import (
-        connect_agent,
-        register_agent,
+        register_or_connect_agent,
         update_agent_profile,
     )
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
     name = reg["agent_name"]
 
@@ -313,7 +307,9 @@ async def test_connect_agent_returns_profile(
     )
 
     # Reconnect
-    result = await connect_agent(agent_name=name, provider_session_id="")
+    result = await register_or_connect_agent(
+        session_id="ses_reconnect", project_path="/tmp/test", agent_name=name
+    )
 
     assert result["profile"] is not None
     assert result["profile"]["description"] == "Test bot"
@@ -335,12 +331,11 @@ async def test_disconnect_agent_sets_offline(
     db: AsyncSession,
 ):
     """disconnect_agent should set status to offline."""
-    from backend.app.services.agent_registry import disconnect_agent, register_agent
+    from backend.app.services.agent_registry import disconnect_agent, register_or_connect_agent
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
     name = reg["agent_name"]
 
@@ -378,12 +373,11 @@ async def test_update_profile_partial_update(
     db: AsyncSession,
 ):
     """update_agent_profile should update only provided fields."""
-    from backend.app.services.agent_registry import register_agent, update_agent_profile
+    from backend.app.services.agent_registry import register_or_connect_agent, update_agent_profile
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
     name = reg["agent_name"]
 
@@ -408,12 +402,11 @@ async def test_update_profile_invalid_gender(
     db: AsyncSession,
 ):
     """update_agent_profile rejects invalid gender values."""
-    from backend.app.services.agent_registry import register_agent, update_agent_profile
+    from backend.app.services.agent_registry import register_or_connect_agent, update_agent_profile
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     result = await update_agent_profile(agent_name=reg["agent_name"], gender="robot")
@@ -436,13 +429,12 @@ async def test_send_agent_message_persists(
     db: AsyncSession,
 ):
     """send_agent_message should persist the message."""
-    from backend.app.services.agent_registry import register_agent
+    from backend.app.services.agent_registry import register_or_connect_agent
     from backend.app.services.message_router import send_agent_message
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     result = await send_agent_message(
@@ -484,13 +476,12 @@ async def test_send_agent_message_unknown_channel(
     db: AsyncSession,
 ):
     """send_agent_message to unknown channel should return error."""
-    from backend.app.services.agent_registry import register_agent
+    from backend.app.services.agent_registry import register_or_connect_agent
     from backend.app.services.message_router import send_agent_message
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     result = await send_agent_message(
@@ -517,13 +508,12 @@ async def test_get_agent_messages_specific_channel(
     db: AsyncSession,
 ):
     """get_agent_messages with channel specified returns channel messages."""
-    from backend.app.services.agent_registry import register_agent
+    from backend.app.services.agent_registry import register_or_connect_agent
     from backend.app.services.message_router import get_agent_messages, send_agent_message
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     # Send some messages
@@ -559,18 +549,16 @@ async def test_get_agent_messages_priority_mentions(
     db: AsyncSession,
 ):
     """get_agent_messages priority: @mentions come first."""
-    from backend.app.services.agent_registry import register_agent
+    from backend.app.services.agent_registry import register_or_connect_agent
     from backend.app.services.message_router import get_agent_messages, send_agent_message
 
-    reg_a = await register_agent(
-        agent_type="claude",
+    reg_a = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
-    reg_b = await register_agent(
-        agent_type="claude",
+    reg_b = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
     name_a = reg_a["agent_name"]
     name_b = reg_b["agent_name"]
@@ -611,13 +599,12 @@ async def test_get_agent_messages_respects_limit(
     db: AsyncSession,
 ):
     """get_agent_messages should respect the limit parameter."""
-    from backend.app.services.agent_registry import register_agent
+    from backend.app.services.agent_registry import register_or_connect_agent
     from backend.app.services.message_router import get_agent_messages, send_agent_message
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     # Send 5 messages
@@ -693,13 +680,12 @@ async def test_join_agent_to_channel(
     db: AsyncSession,
 ):
     """join_agent_to_channel should add membership."""
-    from backend.app.services.agent_registry import register_agent
+    from backend.app.services.agent_registry import register_or_connect_agent
     from backend.app.services.channel_manager import create_new_channel, join_agent_to_channel
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     # Create another channel
@@ -798,14 +784,13 @@ async def test_list_all_agents(
     """list_all_agents should return all agents with profile info."""
     from backend.app.services.agent_registry import (
         list_all_agents,
-        register_agent,
+        register_or_connect_agent,
         update_agent_profile,
     )
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
     await update_agent_profile(
         agent_name=reg["agent_name"],
@@ -840,13 +825,12 @@ async def test_create_and_list_features(
     from backend.app.services.agent_registry import (
         agent_create_feature,
         list_all_features,
-        register_agent,
+        register_or_connect_agent,
     )
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     feat = await agent_create_feature(
@@ -876,12 +860,11 @@ async def test_heartbeat_agent(
     db: AsyncSession,
 ):
     """heartbeat_agent returns ok for existing agent."""
-    from backend.app.services.agent_registry import heartbeat_agent, register_agent
+    from backend.app.services.agent_registry import heartbeat_agent, register_or_connect_agent
 
-    reg = await register_agent(
-        agent_type="claude",
+    reg = await register_or_connect_agent(
+        session_id="ses_test_auto",
         project_path="/tmp/test",
-        provider_session_id="",
     )
 
     result = await heartbeat_agent(agent_name=reg["agent_name"])
