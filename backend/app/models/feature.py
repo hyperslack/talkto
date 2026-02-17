@@ -1,13 +1,21 @@
 """Feature request and voting models."""
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import CheckConstraint, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db import Base
 
+VALID_FEATURE_STATUSES = ("open", "planned", "in_progress", "done", "closed", "wontfix")
+
 
 class FeatureRequest(Base):
     __tablename__ = "feature_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'planned', 'in_progress', 'done', 'closed', 'wontfix')",
+            name="ck_feature_requests_status",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False)

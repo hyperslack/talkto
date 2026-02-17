@@ -20,7 +20,3 @@ class FeatureResponse(BaseModel):
     created_by: str
     created_at: str
     vote_count: int = 0
-
-
-class FeatureListResponse(BaseModel):
-    features: list[FeatureResponse]

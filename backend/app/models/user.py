@@ -12,6 +12,9 @@ class User(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     type: Mapped[str] = mapped_column(String, nullable=False)  # "human" or "agent"
+    # Timestamps are stored as ISO 8601 strings (not datetime columns) throughout
+    # the schema. This avoids timezone/serialization issues with SQLite and keeps
+    # JSON output consistent. Changing to datetime would require a migration.
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
     # Human-only profile fields (nullable for agent users)

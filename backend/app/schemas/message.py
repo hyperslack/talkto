@@ -17,8 +17,3 @@ class MessageResponse(BaseModel):
     mentions: list[str] | None = None
     parent_id: str | None = None
     created_at: str
-
-
-class MessageListResponse(BaseModel):
-    messages: list[MessageResponse]
-    has_more: bool = False

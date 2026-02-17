@@ -3,7 +3,7 @@
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.conftest import create_agent, create_channel, create_user
+from tests.conftest import create_agent
 
 
 async def test_list_agents_empty(client: AsyncClient):

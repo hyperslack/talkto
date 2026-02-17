@@ -6,9 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.conftest import (
-    create_agent,
     create_channel,
-    create_channel_member,
     create_message,
     create_user,
 )

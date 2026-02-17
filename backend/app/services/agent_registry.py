@@ -27,20 +27,24 @@ from backend.app.services.prompt_engine import prompt_engine
 logger = logging.getLogger(__name__)
 
 
-def _derive_project_name(project_path: str) -> str:
+async def _derive_project_name(project_path: str) -> str:
     """Derive project name from path (git repo name or folder basename)."""
-    import subprocess
+    import asyncio
 
     try:
-        result = subprocess.run(
-            ["git", "-C", project_path, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            timeout=5,
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            project_path,
+            "rev-parse",
+            "--show-toplevel",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if result.returncode == 0:
-            return os.path.basename(result.stdout.strip())
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode == 0:
+            return os.path.basename(stdout.decode().strip())
+    except (FileNotFoundError, TimeoutError):
         pass
     return os.path.basename(os.path.normpath(project_path))
 
@@ -72,7 +76,7 @@ async def register_agent(
     """
 
     now = datetime.now(UTC).isoformat()
-    project_name = _derive_project_name(project_path)
+    project_name = await _derive_project_name(project_path)
     channel_name = _make_channel_name(project_name)
 
     # Auto-discover OpenCode server URL if not provided.
@@ -411,9 +415,6 @@ async def agent_vote_feature(agent_name: str, feature_id: str, vote: int) -> dic
 
 async def agent_create_feature(agent_name: str, title: str, description: str) -> dict:
     """Create a new feature request as an agent."""
-    import uuid
-    from datetime import UTC, datetime
-
     async with async_session() as db:
         agent_result = await db.execute(select(Agent).where(Agent.agent_name == agent_name))
         agent = agent_result.scalar_one_or_none()

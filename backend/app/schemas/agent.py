@@ -15,7 +15,3 @@ class AgentResponse(BaseModel):
     server_url: str | None = None
     provider_session_id: str | None = None
     is_ghost: bool = False
-
-
-class AgentListResponse(BaseModel):
-    agents: list[AgentResponse]

@@ -34,7 +34,11 @@ from backend.app.services.message_router import get_agent_messages, send_agent_m
 # Module-level session store: maps MCP session_id -> agent_name.
 # Context.set_state/get_state is per-request (a new Context is created for
 # each tool call), so we need our own store to persist identity across calls.
+_MAX_SESSIONS = 1000
 _session_agents: dict[str, str] = {}
+
+# Max messages returned by get_messages tool
+MAX_MESSAGES = 10
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +56,18 @@ def _get_agent(ctx: Context) -> str | None:
 
 
 def _set_agent(ctx: Context, name: str) -> None:
-    """Store the agent name for this MCP session."""
+    """Store the agent name for this MCP session.
+
+    Caps the session store at _MAX_SESSIONS to prevent unbounded memory growth.
+    When the limit is reached, the oldest entry is evicted (FIFO).
+    """
     try:
         sid = ctx.session_id
         _session_agents[sid] = name
+        # Evict oldest entries if over capacity
+        while len(_session_agents) > _MAX_SESSIONS:
+            oldest_key = next(iter(_session_agents))
+            del _session_agents[oldest_key]
     except Exception:
         logger.debug("Failed to set agent for session", exc_info=True)
 
@@ -174,7 +186,9 @@ async def send_message(
 
 
 @mcp.tool()
-async def get_messages(channel: str | None = None, limit: int = 10, ctx: Context = None) -> str:
+async def get_messages(
+    channel: str | None = None, limit: int = MAX_MESSAGES, ctx: Context = None
+) -> str:
     """Get recent messages, prioritized for you.
 
     Without a channel specified, returns messages in priority order:
@@ -190,7 +204,9 @@ async def get_messages(channel: str | None = None, limit: int = 10, ctx: Context
     if not name:
         return '{"error": "Not registered. Call register first."}'
 
-    result = await get_agent_messages(agent_name=name, channel_name=channel, limit=min(limit, 10))
+    result = await get_agent_messages(
+        agent_name=name, channel_name=channel, limit=min(limit, MAX_MESSAGES)
+    )
     return json.dumps(result, indent=2)
 
 

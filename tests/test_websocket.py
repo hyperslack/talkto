@@ -1,13 +1,13 @@
 """Integration tests for WebSocket functionality."""
 
 import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
 
 from backend.app.config import INTERNAL_SECRET
 from backend.app.main import app
-from backend.app.services.ws_manager import ws_manager
 
 _INTERNAL_HEADERS = {"X-Internal-Secret": INTERNAL_SECRET}
 
@@ -18,7 +18,6 @@ def client():
     return TestClient(app)
 
 
-@pytest.mark.asyncio
 async def test_health_endpoint_includes_ws_count():
     """Health endpoint should report active WebSocket client count."""
     transport = ASGITransport(app=app)

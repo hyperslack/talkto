@@ -21,6 +21,8 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     type: Mapped[str] = mapped_column(String, nullable=False)
     project_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    # created_by stores either a user UUID (for agent-created channels) or the
+    # literal string "system" (for seed channels). Not a FK — intentional.
     created_by: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 

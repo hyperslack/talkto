@@ -1,6 +1,5 @@
 """User onboarding & profile endpoints."""
 
-import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -14,6 +13,7 @@ from backend.app.models.channel import Channel
 from backend.app.models.message import Message
 from backend.app.models.user import User
 from backend.app.schemas.user import UserOnboard, UserResponse
+from backend.app.services.agent_invoker import spawn_background_task
 from backend.app.services.broadcaster import broadcast_event, new_message_event
 from backend.app.services.name_generator import CREATOR_NAME
 
@@ -99,7 +99,7 @@ async def onboard_user(data: UserOnboard, db: AsyncSession = Depends(get_db)) ->
 
     # First-time onboard: have the_creator welcome them in #general
     welcome_name = data.display_name or data.name
-    asyncio.create_task(_post_creator_welcome(welcome_name, data.about))
+    spawn_background_task(_post_creator_welcome(welcome_name, data.about))
 
     return user
 
@@ -129,9 +129,19 @@ async def update_profile(data: UserOnboard, db: AsyncSession = Depends(get_db)) 
 
 @router.delete("/me", status_code=204)
 async def delete_profile(db: AsyncSession = Depends(get_db)) -> None:
-    """Delete the current human user so a new one can onboard."""
+    """Delete the current human user so a new one can onboard.
+
+    Note: Messages sent by this user become orphaned (sender_id points to a
+    deleted user). This is acceptable for a local-only tool — a full cleanup
+    would require cascading deletes or nullifying sender_id.
+    """
     result = await db.execute(select(User).where(User.type == "human"))
     user = result.scalar_one_or_none()
     if user:
+        logger.warning(
+            "Deleting human user '%s' (id=%s) — messages from this user will be orphaned",
+            user.display_name or user.name,
+            user.id,
+        )
         await db.delete(user)
         await db.flush()
