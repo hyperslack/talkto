@@ -7,7 +7,6 @@ Per-session agent identity is stored in a module-level dict keyed by
 ctx.session_id, so state persists across tool calls within one MCP session.
 """
 
-import json
 import logging
 
 from fastmcp import Context, FastMCP
@@ -79,7 +78,7 @@ async def register(
     session_id: str | None = None,
     server_url: str | None = None,
     ctx: Context = None,
-) -> str:
+) -> dict:
     """Register as a new agent with TalkTo.
 
     Each call creates a fresh agent identity with a unique name.
@@ -103,9 +102,7 @@ async def register(
     # Validate agent_type (system is reserved for internal use)
     allowed = [t for t in VALID_AGENT_TYPES if t != "system"]
     if agent_type not in allowed:
-        return json.dumps(
-            {"error": f"Invalid agent_type '{agent_type}'. Must be one of: {allowed}"}
-        )
+        return {"error": f"Invalid agent_type '{agent_type}'. Must be one of: {allowed}"}
 
     result = await register_agent(
         agent_type=agent_type,
@@ -116,7 +113,7 @@ async def register(
     if ctx and result.get("agent_name"):
         _set_agent(ctx, result["agent_name"])
 
-    return json.dumps(result, indent=2)
+    return result
 
 
 @mcp.tool()
@@ -125,7 +122,7 @@ async def connect(
     session_id: str | None = None,
     server_url: str | None = None,
     ctx: Context = None,
-) -> str:
+) -> dict:
     """Reconnect to TalkTo after terminal restart.
 
     Args:
@@ -146,11 +143,11 @@ async def connect(
     if ctx and "error" not in result:
         _set_agent(ctx, agent_name)
 
-    return json.dumps(result, indent=2)
+    return result
 
 
 @mcp.tool()
-async def disconnect(agent_name: str | None = None, ctx: Context = None) -> str:
+async def disconnect(agent_name: str | None = None, ctx: Context = None) -> dict:
     """Mark yourself as offline.
 
     Args:
@@ -158,16 +155,15 @@ async def disconnect(agent_name: str | None = None, ctx: Context = None) -> str:
     """
     name = agent_name or (_get_agent(ctx) if ctx else None)
     if not name:
-        return '{"error": "No agent name provided and no active session."}'
+        return {"error": "No agent name provided and no active session."}
 
-    result = await disconnect_agent(agent_name=name)
-    return json.dumps(result)
+    return await disconnect_agent(agent_name=name)
 
 
 @mcp.tool()
 async def send_message(
     channel: str, content: str, mentions: list[str] | None = None, ctx: Context = None
-) -> str:
+) -> dict:
     """Send a message to a channel.
 
     Args:
@@ -177,18 +173,17 @@ async def send_message(
     """
     name = _get_agent(ctx) if ctx else None
     if not name:
-        return '{"error": "Not registered. Call register first."}'
+        return {"error": "Not registered. Call register first."}
 
-    result = await send_agent_message(
+    return await send_agent_message(
         agent_name=name, channel_name=channel, content=content, mentions=mentions
     )
-    return json.dumps(result)
 
 
 @mcp.tool()
 async def get_messages(
     channel: str | None = None, limit: int = MAX_MESSAGES, ctx: Context = None
-) -> str:
+) -> dict:
     """Get recent messages, prioritized for you.
 
     Without a channel specified, returns messages in priority order:
@@ -202,28 +197,26 @@ async def get_messages(
     """
     name = _get_agent(ctx) if ctx else None
     if not name:
-        return '{"error": "Not registered. Call register first."}'
+        return {"error": "Not registered. Call register first."}
 
-    result = await get_agent_messages(
+    return await get_agent_messages(
         agent_name=name, channel_name=channel, limit=min(limit, MAX_MESSAGES)
     )
-    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-async def create_channel(name: str, ctx: Context = None) -> str:
+async def create_channel(name: str, ctx: Context = None) -> dict:
     """Create a new channel.
 
     Args:
         name: Channel name (will be auto-prefixed with # if not present)
     """
     creator = (_get_agent(ctx) if ctx else None) or "unknown"
-    result = await create_new_channel(name=name, created_by=creator)
-    return json.dumps(result)
+    return await create_new_channel(name=name, created_by=creator)
 
 
 @mcp.tool()
-async def join_channel(channel: str, ctx: Context = None) -> str:
+async def join_channel(channel: str, ctx: Context = None) -> dict:
     """Join an existing channel to receive its messages.
 
     Args:
@@ -231,24 +224,21 @@ async def join_channel(channel: str, ctx: Context = None) -> str:
     """
     name = _get_agent(ctx) if ctx else None
     if not name:
-        return '{"error": "Not registered. Call register first."}'
+        return {"error": "Not registered. Call register first."}
 
-    result = await join_agent_to_channel(agent_name=name, channel_name=channel)
-    return json.dumps(result)
+    return await join_agent_to_channel(agent_name=name, channel_name=channel)
 
 
 @mcp.tool()
-async def list_channels() -> str:
+async def list_channels() -> list:
     """List all available channels."""
-    result = await list_all_channels()
-    return json.dumps(result, indent=2)
+    return await list_all_channels()
 
 
 @mcp.tool()
-async def list_agents() -> str:
+async def list_agents() -> list:
     """List all registered agents and their status, personality, and current task."""
-    agents = await list_all_agents()
-    return json.dumps(agents, indent=2)
+    return await list_all_agents()
 
 
 @mcp.tool()
@@ -258,7 +248,7 @@ async def update_profile(
     current_task: str | None = None,
     gender: str | None = None,
     ctx: Context = None,
-) -> str:
+) -> dict:
     """Update your agent profile — set your description, personality, current task, and gender.
 
     Other agents see this when they call list_agents. Make it yours.
@@ -271,20 +261,19 @@ async def update_profile(
     """
     name = _get_agent(ctx) if ctx else None
     if not name:
-        return '{"error": "Not registered. Call register first."}'
+        return {"error": "Not registered. Call register first."}
 
-    result = await update_agent_profile(
+    return await update_agent_profile(
         agent_name=name,
         description=description,
         personality=personality,
         current_task=current_task,
         gender=gender,
     )
-    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-async def get_feature_requests() -> str:
+async def get_feature_requests() -> dict:
     """View all TalkTo feature requests with vote counts.
 
     Returns a list of features from the database with id, title, description,
@@ -292,14 +281,12 @@ async def get_feature_requests() -> str:
     """
     features = await list_all_features()
     if not features:
-        return json.dumps(
-            {"features": [], "hint": "No features yet. Use create_feature_request to propose one."}
-        )
-    return json.dumps({"features": features}, indent=2)
+        return {"features": [], "hint": "No features yet. Use create_feature_request to propose one."}
+    return {"features": features}
 
 
 @mcp.tool()
-async def create_feature_request(title: str, description: str, ctx: Context = None) -> str:
+async def create_feature_request(title: str, description: str, ctx: Context = None) -> dict:
     """Propose a new feature request for TalkTo.
 
     Other agents and the human operator can see and vote on it.
@@ -310,14 +297,13 @@ async def create_feature_request(title: str, description: str, ctx: Context = No
     """
     name = _get_agent(ctx) if ctx else None
     if not name:
-        return '{"error": "Not registered. Call register first."}'
+        return {"error": "Not registered. Call register first."}
 
-    result = await agent_create_feature(agent_name=name, title=title, description=description)
-    return json.dumps(result, indent=2)
+    return await agent_create_feature(agent_name=name, title=title, description=description)
 
 
 @mcp.tool()
-async def vote_feature(feature_id: str, vote: int, ctx: Context = None) -> str:
+async def vote_feature(feature_id: str, vote: int, ctx: Context = None) -> dict:
     """Vote on a TalkTo feature request.
 
     Use get_feature_requests to see available features and their IDs.
@@ -327,25 +313,23 @@ async def vote_feature(feature_id: str, vote: int, ctx: Context = None) -> str:
         vote: +1 (upvote) or -1 (downvote)
     """
     if vote not in (1, -1):
-        return '{"error": "Vote must be +1 or -1"}'
+        return {"error": "Vote must be +1 or -1"}
 
     name = _get_agent(ctx) if ctx else None
     if not name:
-        return '{"error": "Not registered. Call register first."}'
+        return {"error": "Not registered. Call register first."}
 
-    result = await agent_vote_feature(agent_name=name, feature_id=feature_id, vote=vote)
-    return json.dumps(result)
+    return await agent_vote_feature(agent_name=name, feature_id=feature_id, vote=vote)
 
 
 @mcp.tool()
-async def heartbeat(ctx: Context = None) -> str:
+async def heartbeat(ctx: Context = None) -> dict:
     """Send a keep-alive signal to stay online."""
     name = _get_agent(ctx) if ctx else None
     if not name:
-        return '{"error": "Not registered. Call register first."}'
+        return {"error": "Not registered. Call register first."}
 
-    result = await heartbeat_agent(agent_name=name)
-    return json.dumps(result)
+    return await heartbeat_agent(agent_name=name)
 
 
 if __name__ == "__main__":
