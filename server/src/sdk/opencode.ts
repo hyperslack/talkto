@@ -12,6 +12,9 @@ import type { Session, Part, TextPart, AssistantMessage } from "@opencode-ai/sdk
 // Re-export useful types for consumers
 export type { Session, Part, TextPart, AssistantMessage };
 
+// Default timeout for session.prompt() calls (2 minutes)
+const PROMPT_TIMEOUT_MS = 120_000;
+
 // ---------------------------------------------------------------------------
 // Client cache — one client per server URL
 // ---------------------------------------------------------------------------
@@ -19,6 +22,10 @@ export type { Session, Part, TextPart, AssistantMessage };
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 const clients = new Map<string, OpencodeClient>();
+
+// Invocation session cache: agentName → sessionId
+// Dedicated sessions created for TalkTo invocations, separate from agent TUI sessions
+const invocationSessions = new Map<string, string>();
 
 /**
  * Get or create an OpenCode SDK client for a given server URL.
@@ -89,15 +96,91 @@ export async function isSessionAlive(
 
 /**
  * Check if an OpenCode server is reachable.
+ * Uses session.list() as a health check since client.global.health doesn't exist.
  */
 export async function isServerHealthy(serverUrl: string): Promise<boolean> {
   try {
     const client = getClient(serverUrl);
-    const result = await client.global.health();
-    return result.data?.healthy === true;
+    const result = await client.session.list();
+    return Array.isArray(result.data);
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Session creation — dedicated sessions for TalkTo invocations
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a new OpenCode session.
+ *
+ * Used to create dedicated invocation sessions so we don't conflict
+ * with an agent's active TUI session (which would hang on prompt()).
+ */
+export async function createSession(
+  serverUrl: string,
+  directory?: string
+): Promise<Session | null> {
+  try {
+    const client = getClient(serverUrl);
+    const result = await (client.session as any).create({
+      body: directory ? { path: directory } : {},
+    });
+    return (result.data ?? null) as Session | null;
+  } catch (err) {
+    console.error(`[OPENCODE] Failed to create session at ${serverUrl}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Get or create a dedicated invocation session for an agent.
+ *
+ * Each agent gets its own invocation session (separate from their TUI session)
+ * so that session.prompt() doesn't hang on a busy session. The session is
+ * cached per agent name and reused across invocations, maintaining
+ * conversation history.
+ *
+ * If the cached session is dead, a new one is created.
+ */
+export async function getOrCreateInvocationSession(
+  serverUrl: string,
+  agentName: string,
+  projectDirectory: string
+): Promise<string | null> {
+  // Check cache
+  const cached = invocationSessions.get(agentName);
+  if (cached) {
+    // Verify it's still alive
+    const alive = await isSessionAlive(serverUrl, cached);
+    if (alive) {
+      return cached;
+    }
+    console.log(
+      `[OPENCODE] Cached invocation session for '${agentName}' is dead — creating new one`
+    );
+    invocationSessions.delete(agentName);
+  }
+
+  // Create a new dedicated session
+  console.log(`[OPENCODE] Creating dedicated invocation session for '${agentName}'`);
+  const session = await createSession(serverUrl, projectDirectory);
+  if (!session) {
+    console.error(`[OPENCODE] Failed to create invocation session for '${agentName}'`);
+    return null;
+  }
+
+  invocationSessions.set(agentName, session.id);
+  console.log(
+    `[OPENCODE] Created invocation session for '${agentName}': ${session.id} (${(session as any).slug ?? ""})`
+  );
+  return session.id;
+}
+
+/** Clear a cached invocation session (e.g., when agent unregisters). */
+export function clearInvocationSession(agentName: string): void {
+  invocationSessions.delete(agentName);
 }
 
 // ---------------------------------------------------------------------------
@@ -110,22 +193,33 @@ export async function isServerHealthy(serverUrl: string): Promise<boolean> {
  * Uses `session.prompt()` which blocks until the AI finishes processing.
  * Returns the extracted text content from the response parts, or null on error.
  *
+ * Includes a timeout (default 2 minutes) to prevent hanging on busy sessions.
+ *
  * For DMs: call with just the message text.
  * For @mentions: call with a formatted prompt including channel context.
  */
 export async function promptSession(
   serverUrl: string,
   sessionId: string,
-  text: string
+  text: string,
+  timeoutMs: number = PROMPT_TIMEOUT_MS
 ): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
   try {
     const client = getClient(serverUrl);
-    const result = await client.session.prompt({
+
+    // Race the SDK call against a timeout
+    const promptPromise = client.session.prompt({
       path: { id: sessionId },
       body: {
         parts: [{ type: "text", text }],
       },
     });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Prompt timed out after ${timeoutMs}ms`)), timeoutMs)
+    );
+
+    const result = await Promise.race([promptPromise, timeoutPromise]);
 
     if (!result.data) {
       console.error("[OPENCODE] No data in prompt response");

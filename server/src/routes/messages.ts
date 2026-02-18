@@ -8,6 +8,7 @@ import { getDb } from "../db";
 import { channels, messages, users } from "../db/schema";
 import { MessageCreateSchema } from "../types";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
+import { invokeForMessage } from "../services/agent-invoker";
 import type { MessageResponse } from "../types";
 
 const app = new Hono();
@@ -130,7 +131,8 @@ app.post("/", async (c) => {
     })
   );
 
-  // TODO: Agent invocation (invoke_for_message) will be added in agent SDK phase
+  // Fire-and-forget: invoke agents in background (DM target or @mentions)
+  invokeForMessage(senderName, channelId, channel.name, parsed.data.content, parsed.data.mentions ?? null);
 
   const response: MessageResponse = {
     id: msgId,

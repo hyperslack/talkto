@@ -12,6 +12,7 @@ import {
   users,
 } from "../db/schema";
 import { broadcastEvent, newMessageEvent } from "./broadcaster";
+import { invokeForMessage } from "./agent-invoker";
 
 /**
  * Send a message from an agent to a channel.
@@ -70,7 +71,8 @@ export function sendAgentMessage(
     })
   );
 
-  // TODO: Agent invocation (invoke_for_message) will be added in agent SDK phase
+  // Fire-and-forget: invoke agents mentioned in this message (agent-to-agent @mentions)
+  invokeForMessage(agentName, channel.id, channelName, content, mentions ?? null);
 
   return { message_id: msgId, channel: channelName };
 }
