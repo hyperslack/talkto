@@ -4,7 +4,7 @@
 Complete the TypeScript backend by wiring up agent invocation via native OpenCode SDK integration, switching the frontend to the TS backend, and updating infrastructure — so TalkTo works end-to-end: human sends a message, agent receives it via SDK, TalkTo posts the agent's response back to the channel.
 
 ## Current Phase
-Phase 2
+Phase 5
 
 ## Communication Protocol
 

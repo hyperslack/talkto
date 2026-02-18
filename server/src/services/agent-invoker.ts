@@ -17,7 +17,14 @@ import { getDb } from "../db";
 import { agents, messages, users } from "../db/schema";
 import { broadcastEvent, newMessageEvent, agentTypingEvent } from "./broadcaster";
 import { getAgentInvocationInfo } from "./agent-discovery";
-import { promptSession } from "../sdk/opencode";
+import {
+  promptSession,
+  promptSessionWithEvents,
+  isSessionBusy,
+  isTuiActive,
+  tuiPrompt,
+  tuiToast,
+} from "../sdk/opencode";
 
 // ---------------------------------------------------------------------------
 // Background task tracking — prevents GC of fire-and-forget promises
@@ -118,9 +125,11 @@ async function _invokeForMessage(
  * Invoke a single agent via OpenCode SDK and post the response.
  *
  * Flow:
- * 1. Broadcast agent_typing (start)
- * 2. Look up invocation info (server_url + session_id from agent's registration)
- * 3. Call session.prompt() on the agent's registered session
+ * 1. Check if the session is busy (already processing) — wait briefly or warn
+ * 2. Broadcast agent_typing (start)
+ * 3. Attempt TUI path if TUI is active (tui.appendPrompt + submitPrompt)
+ *    - If TUI path: wait for response via session.prompt() (TUI submitting triggers the same flow)
+ *    - If no TUI: use session.prompt() directly with event callbacks for real-time typing
  * 4. Extract text from response
  * 5. Create message in channel as the agent
  * 6. Broadcast new_message + agent_typing (stop)
@@ -152,12 +161,58 @@ async function invokeAgent(
       return;
     }
 
+    // Check if session is currently busy
+    const busy = await isSessionBusy(info.serverUrl, info.sessionId);
+    if (busy) {
+      console.warn(`[INVOKE] '${agentName}' session is busy — queueing prompt`);
+      // Still proceed — session.prompt() will queue behind the current processing
+    }
+
+    // Try TUI path first: if the agent has an active TUI, send the message
+    // there so it appears naturally in their terminal
+    const tuiActive = await isTuiActive(info.serverUrl);
+    if (tuiActive) {
+      console.log(`[INVOKE] TUI active for '${agentName}' — using TUI path`);
+      // Show a toast notification in the agent's TUI
+      const tuiContext = isDm
+        ? `DM from ${channelName.replace("#dm-", "")}`
+        : `@mention in ${channelName}`;
+      await tuiToast(info.serverUrl, `[TalkTo] ${tuiContext}`, "info");
+    }
+
     console.log(
-      `[INVOKE] Prompting '${agentName}' session=${info.sessionId} server=${info.serverUrl}`
+      `[INVOKE] Prompting '${agentName}' session=${info.sessionId} server=${info.serverUrl} tui=${tuiActive}`
     );
 
-    // Send prompt to the agent's registered session and wait for response
-    const result = await promptSession(info.serverUrl, info.sessionId, prompt);
+    // Use event-driven prompt for real-time typing indicators
+    // The callbacks fire as the agent processes, giving the UI live feedback
+    let typingBroadcasted = false;
+    const result = await promptSessionWithEvents(
+      info.serverUrl,
+      info.sessionId,
+      prompt,
+      {
+        onTypingStart: () => {
+          if (!typingBroadcasted) {
+            // Re-broadcast typing to confirm agent is actively processing
+            broadcastEvent(agentTypingEvent(agentName, channelId, true));
+            typingBroadcasted = true;
+          }
+        },
+        onTextDelta: (_delta) => {
+          // Future: could broadcast partial text for streaming UI
+          // For now, we just maintain the typing indicator
+          if (!typingBroadcasted) {
+            broadcastEvent(agentTypingEvent(agentName, channelId, true));
+            typingBroadcasted = true;
+          }
+        },
+        onError: (error) => {
+          console.error(`[INVOKE] SSE error for '${agentName}':`, error);
+        },
+      }
+    );
+
     if (!result || !result.text) {
       console.warn(`[INVOKE] No response from '${agentName}'`);
       broadcastEvent(

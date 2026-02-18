@@ -78,11 +78,30 @@
   - Invocation sessions maintain conversation history across prompts
 
 ### Phase 4: TUI Integration & Event Subscription
-- **Status:** pending
+- **Status:** complete
+- **Committed:** (pending commit)
 - Actions taken:
-  -
+  - Researched OpenCode SDK internals: discovered `event.subscribe()` returns `AsyncGenerator<Event>`, `session.status()` returns `{sessionID: SessionStatus}` map, 30+ event types with typed payloads
+  - Added `getSessionStatuses()`, `getSessionStatus()`, `isSessionBusy()` — wraps `session.status()` for busy/idle detection
+  - Added `subscribeToEvents()` — wraps `event.subscribe()`, returns typed async generator
+  - Added `filterEventsBySession()` — filters SSE stream for events matching a specific sessionID
+  - Added `promptSessionWithEvents()` — prompts session while consuming SSE events for real-time callbacks (onTypingStart, onTextDelta, onComplete, onError)
+  - Added `isTuiActive()` — heuristic TUI detection via `tui.clearPrompt()` success
+  - Enhanced `tuiPrompt()` — clears prompt before appending to prevent text concatenation
+  - Added `tuiToast()` — show toast notifications in agent's TUI
+  - Updated `agent-invoker.ts` — now checks session busy status, detects TUI, uses event-driven prompting with real-time typing broadcasts
+  - Added 11 new tests: filterEventsBySession (8 tests), SessionStatus types (3 tests)
+  - Live tested: DM to spicy-bat with TUI active, response "PHASE4_LIVE_TEST_OK" received correctly
 - Files created/modified:
-  -
+  - server/src/sdk/opencode.ts (major update: +8 new functions, type imports expanded)
+  - server/src/services/agent-invoker.ts (updated: TUI detection, busy check, event-driven prompting)
+  - server/tests/opencode.test.ts (updated: +11 tests for filterEventsBySession and SessionStatus)
+- Key discoveries:
+  - `session.status()` only returns entries for busy/retry sessions — absent means idle
+  - `event.subscribe()` returns `{ stream: AsyncGenerator }` at top level (not nested in `data`)
+  - First SSE event is always `server.connected` (like a handshake)
+  - `tui.clearPrompt()` succeeds when TUI is connected, fails when not — works as detection heuristic
+  - SSE events include `message.part.updated` with `delta` field for streaming text
 
 ### Phase 5: Infrastructure & Documentation
 - **Status:** pending
@@ -94,10 +113,11 @@
 ## Test Results
 | Test | Input | Expected | Actual | Status |
 |------|-------|----------|--------|--------|
-| TS backend tests | `bun test` in server/ | 37 pass | 37 pass (298 assertions, 122ms) | PASS |
+| TS backend tests | `bun test` in server/ | 48 pass | 48 pass (336 assertions, 124ms) | PASS |
 | Live DM invocation | DM "Reply with exactly: LIVE_TEST_OK" to plucky-sparrow | Agent response in channel | "LIVE_TEST_OK" posted in 2.5s | PASS |
 | Live conversation memory | DM "What was the last thing I asked you?" | Recalls prior message | Correctly recalled LIVE_TEST_OK request | PASS |
 | Live @mention | @plucky-sparrow in #general "what is 2+2?" | Agent responds in channel | "4" posted | PASS |
+| Phase 4 DM + TUI | DM "Reply with exactly: PHASE4_LIVE_TEST_OK" to spicy-bat | Agent responds via TUI path | "PHASE4_LIVE_TEST_OK" posted, TUI detected, event-driven prompt | PASS |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
@@ -110,11 +130,11 @@
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 3 complete, Phase 4 next |
-| Where am I going? | Phase 4: TUI integration (tui.appendPrompt + event.subscribe) |
+| Where am I? | Phase 4 complete, Phase 5 next |
+| Where am I going? | Phase 5: Infrastructure & Documentation |
 | What's the goal? | Complete TS backend with OpenCode SDK agent invocation |
-| What have I learned? | session.prompt() hangs on busy sessions → use dedicated invocation sessions |
-| What have I done? | Phases 0-3 complete. DM + @mention invocation working end-to-end |
+| What have I learned? | session.status() is separate API, SSE stream is AsyncGenerator, TUI detection via clearPrompt heuristic |
+| What have I done? | Phases 0-4 complete. Full invocation pipeline with TUI detection, event-driven typing, session status |
 
 ---
 *Update after completing each phase or encountering errors*

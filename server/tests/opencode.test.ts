@@ -6,8 +6,23 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { matchSessionByProject, extractTextFromParts } from "../src/sdk/opencode";
-import type { Session, Part, TextPart } from "@opencode-ai/sdk";
+import {
+  matchSessionByProject,
+  extractTextFromParts,
+  filterEventsBySession,
+} from "../src/sdk/opencode";
+import type {
+  Session,
+  Part,
+  TextPart,
+  OpenCodeEvent,
+  EventSessionStatus,
+  EventSessionIdle,
+  EventMessagePartUpdated,
+  EventSessionError,
+  EventMessageUpdated,
+  SessionStatus,
+} from "../src/sdk/opencode";
 
 // ---------------------------------------------------------------------------
 // Helper: create a mock Session
@@ -190,5 +205,212 @@ describe("extractTextFromParts", () => {
 
   test("handles empty parts array", () => {
     expect(extractTextFromParts([])).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// filterEventsBySession
+// ---------------------------------------------------------------------------
+
+describe("filterEventsBySession", () => {
+  /** Helper: create an async generator from an array of events */
+  async function* fromArray(
+    events: OpenCodeEvent[]
+  ): AsyncGenerator<OpenCodeEvent, void, unknown> {
+    for (const e of events) {
+      yield e;
+    }
+  }
+
+  /** Helper: collect all events from an async generator into an array */
+  async function collectAll(
+    gen: AsyncGenerator<OpenCodeEvent, void, unknown>
+  ): Promise<OpenCodeEvent[]> {
+    const results: OpenCodeEvent[] = [];
+    for await (const e of gen) {
+      results.push(e);
+    }
+    return results;
+  }
+
+  test("filters session.status events by sessionID", async () => {
+    const events: OpenCodeEvent[] = [
+      {
+        type: "session.status",
+        properties: { sessionID: "ses_A", status: { type: "busy" } },
+      } as EventSessionStatus,
+      {
+        type: "session.status",
+        properties: { sessionID: "ses_B", status: { type: "idle" } },
+      } as EventSessionStatus,
+      {
+        type: "session.idle",
+        properties: { sessionID: "ses_A" },
+      } as EventSessionIdle,
+    ];
+
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray(events), "ses_A")
+    );
+    expect(filtered).toHaveLength(2);
+    expect(filtered[0].type).toBe("session.status");
+    expect(filtered[1].type).toBe("session.idle");
+  });
+
+  test("filters message.updated events by sessionID in info", async () => {
+    const events: OpenCodeEvent[] = [
+      {
+        type: "message.updated",
+        properties: {
+          info: { sessionID: "ses_A", id: "msg_1", role: "assistant" },
+        },
+      } as unknown as EventMessageUpdated,
+      {
+        type: "message.updated",
+        properties: {
+          info: { sessionID: "ses_B", id: "msg_2", role: "assistant" },
+        },
+      } as unknown as EventMessageUpdated,
+    ];
+
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray(events), "ses_A")
+    );
+    expect(filtered).toHaveLength(1);
+    expect(
+      (filtered[0] as EventMessageUpdated).properties.info.id
+    ).toBe("msg_1");
+  });
+
+  test("filters message.part.updated events by sessionID in part", async () => {
+    const events: OpenCodeEvent[] = [
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { sessionID: "ses_A", id: "part_1", type: "text", text: "hello" },
+          delta: "hello",
+        },
+      } as unknown as EventMessagePartUpdated,
+      {
+        type: "message.part.updated",
+        properties: {
+          part: { sessionID: "ses_B", id: "part_2", type: "text", text: "world" },
+          delta: "world",
+        },
+      } as unknown as EventMessagePartUpdated,
+    ];
+
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray(events), "ses_A")
+    );
+    expect(filtered).toHaveLength(1);
+    expect(
+      (filtered[0] as unknown as { properties: { delta: string } }).properties.delta
+    ).toBe("hello");
+  });
+
+  test("filters session.error events", async () => {
+    const events: OpenCodeEvent[] = [
+      {
+        type: "session.error",
+        properties: {
+          sessionID: "ses_A",
+          error: { name: "ApiError" },
+        },
+      } as unknown as EventSessionError,
+      {
+        type: "session.error",
+        properties: {
+          sessionID: "ses_C",
+          error: { name: "Timeout" },
+        },
+      } as unknown as EventSessionError,
+    ];
+
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray(events), "ses_A")
+    );
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].type).toBe("session.error");
+  });
+
+  test("returns empty for no matching events", async () => {
+    const events: OpenCodeEvent[] = [
+      {
+        type: "session.status",
+        properties: { sessionID: "ses_X", status: { type: "busy" } },
+      } as EventSessionStatus,
+    ];
+
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray(events), "ses_A")
+    );
+    expect(filtered).toHaveLength(0);
+  });
+
+  test("handles empty stream", async () => {
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray([]), "ses_A")
+    );
+    expect(filtered).toHaveLength(0);
+  });
+
+  test("passes through events with matching properties.sessionID", async () => {
+    // Test with session.idle, session.compacted — all have sessionID directly
+    const events: OpenCodeEvent[] = [
+      { type: "session.idle", properties: { sessionID: "ses_A" } } as EventSessionIdle,
+      {
+        type: "session.status",
+        properties: { sessionID: "ses_A", status: { type: "idle" } },
+      } as EventSessionStatus,
+    ];
+
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray(events), "ses_A")
+    );
+    expect(filtered).toHaveLength(2);
+  });
+
+  test("ignores events without properties", async () => {
+    // server.connected has empty properties — should not match
+    const events: OpenCodeEvent[] = [
+      {
+        type: "server.connected",
+        properties: {},
+      } as OpenCodeEvent,
+    ];
+
+    const filtered = await collectAll(
+      filterEventsBySession(fromArray(events), "ses_A")
+    );
+    expect(filtered).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SessionStatus type shape tests
+// ---------------------------------------------------------------------------
+
+describe("SessionStatus types", () => {
+  test("idle status has correct shape", () => {
+    const status: SessionStatus = { type: "idle" };
+    expect(status.type).toBe("idle");
+  });
+
+  test("busy status has correct shape", () => {
+    const status: SessionStatus = { type: "busy" };
+    expect(status.type).toBe("busy");
+  });
+
+  test("retry status has attempt and message", () => {
+    const status: SessionStatus = {
+      type: "retry",
+      attempt: 2,
+      message: "Rate limited",
+      next: Date.now() + 5000,
+    };
+    expect(status.type).toBe("retry");
+    expect((status as { attempt: number }).attempt).toBe(2);
+    expect((status as { message: string }).message).toBe("Rate limited");
   });
 });
