@@ -19,7 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Terminal, Wifi, WifiOff } from "lucide-react";
+import { Wifi, WifiOff } from "lucide-react";
 
 export function WorkspaceLayout({
   children,
@@ -64,9 +64,11 @@ export function WorkspaceLayout({
       >
         {/* Sidebar header */}
         <div className="flex h-14 shrink-0 items-center gap-2.5 px-4">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-sidebar-foreground">
-            <Terminal className="h-3.5 w-3.5 text-sidebar" />
-          </div>
+          <img
+            src="/favicon-96x96.png"
+            alt="TalkTo"
+            className="h-7 w-7 rounded-md"
+          />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold text-sidebar-foreground">
               TalkTo

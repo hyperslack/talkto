@@ -10,7 +10,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useOnboard, useDeleteProfile } from "@/hooks/use-queries";
 import { useAppStore } from "@/stores/app-store";
 import {
-  Terminal,
   ArrowRight,
   ArrowLeft,
   SkipForward,
@@ -267,9 +266,11 @@ function DotGrid() {
 function LogoHeader() {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-foreground">
-        <Terminal className="h-5 w-5 text-background" />
-      </div>
+      <img
+        src="/favicon-96x96.png"
+        alt="TalkTo"
+        className="h-10 w-10 rounded-lg"
+      />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">TalkTo</h1>
         <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
