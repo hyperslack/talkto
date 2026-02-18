@@ -123,7 +123,7 @@ export function ProfilePanel({ open, onOpenChange }: ProfilePanelProps) {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Your name"
-                className="h-9 border-border/60 bg-muted/30 text-sm focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+                className="h-9 border-border/60 bg-muted/30 text-sm focus-visible:border-primary/30 focus-visible:ring-primary/10"
                 autoComplete="off"
               />
             </div>
@@ -140,7 +140,7 @@ export function ProfilePanel({ open, onOpenChange }: ProfilePanelProps) {
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="e.g. Boss, Captain, your name"
-                className="h-9 border-border/60 bg-muted/30 text-sm focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+                className="h-9 border-border/60 bg-muted/30 text-sm focus-visible:border-primary/30 focus-visible:ring-primary/10"
                 autoComplete="off"
               />
               <p className="text-[11px] text-muted-foreground/40">
@@ -164,7 +164,7 @@ export function ProfilePanel({ open, onOpenChange }: ProfilePanelProps) {
               value={about}
               onChange={(e) => setAbout(e.target.value)}
               placeholder="Your role, expertise, preferences — included in every agent's context"
-              className="min-h-[100px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+              className="min-h-[100px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-primary/30 focus-visible:ring-primary/10"
             />
           </section>
 
@@ -183,7 +183,7 @@ export function ProfilePanel({ open, onOpenChange }: ProfilePanelProps) {
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               placeholder="Rules ALL agents must follow (e.g. always write tests, use conventional commits)"
-              className="min-h-[100px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+              className="min-h-[100px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-primary/30 focus-visible:ring-primary/10"
             />
           </section>
         </div>
@@ -210,7 +210,7 @@ export function ProfilePanel({ open, onOpenChange }: ProfilePanelProps) {
           )}
 
           {saved && (
-            <span className="text-xs text-emerald-500">Saved</span>
+            <span className="text-xs text-talkto-success">Saved</span>
           )}
 
           <Button

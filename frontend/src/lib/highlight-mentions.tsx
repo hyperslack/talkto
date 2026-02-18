@@ -21,7 +21,7 @@ export function highlightMentions(
       return (
         <span
           key={i}
-          className="rounded-sm bg-violet-500/10 px-1 py-0.5 text-violet-500 font-medium"
+          className="rounded-sm bg-talkto-mention-bg px-1 py-0.5 text-talkto-mention-text font-medium"
         >
           {part}
         </span>

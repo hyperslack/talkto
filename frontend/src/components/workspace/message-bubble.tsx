@@ -1,6 +1,6 @@
 /** Individual message bubble — lazy-loads markdown renderer for rich content. */
 import type { Message } from "@/lib/types";
-import { Bot, User } from "lucide-react";
+import { Bot, User, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isPlainText, formatTime } from "@/lib/message-utils";
 import { highlightMentions } from "@/lib/highlight-mentions";
@@ -15,12 +15,14 @@ interface MessageBubbleProps {
   message: Message;
   isOwnMessage: boolean;
   showSender: boolean;
+  onDelete?: (messageId: string) => void;
 }
 
 export function MessageBubble({
   message,
   isOwnMessage: _isOwnMessage,
   showSender,
+  onDelete,
 }: MessageBubbleProps) {
   const isAgent = message.sender_type === "agent";
   const time = formatTime(message.created_at);
@@ -28,21 +30,32 @@ export function MessageBubble({
   return (
     <div
       className={cn(
-        "group relative px-2 py-1 rounded-md transition-colors hover:bg-muted/30",
-        showSender && "mt-3 pt-2",
+        "group relative rounded-md px-2 py-1.5 transition-colors hover:bg-muted/40",
+        showSender ? "mt-3 pt-2" : "mt-px",
+        isAgent && "hover:bg-talkto-agent-subtle/50",
       )}
     >
+      {/* Delete button — appears on hover */}
+      {onDelete && (
+        <button
+          onClick={() => onDelete(message.id)}
+          className="absolute right-2 top-1 z-10 rounded p-1 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground/50 hover:!text-destructive hover:bg-destructive/10"
+          title="Delete message"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+
       {/* Sender line */}
       {showSender && (
         <div className="mb-1 flex items-center gap-2">
-          {/* Avatar */}
-          <Avatar>
+          {/* Avatar — square for agents, circle for humans */}
+          <Avatar shape={isAgent ? "square" : "circle"}>
             <AvatarFallback
               className={cn(
-                "rounded-md",
                 isAgent
-                  ? "bg-violet-500/15 text-violet-500"
-                  : "bg-primary/10 text-primary",
+                  ? "bg-talkto-agent/12 text-talkto-agent"
+                  : "bg-primary/8 text-primary",
               )}
             >
               {isAgent ? (
@@ -55,12 +68,19 @@ export function MessageBubble({
 
           <span
             className={cn(
-              "text-sm font-semibold truncate max-w-[200px]",
-              isAgent ? "text-violet-500" : "text-foreground",
+              "text-[13px] font-semibold truncate max-w-[200px]",
+              isAgent ? "text-talkto-agent-foreground" : "text-foreground",
             )}
           >
             {message.sender_name ?? "Unknown"}
           </span>
+
+          {/* Agent badge */}
+          {isAgent && (
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-talkto-agent/10 text-talkto-agent">
+              Agent
+            </span>
+          )}
 
           <span className="text-[10px] text-muted-foreground/40 shrink-0">
             {time}
@@ -69,9 +89,7 @@ export function MessageBubble({
       )}
 
       {/* Message content */}
-      <div
-        className="pl-10 text-sm leading-relaxed"
-      >
+      <div className="pl-10 text-[13.5px] leading-relaxed">
         <MessageContent
           content={message.content}
           mentions={message.mentions}
@@ -121,5 +139,3 @@ function MessageContent({
     </Suspense>
   );
 }
-
-

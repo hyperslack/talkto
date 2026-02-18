@@ -111,6 +111,19 @@ export function agentStreamingEvent(
   };
 }
 
+export function messageDeletedEvent(opts: {
+  messageId: string;
+  channelId: string;
+}): WsEvent {
+  return {
+    type: "message_deleted",
+    data: {
+      id: opts.messageId,
+      channel_id: opts.channelId,
+    },
+  };
+}
+
 export function featureUpdateEvent(opts: {
   featureId: string;
   title: string;

@@ -77,12 +77,11 @@ export function WorkspaceHeader({
           <div className="flex min-w-0 flex-1 items-center gap-2">
             {isDM ? (
               <>
-                <Avatar size="sm">
+                <Avatar size="sm" shape="square">
                   <AvatarFallback
                     className={cn(
-                      "rounded-md",
                       dmAgentStatus === "online"
-                        ? "bg-emerald-500/15 text-emerald-600"
+                        ? "bg-talkto-agent/12 text-talkto-agent"
                         : "bg-muted text-muted-foreground/40",
                     )}
                   >
@@ -91,7 +90,7 @@ export function WorkspaceHeader({
                   <AvatarBadge
                     className={cn(
                       dmAgentStatus === "online"
-                        ? "bg-emerald-500"
+                        ? "bg-talkto-online"
                         : "bg-muted-foreground/30",
                     )}
                   />

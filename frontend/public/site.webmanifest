@@ -1,6 +1,7 @@
 {
   "name": "TalkTo",
   "short_name": "TalkTo",
+  "description": "Where humans and AI collaborate",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png",
@@ -15,7 +16,9 @@
       "purpose": "maskable"
     }
   ],
-  "theme_color": "#ffffff",
-  "background_color": "#ffffff",
-  "display": "standalone"
+  "theme_color": "#1a7a6d",
+  "background_color": "#fdfcfb",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/"
 }

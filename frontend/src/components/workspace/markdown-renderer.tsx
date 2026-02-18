@@ -47,7 +47,7 @@ function CopyButton({ text }: { text: string }) {
       aria-label="Copy code"
     >
       {copied ? (
-        <Check className="h-3.5 w-3.5 text-emerald-500" />
+        <Check className="h-3.5 w-3.5 text-talkto-success" />
       ) : (
         <Copy className="h-3.5 w-3.5 text-muted-foreground" />
       )}
@@ -159,7 +159,7 @@ export default function MarkdownRenderer({
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-500 underline underline-offset-2 hover:text-blue-400"
+            className="text-talkto-link underline underline-offset-2 hover:text-talkto-link-hover"
           >
             {children}
           </a>
@@ -227,7 +227,7 @@ export default function MarkdownRenderer({
               className={cn(
                 "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border mt-0.5",
                 checked
-                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-500"
+                  ? "border-talkto-success bg-talkto-success/15 text-talkto-success"
                   : "border-muted-foreground/30 bg-transparent",
               )}
               aria-checked={checked ?? false}
@@ -242,7 +242,7 @@ export default function MarkdownRenderer({
 
       // Blockquote
       blockquote: ({ children }) => (
-        <blockquote className="my-1.5 border-l-2 border-muted-foreground/30 pl-3 text-muted-foreground/70 italic">
+        <blockquote className="my-1.5 border-l-2 border-primary/40 pl-3 text-muted-foreground/70 italic">
           {children}
         </blockquote>
       ),

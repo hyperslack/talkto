@@ -189,7 +189,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
 
   return (
     <div className="shrink-0 border-t border-border/50 p-4">
-      <div className="relative flex items-end gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 focus-within:border-foreground/20 focus-within:ring-1 focus-within:ring-foreground/10">
+        <div className="relative flex items-end gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 transition-[border-color,box-shadow] duration-150 focus-within:border-primary/30 focus-within:ring-1 focus-within:ring-primary/10">
         {/* @-mention dropdown */}
         {mentionOpen && filtered.length > 0 && (
           <div
@@ -212,15 +212,15 @@ export function MessageInput({ channelId }: MessageInputProps) {
                 }}
                 onMouseEnter={() => setSelectedIdx(i)}
               >
-                <Avatar className="h-5 w-5 text-[10px]">
+                <Avatar className="h-5 w-5 text-[10px]" shape={m.type !== "human" && m.type !== "group" ? "square" : "circle"}>
                   <AvatarFallback
                     className={cn(
                       "text-[10px]",
                       m.type === "group"
-                        ? "bg-blue-500/15 text-blue-500"
+                        ? "bg-primary/12 text-primary"
                         : m.type === "human"
-                          ? "bg-amber-500/15 text-amber-600"
-                          : "bg-violet-500/15 text-violet-500",
+                          ? "bg-primary/8 text-primary"
+                          : "bg-talkto-agent/12 text-talkto-agent",
                     )}
                   >
                     {m.type === "group" ? "*" : m.name[0]?.toUpperCase()}
@@ -230,7 +230,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
                 <span
                   className={cn(
                     "ml-auto h-1.5 w-1.5 shrink-0 rounded-full",
-                    m.online ? "bg-emerald-500" : "bg-muted-foreground/30",
+                    m.online ? "bg-talkto-online" : "bg-muted-foreground/30",
                   )}
                 />
                 <span className="text-[11px] text-muted-foreground">{m.type}</span>

@@ -1,6 +1,6 @@
 /** Message feed — displays messages for the active channel. */
-import { useEffect, useRef, useMemo, lazy, Suspense } from "react";
-import { useMessages, useMe } from "@/hooks/use-queries";
+import { useEffect, useRef, useMemo, useCallback, lazy, Suspense } from "react";
+import { useMessages, useMe, useDeleteMessage } from "@/hooks/use-queries";
 import { useAppStore } from "@/stores/app-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,6 +23,7 @@ export function MessageFeed() {
   const clearInvocationError = useAppStore((s) => s.clearInvocationError);
   const { data: fetchedMessages, isLoading } = useMessages(activeChannelId);
   const { data: me } = useMe();
+  const deleteMessage = useDeleteMessage();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Get typing agents for current channel
@@ -74,6 +75,15 @@ export function MessageFeed() {
       (a, b) => a.created_at.localeCompare(b.created_at),
     );
   }, [fetchedMessages, realtimeMessages, activeChannelId]);
+
+  // Delete handler
+  const handleDelete = useCallback(
+    (messageId: string) => {
+      if (!activeChannelId) return;
+      deleteMessage.mutate({ channelId: activeChannelId, messageId });
+    },
+    [activeChannelId, deleteMessage],
+  );
 
   // Auto-scroll to bottom on new messages or streaming updates
   const streamingText = streamingAgents.map(
@@ -130,6 +140,7 @@ export function MessageFeed() {
                   message={msg}
                   isOwnMessage={msg.sender_id === me?.id}
                   showSender={showSender}
+                  onDelete={handleDelete}
                 />
               </div>
             );
@@ -181,8 +192,8 @@ function DateSeparator({ iso }: { iso: string }) {
 function InvocationError({ message }: { message: string }) {
   return (
     <div className="flex items-center gap-2 px-4 py-1.5">
-      <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-      <span className="text-xs text-amber-500/80">{message}</span>
+      <AlertTriangle className="h-3.5 w-3.5 text-talkto-warning" />
+      <span className="text-xs text-talkto-warning/80">{message}</span>
     </div>
   );
 }
@@ -193,23 +204,26 @@ function StreamingMessage({ agentName, text }: { agentName: string; text: string
     <div className="group relative px-2 py-1 rounded-md mt-3 pt-2">
       {/* Sender line — matches MessageBubble layout */}
       <div className="mb-1 flex items-center gap-2">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-violet-500/15">
-          <Bot className="h-4 w-4 text-violet-500" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-talkto-agent/12">
+          <Bot className="h-4 w-4 text-talkto-agent" />
         </div>
-        <span className="text-sm font-semibold truncate max-w-[200px] text-violet-500">
+        <span className="text-[13px] font-semibold truncate max-w-[200px] text-talkto-agent-foreground">
           {agentName}
         </span>
-        <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/40">
+        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-talkto-agent/10 text-talkto-agent">
+          Agent
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground/40">
           streaming
-          <span className="h-1 w-1 animate-pulse rounded-full bg-violet-500/40" />
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-talkto-agent/40" />
         </span>
       </div>
       {/* Streaming content — rendered as markdown for consistency */}
-      <div className="pl-10 text-sm leading-relaxed">
+      <div className="pl-10 text-[13.5px] leading-relaxed">
         <Suspense fallback={<span className="text-foreground/70">{text.slice(0, 200)}</span>}>
           <MarkdownRenderer content={text} mentions={null} />
         </Suspense>
-        <span className="inline-block h-3.5 w-0.5 animate-pulse bg-violet-500/50 align-text-bottom" />
+        <span className="inline-block h-3.5 w-0.5 animate-pulse bg-talkto-agent/50 align-text-bottom rounded-full" />
       </div>
     </div>
   );

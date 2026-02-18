@@ -83,6 +83,13 @@ export function sendMessage(
   });
 }
 
+export function deleteMessage(channelId: string, messageId: string) {
+  return request<{ deleted: boolean; id: string }>(
+    `/channels/${channelId}/messages/${messageId}`,
+    { method: "DELETE" },
+  );
+}
+
 // ── Agents ─────────────────────────────────────────────
 
 export function listAgents() {
