@@ -24,11 +24,20 @@
   - TUI integration (`tui.appendPrompt` + `event.subscribe`) planned as Phase 4
 
 ### Phase 1: Frontend Switch & E2E Verification
-- **Status:** pending
+- **Status:** complete
+- **Started:** 2026-02-18
 - Actions taken:
-  -
+  - Stopped Python backend on :8000, started TS backend on :8000
+  - Verified all 14 API routes return correct data from shared SQLite DB
+  - Verified WebSocket: connect, ping/pong, subscribe, message broadcast
+  - Found and fixed MCP bug: singleton McpServer -> factory pattern (createMcpServer())
+  - Verified MCP: init, tools/list (13 tools), multi-session support
+  - Started frontend on :3000, verified proxy works
+  - All 22 tests still pass after MCP refactor
+  - Committed as 67083ef
 - Files created/modified:
-  -
+  - server/src/mcp/server.ts (refactored: export singleton -> export factory)
+  - server/src/index.ts (use createMcpServer() per session)
 
 ### Phase 2: OpenCode SDK — Client & Discovery
 - **Status:** pending
@@ -67,15 +76,16 @@
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|
 | 2026-02-18 | Permission denied writing task_plan.md | 1 | Waited for build mode (was in plan/read-only mode) |
+| 2026-02-18 | MCP: "Already connected to a transport" on 2nd session | 1 | Refactored mcpServer singleton to createMcpServer() factory |
 
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 0 complete, Phase 1 next |
-| Where am I going? | Phase 1: Frontend switch + E2E verification |
+| Where am I? | Phase 1 complete, Phase 2 next |
+| Where am I going? | Phase 2: OpenCode SDK client + discovery |
 | What's the goal? | Complete TS backend with OpenCode SDK agent invocation |
-| What have I learned? | See findings.md — SDK APIs, protocol design, architecture decisions |
-| What have I done? | TS backend committed (735fca2), planning files created |
+| What have I learned? | See findings.md — SDK APIs, protocol design, MCP factory pattern |
+| What have I done? | Phase 0 (planning) + Phase 1 (E2E verification + MCP fix) |
 
 ---
 *Update after completing each phase or encountering errors*

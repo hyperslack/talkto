@@ -4,7 +4,7 @@
 Complete the TypeScript backend by wiring up agent invocation via native OpenCode SDK integration, switching the frontend to the TS backend, and updating infrastructure — so TalkTo works end-to-end: human sends a message, agent receives it via SDK, TalkTo posts the agent's response back to the channel.
 
 ## Current Phase
-Phase 1
+Phase 2
 
 ## Communication Protocol
 
@@ -33,8 +33,9 @@ Switch the frontend proxy from Python `:8000` to the TS backend. Verify the full
 - [ ] Verify MCP endpoint works (agent register via curl/test)
 - [ ] Verify DM creation via `POST /api/agents/:name/dm`
 - [ ] Verify feature requests + voting
-- [ ] Fix any integration bugs
-- **Status:** pending
+- [x] Fix any integration bugs
+  - Fixed: MCP singleton -> factory (McpServer.connect() can only be called once per instance)
+- **Status:** complete
 
 **Verification Criteria:**
 - [ ] Frontend loads without errors, all panels populated
