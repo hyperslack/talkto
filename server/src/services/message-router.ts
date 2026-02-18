@@ -1,0 +1,270 @@
+/**
+ * Message routing — send/get messages for agents with priority-based retrieval.
+ */
+
+import { eq, desc, sql, and, inArray } from "drizzle-orm";
+import { getDb } from "../db";
+import {
+  agents,
+  channels,
+  channelMembers,
+  messages,
+  users,
+} from "../db/schema";
+import { broadcastEvent, newMessageEvent } from "./broadcaster";
+
+/**
+ * Send a message from an agent to a channel.
+ * Persists, broadcasts, and returns the message ID.
+ */
+export function sendAgentMessage(
+  agentName: string,
+  channelName: string,
+  content: string,
+  mentions?: string[] | null
+): Record<string, unknown> {
+  const db = getDb();
+
+  // Get agent
+  const agent = db
+    .select()
+    .from(agents)
+    .where(eq(agents.agentName, agentName))
+    .get();
+  if (!agent) return { error: `Agent '${agentName}' not found.` };
+
+  // Get channel
+  const channel = db
+    .select()
+    .from(channels)
+    .where(eq(channels.name, channelName))
+    .get();
+  if (!channel) return { error: `Channel '${channelName}' not found.` };
+
+  const msgId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const mentionsJson = mentions ? JSON.stringify(mentions) : null;
+
+  db.insert(messages)
+    .values({
+      id: msgId,
+      channelId: channel.id,
+      senderId: agent.id,
+      content,
+      mentions: mentionsJson,
+      createdAt: now,
+    })
+    .run();
+
+  // Broadcast to WebSocket clients
+  broadcastEvent(
+    newMessageEvent({
+      messageId: msgId,
+      channelId: channel.id,
+      senderId: agent.id,
+      senderName: agentName,
+      content,
+      mentions,
+      createdAt: now,
+      senderType: "agent",
+    })
+  );
+
+  // TODO: Agent invocation (invoke_for_message) will be added in agent SDK phase
+
+  return { message_id: msgId, channel: channelName };
+}
+
+interface MessageItem {
+  id: string;
+  channel: string;
+  sender: string;
+  content: string;
+  mentions: string[];
+  created_at: string;
+  priority?: string;
+}
+
+/**
+ * Get messages for an agent, with priority-based retrieval.
+ *
+ * Priority order: @mentions > project channel > other member channels.
+ */
+export function getAgentMessages(
+  agentName: string,
+  channelName?: string | null,
+  limit: number = 10
+): Record<string, unknown> {
+  const db = getDb();
+
+  const agent = db
+    .select()
+    .from(agents)
+    .where(eq(agents.agentName, agentName))
+    .get();
+  if (!agent) return { error: `Agent '${agentName}' not found.` };
+
+  const result: MessageItem[] = [];
+
+  if (channelName) {
+    // Specific channel requested
+    const ch = db
+      .select()
+      .from(channels)
+      .where(eq(channels.name, channelName))
+      .get();
+    if (!ch) return { error: `Channel '${channelName}' not found.` };
+
+    const rows = db
+      .select({
+        id: messages.id,
+        channelName: channels.name,
+        senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+        content: messages.content,
+        mentions: messages.mentions,
+        createdAt: messages.createdAt,
+      })
+      .from(messages)
+      .innerJoin(users, eq(messages.senderId, users.id))
+      .innerJoin(channels, eq(messages.channelId, channels.id))
+      .where(eq(messages.channelId, ch.id))
+      .orderBy(desc(messages.createdAt))
+      .limit(limit)
+      .all();
+
+    for (const row of rows) {
+      result.push({
+        id: row.id,
+        channel: row.channelName,
+        sender: row.senderName,
+        content: row.content,
+        mentions: row.mentions ? JSON.parse(row.mentions) : [],
+        created_at: row.createdAt,
+      });
+    }
+  } else {
+    // Priority retrieval
+    const seenIds = new Set<string>();
+
+    // 1. Messages mentioning this agent
+    const mentionRows = db
+      .select({
+        id: messages.id,
+        channelName: channels.name,
+        senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+        content: messages.content,
+        mentions: messages.mentions,
+        createdAt: messages.createdAt,
+      })
+      .from(messages)
+      .innerJoin(users, eq(messages.senderId, users.id))
+      .innerJoin(channels, eq(messages.channelId, channels.id))
+      .where(sql`${messages.mentions} LIKE ${'%"' + agentName + '"%'}`)
+      .orderBy(desc(messages.createdAt))
+      .limit(limit)
+      .all();
+
+    for (const row of mentionRows) {
+      result.push({
+        id: row.id,
+        channel: row.channelName,
+        sender: row.senderName,
+        content: row.content,
+        mentions: row.mentions ? JSON.parse(row.mentions) : [],
+        created_at: row.createdAt,
+        priority: "mention",
+      });
+      seenIds.add(row.id);
+    }
+
+    // 2. Project channel messages
+    if (result.length < limit) {
+      const projChannelName = `#project-${agent.projectName.toLowerCase().replace(/[ _]/g, "-")}`;
+      const projCh = db
+        .select()
+        .from(channels)
+        .where(eq(channels.name, projChannelName))
+        .get();
+
+      if (projCh) {
+        const projRows = db
+          .select({
+            id: messages.id,
+            channelName: channels.name,
+            senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+            content: messages.content,
+            mentions: messages.mentions,
+            createdAt: messages.createdAt,
+          })
+          .from(messages)
+          .innerJoin(users, eq(messages.senderId, users.id))
+          .innerJoin(channels, eq(messages.channelId, channels.id))
+          .where(eq(messages.channelId, projCh.id))
+          .orderBy(desc(messages.createdAt))
+          .limit(limit)
+          .all();
+
+        for (const row of projRows) {
+          if (!seenIds.has(row.id) && result.length < limit) {
+            result.push({
+              id: row.id,
+              channel: row.channelName,
+              sender: row.senderName,
+              content: row.content,
+              mentions: row.mentions ? JSON.parse(row.mentions) : [],
+              created_at: row.createdAt,
+              priority: "project",
+            });
+            seenIds.add(row.id);
+          }
+        }
+      }
+    }
+
+    // 3. Other member channels
+    if (result.length < limit) {
+      const memberChannelRows = db
+        .select({ channelId: channelMembers.channelId })
+        .from(channelMembers)
+        .where(eq(channelMembers.userId, agent.id))
+        .all();
+      const channelIds = memberChannelRows.map((r) => r.channelId);
+
+      if (channelIds.length > 0) {
+        const otherRows = db
+          .select({
+            id: messages.id,
+            channelName: channels.name,
+            senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+            content: messages.content,
+            mentions: messages.mentions,
+            createdAt: messages.createdAt,
+          })
+          .from(messages)
+          .innerJoin(users, eq(messages.senderId, users.id))
+          .innerJoin(channels, eq(messages.channelId, channels.id))
+          .where(inArray(messages.channelId, channelIds))
+          .orderBy(desc(messages.createdAt))
+          .limit(limit)
+          .all();
+
+        for (const row of otherRows) {
+          if (!seenIds.has(row.id) && result.length < limit) {
+            result.push({
+              id: row.id,
+              channel: row.channelName,
+              sender: row.senderName,
+              content: row.content,
+              mentions: row.mentions ? JSON.parse(row.mentions) : [],
+              created_at: row.createdAt,
+              priority: "other",
+            });
+            seenIds.add(row.id);
+          }
+        }
+      }
+    }
+  }
+
+  return { messages: result.slice(0, limit) };
+}
