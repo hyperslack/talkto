@@ -522,6 +522,161 @@ export async function tuiToast(
 }
 
 // ---------------------------------------------------------------------------
+// TUI invocation — send prompt via TUI, capture response via SSE
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a prompt via the TUI and capture the agent's response from the SSE
+ * event stream.
+ *
+ * Unlike `session.prompt()` which returns the response directly, TUI
+ * invocation (`tuiPrompt()`) returns only a boolean. The actual response
+ * arrives through the SSE stream as `message.part.updated` events with
+ * `delta` text fragments, followed by a `session.idle` event when complete.
+ *
+ * This function:
+ * 1. Subscribes to SSE events BEFORE sending the TUI prompt (so no deltas
+ *    are missed)
+ * 2. Sends the prompt via tuiPrompt() (clear → append → submit)
+ * 3. Accumulates text deltas from message.part.updated events
+ * 4. Resolves when session.idle fires, returning accumulated text
+ * 5. Falls back to session.prompt() if tuiPrompt() fails (TUI disconnected)
+ *
+ * Accepts the same callback shape as promptSessionWithEvents() for
+ * real-time typing indicators and streaming text to the frontend.
+ *
+ * @returns Same shape as promptSession: { text, cost, tokens } or null on failure
+ */
+export async function promptViaTui(
+  serverUrl: string,
+  sessionId: string,
+  text: string,
+  callbacks: {
+    onTypingStart?: () => void;
+    onTextDelta?: (delta: string) => void;
+    onComplete?: () => void;
+    onError?: (error: string) => void;
+  } = {},
+  timeoutMs: number = PROMPT_TIMEOUT_MS
+): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
+  // Subscribe to SSE BEFORE sending the prompt so we don't miss early events
+  let eventStream: AsyncGenerator<OpenCodeEvent, void, unknown> | null = null;
+  let eventLoopDone = false;
+  let accumulatedText = "";
+  let resolveResponse: ((value: string | null) => void) | null = null;
+  let responseCaptured = false;
+
+  const responsePromise = new Promise<string | null>((resolve) => {
+    resolveResponse = resolve;
+  });
+
+  try {
+    eventStream = await subscribeToEvents(serverUrl);
+    if (!eventStream) {
+      console.warn("[OPENCODE] Cannot subscribe to events — falling back to session.prompt()");
+      return promptSessionWithEvents(serverUrl, sessionId, text, callbacks, timeoutMs);
+    }
+
+    // Start consuming events in the background
+    const eventLoop = (async () => {
+      if (!eventStream) return;
+      try {
+        for await (const event of eventStream) {
+          if (eventLoopDone) break;
+          if (!isEventForSession(event, sessionId)) continue;
+
+          switch (event.type) {
+            case "session.status": {
+              const status = (event as EventSessionStatus).properties.status;
+              if (status.type === "busy") {
+                callbacks.onTypingStart?.();
+              } else if (status.type === "idle") {
+                // Session finished processing — resolve with accumulated text
+                if (!responseCaptured) {
+                  responseCaptured = true;
+                  callbacks.onComplete?.();
+                  resolveResponse?.(accumulatedText || null);
+                }
+              }
+              break;
+            }
+            case "session.idle":
+              if (!responseCaptured) {
+                responseCaptured = true;
+                callbacks.onComplete?.();
+                resolveResponse?.(accumulatedText || null);
+              }
+              break;
+            case "message.part.updated": {
+              const delta = (event as EventMessagePartUpdated).properties.delta;
+              if (delta) {
+                accumulatedText += delta;
+                callbacks.onTextDelta?.(delta);
+              }
+              break;
+            }
+            case "session.error": {
+              const err = (event as EventSessionError).properties.error;
+              const msg = err && "name" in err ? err.name : "Unknown error";
+              callbacks.onError?.(msg ?? "Unknown error");
+              if (!responseCaptured) {
+                responseCaptured = true;
+                resolveResponse?.(null);
+              }
+              break;
+            }
+          }
+        }
+      } catch {
+        // Stream ended or errored — expected during cleanup
+      }
+    })();
+
+    // Send the prompt via TUI
+    console.log(`[OPENCODE] Sending prompt via TUI for session ${sessionId}`);
+    const tuiSuccess = await tuiPrompt(serverUrl, text);
+
+    if (!tuiSuccess) {
+      // TUI failed (disconnected?) — clean up and fall back to session.prompt()
+      console.warn("[OPENCODE] tuiPrompt() failed — falling back to session.prompt()");
+      eventLoopDone = true;
+      if (eventStream) eventStream.return(undefined).catch(() => {});
+      await eventLoop.catch(() => {});
+      return promptSessionWithEvents(serverUrl, sessionId, text, callbacks, timeoutMs);
+    }
+
+    // Wait for the response (with timeout)
+    const timeoutPromise = new Promise<string | null>((_, reject) =>
+      setTimeout(() => reject(new Error(`TUI prompt timed out after ${timeoutMs}ms`)), timeoutMs)
+    );
+
+    const responseText = await Promise.race([responsePromise, timeoutPromise]);
+
+    // Clean up the event stream
+    eventLoopDone = true;
+    if (eventStream) eventStream.return(undefined).catch(() => {});
+    await eventLoop.catch(() => {});
+
+    if (!responseText) {
+      console.warn(`[OPENCODE] No response captured from TUI for session ${sessionId}`);
+      return null;
+    }
+
+    return {
+      text: responseText.trim(),
+      cost: 0, // TUI path doesn't expose cost/tokens through SSE events
+      tokens: { input: 0, output: 0 },
+    };
+  } catch (err) {
+    eventLoopDone = true;
+    if (eventStream) eventStream.return(undefined).catch(() => {});
+    if (!responseCaptured) resolveResponse?.(null);
+    console.error(`[OPENCODE] Failed promptViaTui for session ${sessionId}:`, err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Discovery — find OpenCode servers and match sessions to projects
 // ---------------------------------------------------------------------------
 

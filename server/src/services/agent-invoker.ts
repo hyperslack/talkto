@@ -2,12 +2,17 @@
  * Agent invocation — send messages to agents and post their responses.
  *
  * Communication protocol:
- * - All replies use SDK-native responses (session.prompt() returns the response)
+ * - All replies use SDK-native responses (session.prompt() or TUI invocation)
  * - TalkTo extracts the response text and posts it to the channel as the agent
  * - Agents never need the send_message MCP tool for replies (only for proactive messages)
  *
- * DMs: session.prompt() with just the message — the agent's own session has its context
- * @mentions: session.prompt() with last 5-10 channel messages as context
+ * Invocation paths:
+ * - TUI active: tuiToast() notification + promptViaTui() (response captured via SSE deltas)
+ * - No TUI: promptSessionWithEvents() (session.prompt() with SSE callbacks)
+ * - Both paths stream text deltas to the frontend via agent_streaming events
+ *
+ * DMs: prompt with just the message — the agent's own session has its context
+ * @mentions: prompt with last 5 channel messages as context
  *
  * Invocations run as fire-and-forget background tasks with typing state broadcasts.
  */
@@ -15,11 +20,19 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { agents, messages, users } from "../db/schema";
-import { broadcastEvent, newMessageEvent, agentTypingEvent } from "./broadcaster";
+import {
+  broadcastEvent,
+  newMessageEvent,
+  agentTypingEvent,
+  agentStreamingEvent,
+} from "./broadcaster";
 import { getAgentInvocationInfo } from "./agent-discovery";
 import {
   promptSessionWithEvents,
+  promptViaTui,
   isSessionBusy,
+  isTuiActive,
+  tuiToast,
 } from "../sdk/opencode";
 
 // ---------------------------------------------------------------------------
@@ -120,18 +133,23 @@ async function _invokeForMessage(
 /**
  * Invoke a single agent via OpenCode SDK and post the response.
  *
- * Uses session.prompt() with SSE event callbacks for real-time typing
- * indicators. The prompt blocks until the agent finishes processing,
- * then we extract text and post it to the channel.
+ * Two invocation paths:
+ * - **TUI active**: Send prompt via TUI (agent sees it in terminal) + capture
+ *   response via SSE delta accumulation. Toast notification alerts the agent.
+ * - **No TUI**: Use session.prompt() with SSE event callbacks (existing path).
+ *
+ * Both paths stream text deltas to the frontend via `agent_streaming` WebSocket
+ * events, enabling real-time ChatGPT-like response rendering.
  *
  * Flow:
  * 1. Broadcast agent_typing (start)
  * 2. Look up invocation info (server_url + session_id)
  * 3. Check if session is busy — log warning but still proceed (will queue)
- * 4. Call session.prompt() with event callbacks for typing indicators
- * 5. Extract text from response
- * 6. Post message in channel as the agent
- * 7. Broadcast new_message + agent_typing (stop)
+ * 4. Detect TUI — branch to TUI path or session.prompt() path
+ * 5. Both paths use SSE callbacks: onTypingStart, onTextDelta, onError
+ * 6. Extract text from response
+ * 7. Post message in channel as the agent
+ * 8. Broadcast new_message + agent_typing (stop)
  *
  * On error: broadcast agent_typing with error message.
  */
@@ -166,26 +184,58 @@ async function invokeAgent(
       console.warn(`[INVOKE] '${agentName}' session is busy — prompt will queue`);
     }
 
-    console.log(
-      `[INVOKE] Prompting '${agentName}' session=${info.sessionId} server=${info.serverUrl}`
-    );
+    // Shared SSE callbacks — used by both TUI and session.prompt() paths
+    const callbacks = {
+      onTypingStart: () => {
+        // Re-broadcast typing to confirm agent is actively processing
+        broadcastEvent(agentTypingEvent(agentName, channelId, true));
+      },
+      onTextDelta: (delta: string) => {
+        // Stream each text fragment to the frontend in real-time
+        broadcastEvent(agentStreamingEvent(agentName, channelId, delta));
+      },
+      onError: (error: string) => {
+        console.error(`[INVOKE] SSE error for '${agentName}':`, error);
+      },
+    };
 
-    // Use event-driven prompt for real-time typing indicators.
-    // SSE callbacks fire as the agent processes, giving the UI live feedback.
-    const result = await promptSessionWithEvents(
-      info.serverUrl,
-      info.sessionId,
-      prompt,
-      {
-        onTypingStart: () => {
-          // Re-broadcast typing to confirm agent is actively processing
-          broadcastEvent(agentTypingEvent(agentName, channelId, true));
-        },
-        onError: (error) => {
-          console.error(`[INVOKE] SSE error for '${agentName}':`, error);
-        },
-      }
-    );
+    // Detect TUI and choose invocation path
+    const tuiActive = await isTuiActive(info.serverUrl);
+    let result: { text: string; cost: number; tokens: { input: number; output: number } } | null;
+
+    if (tuiActive) {
+      // TUI path — agent sees the prompt in their terminal
+      const tuiContext = isDm
+        ? `DM from ${channelName.replace("#dm-", "")}`
+        : `@mention in ${channelName}`;
+      console.log(
+        `[INVOKE] TUI active for '${agentName}' — using TUI invocation path`
+      );
+
+      // Toast notification so the agent knows a message arrived
+      tuiToast(info.serverUrl, `[TalkTo] ${tuiContext}`, "info").catch(() => {});
+
+      // Send via TUI + capture response from SSE deltas
+      // Falls back to session.prompt() internally if TUI disconnects mid-invocation
+      result = await promptViaTui(
+        info.serverUrl,
+        info.sessionId,
+        prompt,
+        callbacks
+      );
+    } else {
+      // Standard path — session.prompt() with SSE event callbacks
+      console.log(
+        `[INVOKE] Prompting '${agentName}' session=${info.sessionId} server=${info.serverUrl}`
+      );
+
+      result = await promptSessionWithEvents(
+        info.serverUrl,
+        info.sessionId,
+        prompt,
+        callbacks
+      );
+    }
 
     if (!result || !result.text) {
       console.warn(`[INVOKE] No response from '${agentName}'`);
@@ -196,7 +246,7 @@ async function invokeAgent(
     }
 
     console.log(
-      `[INVOKE] Got response from '${agentName}' (${result.text.length} chars, cost: $${result.cost.toFixed(4)})`
+      `[INVOKE] Got response from '${agentName}' (${result.text.length} chars, cost: $${result.cost.toFixed(4)}, via ${tuiActive ? "TUI" : "session.prompt"})`
     );
 
     // Post the agent's response as a message in the channel
