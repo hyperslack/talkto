@@ -8,20 +8,20 @@ Thanks for your interest in contributing. This guide covers setup, conventions, 
 
 ### Requirements
 
-- macOS or Linux (no Windows)
-- Python 3.12+ via [uv](https://docs.astral.sh/uv/)
-- Node.js 20+ with [pnpm](https://pnpm.io/)
+- macOS or Linux
+- [Bun](https://bun.sh/) (runtime for TS backend)
+- Node.js 20+ with [pnpm](https://pnpm.io/) (for frontend)
 
 ### Setup
 
 ```bash
-git clone https://github.com/yashkhare0/talkto.git
+git clone https://github.com/hyperslack/talkto.git
 cd talkto
-make install   # Creates venv, installs Python + frontend deps
-make dev       # Starts FastAPI (:8000) + Vite (:3000) with hot reload
+make install   # Installs server (bun) + frontend (pnpm) deps
+make dev       # Starts Bun backend (:8000) + Vite frontend (:3000)
 ```
 
-Both servers support hot reload: edit Python/prompt files and uvicorn reloads; edit React components and Vite HMR updates instantly.
+The backend serves REST, WebSocket, and MCP from a single process. The frontend proxies API calls to `:8000`.
 
 ---
 
@@ -29,57 +29,31 @@ Both servers support hot reload: edit Python/prompt files and uvicorn reloads; e
 
 ```
 talkto/
-├── backend/                  # Python backend
-│   ├── app/
-│   │   ├── main.py           # FastAPI app, lifespan, exception handler, SPA fallback
-│   │   ├── config.py         # pydantic-settings (TALKTO_* env vars)
-│   │   ├── db.py             # Async SQLAlchemy engine, Alembic runner, seed data
-│   │   ├── api/              # REST endpoints (one file per domain)
-│   │   │   ├── users.py      # Human operator CRUD
-│   │   │   ├── channels.py   # Channel CRUD
-│   │   │   ├── messages.py   # Message CRUD + invocation triggers
-│   │   │   ├── agents.py     # Agent listing + DM creation + ghost detection
-│   │   │   ├── features.py   # Feature requests + voting
-│   │   │   ├── ws.py         # WebSocket endpoint + connection manager
-│   │   │   └── internal.py   # Cross-process broadcast relay
-│   │   ├── models/           # SQLAlchemy 2.0 ORM (8 model classes, 8 tables)
-│   │   ├── schemas/          # Pydantic v2 request/response schemas
-│   │   └── services/         # Business logic
-│   │       ├── agent_registry.py   # Registration, connection, invocation, ghost detection
-│   │       ├── message_router.py   # Priority-based message retrieval
-│   │       ├── channel_manager.py  # Channel CRUD helpers
-│   │       ├── prompt_engine.py    # Jinja2 prompt rendering
-│   │       ├── ws_manager.py       # WebSocket connection manager
-│   │       ├── broadcaster.py      # Event factory + cross-process broadcast
-│   │       ├── name_generator.py   # Adjective-animal name generation
-│   │       └── agent_discovery.py  # OpenCode server auto-discovery
-│   └── mcp_server.py         # FastMCP server (14 tools, mounted at /mcp)
+├── server/                    # TypeScript backend (Bun + Hono)
+│   ├── src/
+│   │   ├── index.ts           # Hono app + Bun.serve + WS + MCP
+│   │   ├── db/                # bun:sqlite + Drizzle ORM schema + seed
+│   │   ├── lib/config.ts      # TALKTO_* env vars
+│   │   ├── mcp/server.ts      # MCP server factory (13 tools)
+│   │   ├── routes/            # REST endpoints (agents, channels, messages, etc.)
+│   │   ├── sdk/opencode.ts    # OpenCode SDK wrapper (clients, sessions, events)
+│   │   ├── services/          # Business logic (invoker, registry, broadcaster, etc.)
+│   │   └── types/index.ts     # Zod schemas + TypeScript interfaces
+│   ├── tests/                 # bun:test suite (48 tests)
+│   └── package.json           # Dependencies
 ├── frontend/                  # React frontend
 │   └── src/
 │       ├── App.tsx            # Root: providers, onboarding/workspace routing
-│       ├── stores/app-store.ts     # Zustand (UI state, realtime data)
-│       ├── hooks/
-│       │   ├── use-queries.ts      # TanStack Query hooks for all endpoints
-│       │   └── use-websocket.ts    # WebSocket with reconnect + event dispatch
-│       ├── lib/
-│       │   ├── api.ts              # HTTP fetch wrapper
-│       │   ├── types.ts            # TypeScript types (mirrors backend schemas)
-│       │   ├── utils.ts            # cn() utility
-│       │   └── highlight-mentions.tsx  # @mention highlighting
-│       └── components/
-│           ├── onboarding.tsx      # 3-step wizard
-│           ├── ui/                 # shadcn/ui components (DO NOT test these)
-│           └── workspace/          # Application components
-├── migrations/                # Alembic migrations
-├── prompts/                   # Jinja2 prompt templates
+│       ├── stores/            # Zustand (UI state)
+│       ├── hooks/             # useWebSocket, useQueries (TanStack Query)
+│       ├── lib/               # API client, types, utils
+│       └── components/        # onboarding, workspace, shadcn/ui
+├── prompts/                   # Agent prompt templates ({{ variable }} substitution)
 │   ├── master_prompt.md       # Full agent system prompt
-│   ├── registration_rules.md  # Per-session rules injected on register/connect
-│   └── blocks/                # Composable prompt blocks
-├── cli/main.py                # Typer CLI (start, stop, status, mcp-config)
-├── tests/                     # Python test suite (79 tests)
-├── Dockerfile                 # Multi-stage: Node builds frontend, Python runs server
+│   ├── registration_rules.md  # Per-session rules
+│   └── blocks/                # Composable prompt fragments
+├── Dockerfile                 # Multi-stage: Node builds frontend, Bun runs server
 ├── docker-compose.yml         # Single service + named volume
-├── pyproject.toml             # Deps, tool config, scripts
 └── Makefile                   # Developer commands
 ```
 
@@ -87,120 +61,104 @@ talkto/
 
 ## Testing
 
-We have 155 tests across two suites.
-
-### Python (79 tests)
+### Server (48 tests)
 
 ```bash
-make test-py                             # Run all Python tests
-uv run pytest tests/test_messages_api.py -v   # Single file
-uv run pytest tests/ -v -k "broadcast"        # Keyword match
-uv run pytest --cov --cov-report=html         # With coverage
+make test-server               # Run all server tests
+cd server && bun test          # Same thing
 ```
 
-Tests use pytest + pytest-asyncio with in-memory SQLite. Each test gets a fresh database via `create_all`/`drop_all` fixtures. Factory functions in `tests/conftest.py` create test entities. HTTP tests use `httpx.ASGITransport`.
+Tests use bun:test with in-memory SQLite. Pure function and API tests that don't require a live OpenCode server.
 
-### Frontend (76 tests)
+### Frontend
 
 ```bash
-make test-fe                       # Run all frontend tests
-cd frontend && pnpm test           # Same thing
-cd frontend && pnpm test:watch     # Watch mode
+make test-fe                   # Run all frontend tests
+cd frontend && pnpm test       # Same thing
+cd frontend && pnpm test:watch # Watch mode
 ```
 
-Tests use vitest + jsdom + @testing-library/react. We test custom components, hooks, stores, and utilities. **Do not write tests for shadcn/ui components** (`src/components/ui/`) -- test only application code.
+Tests use vitest + jsdom + @testing-library/react. **Do not write tests for shadcn/ui components** (`src/components/ui/`) -- test only application code.
 
 ### Full Suite
 
 ```bash
-make test    # Python tests + frontend tests + TypeScript type-check
+make test    # Server tests + frontend tests + TypeScript type-check
 ```
 
 ---
 
 ## Code Style
 
-### Python
+### Server (TypeScript)
 
-- **Linter**: Ruff (rules: E, W, F, I, N, UP, B). Line length: 100.
-- **Types**: All functions fully annotated. Modern syntax: `str | None`, `list[str]`, `dict[str, Any]`.
-- **Imports**: Three groups (stdlib, third-party, local) separated by blank lines. Enforced by Ruff isort.
-- **Naming**: Files `snake_case.py`, classes `PascalCase`, functions `snake_case`, constants `UPPER_SNAKE_CASE`.
-- **Module docstrings**: Every `.py` file starts with a `"""docstring."""`.
-- **Models**: Use `from __future__ import annotations` for forward references. `Mapped[str]`, `mapped_column()`.
-- **Error handling**: API layer raises `HTTPException`. Service layer returns `{"error": "..."}` dicts.
-- **IDs**: `str(uuid.uuid4())`. Timestamps: `datetime.now(UTC).isoformat()`.
+- **Files**: `kebab-case.ts` (`agent-invoker.ts`)
+- **Functions**: `camelCase` (`invokeForMessage`)
+- **Types**: `PascalCase` (`WsEvent`, `Session`)
+- **Constants**: `UPPER_SNAKE_CASE` (`PROMPT_TIMEOUT_MS`)
+- **Module docstrings**: Every `.ts` file starts with a JSDoc comment
+- **DB queries**: Drizzle ORM expressions, never raw SQL
+- **IDs**: `crypto.randomUUID()`. Timestamps: `new Date().toISOString()`
+- **Error handling**: Services return `{ error: "..." }` objects, routes return HTTP status codes
 
-```bash
-make lint       # Check
-make lint-fix   # Auto-fix
-```
+### Frontend (React)
 
-### TypeScript / React
-
-- **Strict mode**: No `any`, no unused variables.
-- **Components**: Plain function declarations, named exports, no `React.FC`.
-- **State**: Zustand for UI state (select individual slices), TanStack Query for server state.
-- **Styling**: Tailwind v4 utilities only. shadcn/ui components used out of the box. `cn()` for conditional classes.
-- **Icons**: lucide-react, imported individually.
-- **Files**: `kebab-case.tsx`, components `PascalCase`, hooks `use{Feature}`.
+- **Components**: Plain function declarations, named exports, no `React.FC`
+- **State**: Zustand for UI (select individual slices), TanStack Query for server state
+- **Styling**: Tailwind v4 utilities. shadcn/ui components as-is. `cn()` for conditional classes
+- **Icons**: lucide-react, imported individually
+- **Files**: `kebab-case.tsx`, components `PascalCase`, hooks `use{Feature}`
 
 ---
 
-## Database Migrations
+## Database
 
-We use Alembic for schema management. Migrations run automatically on server start.
+bun:sqlite with WAL mode, managed by Drizzle ORM. Schema in `server/src/db/schema.ts`.
 
-### Adding/Changing a Model
-
-1. Edit the model in `backend/app/models/`
-2. Generate a migration:
-   ```bash
-   uv run alembic revision --autogenerate -m "add foo column to agents"
-   ```
-3. Review the generated file in `migrations/versions/`
-4. Apply: `uv run alembic upgrade head`
-
-### Key Notes
-
-- `render_as_batch=True` is enabled for SQLite compatibility (ALTER TABLE limitations)
-- The `env.py` supports both CLI (`alembic upgrade head`) and programmatic use from `init_db()`
-- Pre-migration databases (created by `create_all` before Alembic) are auto-stamped
+To change the schema:
+1. Edit `schema.ts`
+2. For production, use `drizzle-kit` to generate migrations
+3. For dev, delete `data/talkto.db` and restart (auto-recreated from schema + seed)
 
 ---
 
 ## Architecture Notes
 
-### Two Interfaces, One Server
+### Single Process
 
-- **Agents** talk to TalkTo via MCP tools at `/mcp` (streamable-http). They never call REST.
-- **Humans** use the React UI which talks to REST API + WebSocket.
-
-### Cross-Process Events
-
-The MCP server runs as a separate process (spawned per-agent via stdio or mounted on FastAPI). When an agent sends a message, the MCP process POSTs to `/_internal/broadcast` to relay the event to WebSocket clients in the FastAPI process.
+The TS backend serves everything from one Bun process:
+- **REST API** (Hono routes) at `/api/*`
+- **WebSocket** at `/ws`
+- **MCP endpoint** at `/mcp` (streamable-http, factory pattern per session)
 
 ### Agent Invocation
 
-When a message is sent to a DM channel or @mentions an agent, TalkTo automatically calls `POST {server_url}/session/{session_id}/prompt_async` to inject the message into the agent's terminal. This is fire-and-forget (OpenCode returns 204 immediately).
+When a DM or @mention message is sent, TalkTo:
+1. Spawns a background task (fire-and-forget from the HTTP handler)
+2. Broadcasts `agent_typing` via WebSocket
+3. Calls `session.prompt()` via the OpenCode SDK (blocks until AI responds)
+4. Extracts text from the response parts
+5. Creates a message in the channel as the agent
+6. Broadcasts `new_message` + `agent_typing` (stop)
+
+Agents do NOT need `send_message` to reply. Replies are automatic through their session.
 
 ### Ghost Detection
 
-An agent is a "ghost" when its terminal process is no longer running. Ghost detection checks `ps aux` for the agent's `provider_session_id`. Ghost agents appear dimmed in the UI and cannot be invoked.
+On agent list requests, TalkTo checks each agent's registered session via `session.get()` (cross-project direct lookup). Dead sessions are marked as ghosts in the UI.
 
 ---
 
 ## Commit Style
 
-Conventional commit prefixes:
+Keep commits small and focused. Each commit should leave the test suite passing.
 
+Common prefixes:
 - `feat:` -- New features
 - `fix:` -- Bug fixes
 - `test:` -- Test additions/changes
 - `ci:` -- CI/CD changes
 - `docs:` -- Documentation
-
-Keep commits small and focused. Each commit should leave the test suite passing.
 
 ---
 
@@ -208,11 +166,12 @@ Keep commits small and focused. Each commit should leave the test suite passing.
 
 - Don't add auth/security features -- this is intentionally local-only
 - Don't write tests for shadcn/ui components
-- Don't use `Optional[X]` or `List[X]` -- use `X | None` and `list[X]`
-- Don't put business logic in API route handlers -- it belongs in `services/`
-- Don't use `React.FC`, `any`, `useEffect` for data fetching, or default exports
+- Don't use `any` type -- use proper types or `unknown`
+- Don't put business logic in route handlers -- it belongs in `services/`
+- Don't use `React.FC`, `useEffect` for data fetching, or default exports
 - Don't hardcode "the Boss" -- it comes from the human's profile dynamically
-- Don't send messages as the human user from backend code
+- Don't create new OpenCode sessions -- always use the agent's registered session
+- Don't use REST API to communicate as an agent -- use MCP tools
 
 ---
 

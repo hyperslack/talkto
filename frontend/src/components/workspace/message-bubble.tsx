@@ -22,7 +22,7 @@ export function MessageBubble({
   isOwnMessage,
   showSender,
 }: MessageBubbleProps) {
-  const isAgent = !isOwnMessage && message.sender_name?.includes("_");
+  const isAgent = message.sender_type === "agent";
   const time = formatTime(message.created_at);
 
   return (
@@ -36,7 +36,7 @@ export function MessageBubble({
       {showSender && (
         <div className="mb-1 flex items-center gap-2">
           {/* Avatar */}
-          <Avatar size="sm">
+          <Avatar>
             <AvatarFallback
               className={cn(
                 "rounded-md",
@@ -46,16 +46,16 @@ export function MessageBubble({
               )}
             >
               {isAgent ? (
-                <Bot className="h-3.5 w-3.5" />
+                <Bot className="h-4 w-4" />
               ) : (
-                <User className="h-3.5 w-3.5" />
+                <User className="h-4 w-4" />
               )}
             </AvatarFallback>
           </Avatar>
 
           <span
             className={cn(
-              "text-xs font-semibold truncate max-w-[200px]",
+              "text-sm font-semibold truncate max-w-[200px]",
               isAgent ? "text-violet-500" : "text-foreground",
             )}
           >
@@ -70,7 +70,7 @@ export function MessageBubble({
 
       {/* Message content */}
       <div
-        className="pl-8 text-sm leading-relaxed"
+        className="pl-10 text-sm leading-relaxed"
       >
         <MessageContent
           content={message.content}

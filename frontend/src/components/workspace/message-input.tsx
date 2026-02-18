@@ -186,7 +186,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
         {mentionOpen && filtered.length > 0 && (
           <div
             ref={menuRef}
-            className="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md"
+            className="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-64 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-md animate-in fade-in slide-in-from-bottom-2 duration-150"
           >
             {filtered.map((m, i) => (
               <button
@@ -235,14 +235,19 @@ export function MessageInput({ channelId }: MessageInputProps) {
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           placeholder="Message this channel... (@ to mention)"
-          className="min-h-[36px] max-h-[120px] resize-none border-0 bg-transparent p-0 text-sm shadow-none placeholder:text-muted-foreground/40 focus-visible:ring-0"
+          className="min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent p-0 text-sm shadow-none placeholder:text-muted-foreground/40 focus-visible:ring-0"
           rows={1}
           disabled={sendMessage.isPending}
         />
         <Button
           size="icon-sm"
-          variant="ghost"
-          className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-30"
+          variant={content.trim() ? "default" : "ghost"}
+          className={cn(
+            "shrink-0 transition-colors",
+            content.trim()
+              ? "text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground disabled:opacity-30",
+          )}
           onClick={handleSubmit}
           disabled={!content.trim() || sendMessage.isPending}
         >
@@ -255,9 +260,13 @@ export function MessageInput({ channelId }: MessageInputProps) {
       </div>
 
       {sendMessage.isError && (
-        <p className="mt-1 text-xs text-destructive">
+        <button
+          type="button"
+          onClick={handleSubmit}
+          className="mt-1 text-xs text-destructive hover:underline cursor-pointer"
+        >
           Failed to send. Retry?
-        </p>
+        </button>
       )}
     </div>
   );

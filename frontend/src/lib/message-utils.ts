@@ -28,6 +28,58 @@ export function formatTime(iso: string): string {
   }
 }
 
+/**
+ * Format an ISO timestamp as a human-readable date separator label.
+ * - "Today", "Yesterday", or "Mon, Jan 6" for older dates.
+ */
+export function formatDateSeparator(iso: string): string {
+  try {
+    const date = new Date(iso);
+    const now = new Date();
+
+    // Strip time for day comparison
+    const strip = (d: Date) =>
+      new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+    const dayMs = 86_400_000;
+    const diff = strip(now) - strip(date);
+
+    if (diff === 0) return "Today";
+    if (diff === dayMs) return "Yesterday";
+
+    return date.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Check whether a date separator should be shown between two messages.
+ * Returns true if the two ISO timestamps fall on different calendar days,
+ * or if `prevIso` is undefined (first message).
+ */
+export function shouldShowDateSeparator(
+  prevIso: string | undefined,
+  currentIso: string,
+): boolean {
+  if (!prevIso) return true;
+  try {
+    const prev = new Date(prevIso);
+    const curr = new Date(currentIso);
+    return (
+      prev.getFullYear() !== curr.getFullYear() ||
+      prev.getMonth() !== curr.getMonth() ||
+      prev.getDate() !== curr.getDate()
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Extract the @-mention query being typed at the cursor position. */
 export function getMentionQuery(
   text: string,

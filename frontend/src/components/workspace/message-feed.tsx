@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MessageBubble } from "./message-bubble";
 import { MessageInput } from "./message-input";
 import { AlertTriangle, Bot, MessageSquare } from "lucide-react";
+import { formatDateSeparator, shouldShowDateSeparator } from "@/lib/message-utils";
 import type { Message } from "@/lib/types";
 
 export function MessageFeed() {
@@ -94,16 +95,22 @@ export function MessageFeed() {
 
           {messages.map((msg, i) => {
             const prevMsg = messages[i - 1];
+            const showDate = shouldShowDateSeparator(
+              prevMsg?.created_at,
+              msg.created_at,
+            );
             const showSender =
-              !prevMsg || prevMsg.sender_id !== msg.sender_id;
+              showDate || !prevMsg || prevMsg.sender_id !== msg.sender_id;
 
             return (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                isOwnMessage={msg.sender_id === me?.id}
-                showSender={showSender}
-              />
+              <div key={msg.id}>
+                {showDate && <DateSeparator iso={msg.created_at} />}
+                <MessageBubble
+                  message={msg}
+                  isOwnMessage={msg.sender_id === me?.id}
+                  showSender={showSender}
+                />
+              </div>
             );
           })}
 
@@ -112,12 +119,24 @@ export function MessageFeed() {
       </ScrollArea>
 
       {/* Typing indicator / invocation error */}
-      {currentTyping.length > 0 && (
-        <TypingIndicator agents={currentTyping} />
-      )}
-      {currentError && !currentTyping.length && (
-        <InvocationError message={currentError} />
-      )}
+      <div
+        className={`grid transition-all duration-200 ${
+          currentTyping.length > 0 ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <TypingIndicator agents={currentTyping} />
+        </div>
+      </div>
+      <div
+        className={`grid transition-all duration-200 ${
+          currentError && !currentTyping.length ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <InvocationError message={currentError ?? ""} />
+        </div>
+      </div>
 
       {/* Input */}
       <MessageInput channelId={activeChannelId} />
@@ -125,10 +144,23 @@ export function MessageFeed() {
   );
 }
 
+/** Horizontal rule with a date label centered — Slack-style day divider. */
+function DateSeparator({ iso }: { iso: string }) {
+  return (
+    <div className="relative flex items-center py-3">
+      <div className="flex-1 border-t border-border" />
+      <span className="mx-3 shrink-0 text-[11px] font-medium text-muted-foreground">
+        {formatDateSeparator(iso)}
+      </span>
+      <div className="flex-1 border-t border-border" />
+    </div>
+  );
+}
+
 /** Inline error shown when an agent invocation fails. */
 function InvocationError({ message }: { message: string }) {
   return (
-    <div className="flex items-center gap-2 px-6 py-1.5">
+    <div className="flex items-center gap-2 px-4 py-1.5">
       <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
       <span className="text-xs text-amber-500/80">{message}</span>
     </div>
@@ -143,7 +175,7 @@ function TypingIndicator({ agents }: { agents: string[] }) {
       : `${agents.slice(0, -1).join(", ")} and ${agents[agents.length - 1]} are thinking`;
 
   return (
-    <div className="flex items-center gap-2 px-6 py-1.5">
+    <div className="flex items-center gap-2 px-4 py-1.5">
       <Bot className="h-3.5 w-3.5 text-muted-foreground/50" />
       <span className="text-xs text-muted-foreground/60">
         {label}

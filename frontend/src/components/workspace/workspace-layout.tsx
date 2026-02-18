@@ -119,12 +119,8 @@ export function WorkspaceLayout({
         <div className="flex-1 overflow-hidden">{children}</div>
       </main>
 
-      {/* Right panel: features */}
-      {featuresOpen && (
-        <aside className="w-80 shrink-0">
-          <FeaturePanel onClose={() => setFeaturesOpen(false)} />
-        </aside>
-      )}
+      {/* Right panel: features (Sheet overlay) */}
+      <FeaturePanel open={featuresOpen} onOpenChange={setFeaturesOpen} />
     </div>
   );
 }

@@ -6,6 +6,11 @@ import { MessageFeed } from "@/components/workspace/message-feed";
 import { useAppStore } from "@/stores/app-store";
 import { useMe } from "@/hooks/use-queries";
 
+// Apply dark mode class on initial load (before first paint)
+if (localStorage.getItem("talkto-dark-mode") === "true") {
+  document.documentElement.classList.add("dark");
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

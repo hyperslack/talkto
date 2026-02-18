@@ -185,7 +185,7 @@ function AgentItem({
       className={cn(
         "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-sm text-left transition-colors",
         isActiveDM
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
           : "hover:bg-sidebar-accent/50",
         openDM.isPending && "opacity-50 pointer-events-none",
         isGhost && "opacity-50",

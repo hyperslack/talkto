@@ -7,31 +7,25 @@ on:
     branches: [main]
 
 jobs:
-  backend:
-    name: Backend (lint + test)
+  server:
+    name: Server (bun test)
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: "0.7"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+          bun-version: latest
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: bun install
+        working-directory: server
 
-      - name: Lint (ruff)
-        run: uv run ruff check backend/ cli/ migrations/
-
-      - name: Test (pytest)
-        run: uv run pytest --cov --cov-report=term-missing
+      - name: Test
+        run: bun test
+        working-directory: server
 
   frontend:
     name: Frontend (typecheck + test + build)

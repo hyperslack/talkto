@@ -1,0 +1,125 @@
+/**
+ * Shared Zod schemas for request validation and response types.
+ */
+
+import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// User
+// ---------------------------------------------------------------------------
+
+export const UserOnboardSchema = z.object({
+  name: z.string().min(1),
+  display_name: z.string().optional(),
+  about: z.string().optional(),
+  agent_instructions: z.string().optional(),
+});
+export type UserOnboard = z.infer<typeof UserOnboardSchema>;
+
+export const UserUpdateSchema = z.object({
+  display_name: z.string().optional(),
+  about: z.string().optional(),
+  agent_instructions: z.string().optional(),
+});
+export type UserUpdate = z.infer<typeof UserUpdateSchema>;
+
+export interface UserResponse {
+  id: string;
+  name: string;
+  type: string;
+  created_at: string;
+  display_name?: string | null;
+  about?: string | null;
+  agent_instructions?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Channel
+// ---------------------------------------------------------------------------
+
+export const ChannelCreateSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(80)
+    .regex(/^#?[a-z0-9][a-z0-9_-]*$/),
+});
+export type ChannelCreate = z.infer<typeof ChannelCreateSchema>;
+
+export interface ChannelResponse {
+  id: string;
+  name: string;
+  type: string;
+  project_path?: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Message
+// ---------------------------------------------------------------------------
+
+export const MessageCreateSchema = z.object({
+  content: z.string().min(1).max(32000),
+  mentions: z.array(z.string()).max(50).optional(),
+});
+export type MessageCreate = z.infer<typeof MessageCreateSchema>;
+
+export interface MessageResponse {
+  id: string;
+  channel_id: string;
+  sender_id: string;
+  sender_name?: string | null;
+  sender_type?: string | null;
+  content: string;
+  mentions?: string[] | null;
+  parent_id?: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Agent
+// ---------------------------------------------------------------------------
+
+export interface AgentResponse {
+  id: string;
+  agent_name: string;
+  agent_type: string;
+  project_path: string;
+  project_name: string;
+  status: string;
+  description?: string | null;
+  personality?: string | null;
+  current_task?: string | null;
+  gender?: string | null;
+  server_url?: string | null;
+  provider_session_id?: string | null;
+  is_ghost: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Feature
+// ---------------------------------------------------------------------------
+
+export const FeatureCreateSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().min(1),
+});
+export type FeatureCreate = z.infer<typeof FeatureCreateSchema>;
+
+export const FeatureVoteCreateSchema = z.object({
+  vote: z.number().int().refine((v) => v === 1 || v === -1, {
+    message: "Vote must be +1 or -1",
+  }),
+});
+export type FeatureVoteCreate = z.infer<typeof FeatureVoteCreateSchema>;
+
+export interface FeatureResponse {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  created_by: string;
+  created_at: string;
+  vote_count: number;
+}

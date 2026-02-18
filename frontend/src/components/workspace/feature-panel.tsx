@@ -1,10 +1,17 @@
-/** Feature requests panel — slide-out or embedded view. */
+/** Feature requests panel — right-side Sheet overlay. */
 import { useState } from "react";
 import {
   useFeatures,
   useCreateFeature,
   useVoteFeature,
 } from "@/hooks/use-queries";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,100 +19,94 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  ChevronUp,
-  ChevronDown,
-  Plus,
-  Lightbulb,
-  X,
-} from "lucide-react";
+import { ChevronUp, ChevronDown, Plus, Lightbulb } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Feature } from "@/lib/types";
 
 interface FeaturePanelProps {
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-export function FeaturePanel({ onClose }: FeaturePanelProps) {
+export function FeaturePanel({ open, onOpenChange }: FeaturePanelProps) {
   const { data: features, isLoading } = useFeatures();
   const [showForm, setShowForm] = useState(false);
 
   return (
-    <div className="flex h-full flex-col border-l border-border/50 bg-background">
-      {/* Header */}
-      <div className="flex h-14 shrink-0 items-center justify-between px-4">
-        <div className="flex items-center gap-2">
-          <Lightbulb className="h-4 w-4 text-amber-500" />
-          <h2 className="text-sm font-semibold">Feature Requests</h2>
-          {features && (
-            <Badge variant="secondary" className="text-[10px]">
-              {features.length}
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="flex flex-col overflow-hidden">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2 text-base">
+            <Lightbulb className="h-4 w-4 text-amber-500" />
+            Feature Requests
+            {features && (
+              <Badge variant="secondary" className="text-[10px]">
+                {features.length}
+              </Badge>
+            )}
+          </SheetTitle>
+          <SheetDescription>
+            Vote on what gets built next. Agents can submit and vote too.
+          </SheetDescription>
+        </SheetHeader>
+
+        <Separator className="opacity-50" />
+
+        {/* Add feature toggle */}
+        <div className="flex items-center justify-end px-4">
           <Button
             variant="ghost"
-            size="icon"
-            className="h-7 w-7"
+            size="sm"
+            className="gap-1.5 text-xs text-muted-foreground"
             onClick={() => setShowForm(!showForm)}
           >
             <Plus className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={onClose}
-          >
-            <X className="h-3.5 w-3.5" />
+            {showForm ? "Cancel" : "New Request"}
           </Button>
         </div>
-      </div>
 
-      <Separator className="opacity-50" />
+        {/* New feature form */}
+        {showForm && (
+          <div className="border-b border-border/50 px-4 pb-3">
+            <CreateFeatureForm onDone={() => setShowForm(false)} />
+          </div>
+        )}
 
-      {/* New feature form */}
-      {showForm && (
-        <div className="border-b border-border/50 px-4 py-3">
-          <CreateFeatureForm onDone={() => setShowForm(false)} />
-        </div>
-      )}
-
-      {/* Feature list */}
-      <ScrollArea className="flex-1">
-        <div className="space-y-1 p-2">
-          {isLoading &&
-            Array.from({ length: 3 }).map((_, i) => (
-              <div
-                key={i}
-                className="rounded-md border border-border/30 p-3 flex items-start gap-2"
-              >
-                <div className="flex shrink-0 flex-col items-center gap-1">
-                  <Skeleton className="h-3.5 w-3.5 rounded" />
-                  <Skeleton className="h-3 w-4 rounded" />
-                  <Skeleton className="h-3.5 w-3.5 rounded" />
+        {/* Feature list */}
+        <ScrollArea className="flex-1 overflow-hidden">
+          <div className="space-y-1 p-2">
+            {isLoading &&
+              Array.from({ length: 3 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="rounded-md border border-border/30 p-3 flex items-start gap-2"
+                >
+                  <div className="flex shrink-0 flex-col items-center gap-1">
+                    <Skeleton className="h-3.5 w-3.5 rounded" />
+                    <Skeleton className="h-3 w-4 rounded" />
+                    <Skeleton className="h-3.5 w-3.5 rounded" />
+                  </div>
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-3.5 w-3/4" />
+                    <Skeleton className="h-3 w-full" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
                 </div>
-                <div className="flex-1 space-y-1.5">
-                  <Skeleton className="h-3.5 w-3/4" />
-                  <Skeleton className="h-3 w-full" />
-                  <Skeleton className="h-3 w-1/2" />
-                </div>
-              </div>
+              ))}
+
+            {features?.map((feature) => (
+              <FeatureItem key={feature.id} feature={feature} />
             ))}
 
-          {features?.map((feature) => (
-            <FeatureItem key={feature.id} feature={feature} />
-          ))}
-
-          {!isLoading && features?.length === 0 && (
-            <p className="px-2 py-8 text-center text-xs text-muted-foreground/50">
-              No feature requests yet. Create one!
-            </p>
-          )}
-        </div>
-      </ScrollArea>
-    </div>
+            {!isLoading && features?.length === 0 && (
+              <p className="px-2 py-8 text-center text-xs text-muted-foreground/50">
+                No feature requests yet. Create one!
+              </p>
+            )}
+          </div>
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   );
 }
 
