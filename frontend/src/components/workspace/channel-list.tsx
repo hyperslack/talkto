@@ -21,7 +21,8 @@ export function ChannelList({
   // Filter out DM channels — those are accessed via agent list
   const visibleChannels = channels.filter((c) => c.type !== "dm");
   const generalChannels = visibleChannels.filter((c) => c.type === "general");
-  const projectChannels = visibleChannels.filter((c) => c.type === "project");
+  // Everything else (project + custom) is treated as "Projects" in the UI.
+  const projectChannels = visibleChannels.filter((c) => c.type !== "general");
 
   if (isLoading) {
     return (
@@ -91,7 +92,8 @@ function ChannelItem({
   isActive: boolean;
   onClick: () => void;
 }) {
-  const Icon = channel.type === "project" ? FolderGit2 : Hash;
+  const isProjectish = channel.type === "project" || channel.name.startsWith("#project-");
+  const Icon = isProjectish ? FolderGit2 : Hash;
 
   return (
     <Button

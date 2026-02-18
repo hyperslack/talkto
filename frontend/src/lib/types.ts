@@ -20,7 +20,7 @@ export interface UserOnboardPayload {
 export interface Channel {
   id: string;
   name: string;
-  type: "general" | "project" | "dm";
+  type: "general" | "project" | "custom" | "dm";
   project_path: string | null;
   created_by: string;
   created_at: string;
