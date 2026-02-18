@@ -7,7 +7,6 @@
  */
 
 import { createOpencodeClient } from "@opencode-ai/sdk/client";
-import { createOpencodeClient as createV2Client } from "@opencode-ai/sdk/v2/client";
 import type {
   Session,
   Part,
@@ -21,6 +20,28 @@ import type {
   EventMessageUpdated,
   EventMessagePartUpdated,
 } from "@opencode-ai/sdk";
+
+/**
+ * Event type for streaming text deltas from the OpenCode SSE stream.
+ * 
+ * The v2 SDK defines this as `EventMessagePartDelta` but doesn't export it
+ * from a public path. The v1 SDK doesn't define it at all, even though
+ * the server sends these events. We define it here for type safety.
+ * 
+ * IMPORTANT: The SSE event type is `message.part.delta` — NOT `message.part.updated`.
+ * `message.part.updated` contains the full accumulated text snapshot (no delta).
+ * `message.part.delta` contains the incremental text fragment for streaming.
+ */
+interface EventMessagePartDelta {
+  type: "message.part.delta";
+  properties: {
+    sessionID: string;
+    messageID: string;
+    partID: string;
+    field: string;
+    delta: string;
+  };
+}
 
 // Re-export useful types for consumers
 export type {
@@ -45,10 +66,8 @@ const PROMPT_TIMEOUT_MS = 600_000;
 // ---------------------------------------------------------------------------
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
-type OpencodeV2Client = ReturnType<typeof createV2Client>;
 
 const clients = new Map<string, OpencodeClient>();
-const v2Clients = new Map<string, OpencodeV2Client>();
 
 /**
  * Get or create an OpenCode SDK client (v1) for a given server URL.
@@ -64,26 +83,10 @@ export function getClient(serverUrl: string): OpencodeClient {
   return client;
 }
 
-/**
- * Get or create an OpenCode SDK v2 client for TUI operations.
- * The v2 API adds tui.selectSession() for session-scoped TUI control.
- * Cached per URL like the v1 client.
- */
-export function getV2Client(serverUrl: string): OpencodeV2Client {
-  const normalized = serverUrl.replace(/\/$/, "");
-  let client = v2Clients.get(normalized);
-  if (!client) {
-    client = createV2Client({ baseUrl: normalized });
-    v2Clients.set(normalized, client);
-  }
-  return client;
-}
-
 /** Remove cached clients (e.g., when server becomes unreachable). */
 export function removeClient(serverUrl: string): void {
   const normalized = serverUrl.replace(/\/$/, "");
   clients.delete(normalized);
-  v2Clients.delete(normalized);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +423,16 @@ export async function promptSessionWithEvents(
             case "session.idle":
               callbacks.onComplete?.();
               break;
+            case "message.part.delta": {
+              // Streaming text delta — the primary source for real-time text
+              const deltaEvent = event as unknown as EventMessagePartDelta;
+              if (deltaEvent.properties.field === "text" && deltaEvent.properties.delta) {
+                callbacks.onTextDelta?.(deltaEvent.properties.delta);
+              }
+              break;
+            }
             case "message.part.updated": {
+              // Fallback: v1 type says delta might be here (legacy compat)
               const delta = (event as EventMessagePartUpdated).properties.delta;
               if (delta) {
                 callbacks.onTextDelta?.(delta);
@@ -470,301 +482,6 @@ export function extractTextFromParts(parts: Part[]): string {
     (p): p is TextPart => p.type === "text" && !p.ignored
   );
   return textParts.map((p) => p.text).join("\n").trim();
-}
-
-// ---------------------------------------------------------------------------
-// TUI operations — for active TUI session support
-// ---------------------------------------------------------------------------
-
-/**
- * Check if a TUI is active for a specific agent's project directory.
- *
- * The OpenCode API doesn't have a direct "is TUI connected?" field.
- * We use a heuristic: attempt to clear the prompt for the given directory.
- * If no TUI is connected for that directory, the call fails with an error.
- *
- * The `directory` parameter scopes the check to the TUI connected for
- * that project — if multiple agents share the same OpenCode server, only
- * the TUI for the matching directory will respond.
- *
- * This is a lightweight check — clearPrompt is a no-op if prompt is empty.
- */
-export async function isTuiActive(
-  serverUrl: string,
-  directory?: string
-): Promise<boolean> {
-  try {
-    const client = getClient(serverUrl);
-    // clearPrompt succeeds only if a TUI is connected for this directory
-    const result = await client.tui.clearPrompt({
-      query: directory ? { directory } : undefined,
-    });
-    return result.data === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Navigate the TUI to a specific session.
- *
- * Uses the v2 SDK's `tui.selectSession()` endpoint to switch the TUI's
- * active view to the target session. This ensures subsequent TUI operations
- * (appendPrompt, submitPrompt) go to the correct agent's session.
- *
- * Must be called BEFORE sending prompts via TUI when the target session
- * might not be the currently-viewed session in the terminal.
- */
-export async function tuiSelectSession(
-  serverUrl: string,
-  sessionId: string,
-  directory?: string
-): Promise<boolean> {
-  try {
-    const client = getV2Client(serverUrl);
-    const result = await client.tui.selectSession({
-      sessionID: sessionId,
-      directory,
-    });
-    return result.data === true;
-  } catch (err) {
-    console.error(`[OPENCODE] TUI selectSession failed for ${sessionId}:`, err);
-    return false;
-  }
-}
-
-/**
- * Append text to the TUI prompt and submit it.
- * Used for active TUI sessions where we want the agent to see the
- * message naturally in their terminal.
- *
- * The `directory` parameter scopes the operation to the TUI connected
- * for that project. The `sessionId` parameter ensures the TUI navigates
- * to the correct session before sending the prompt (via selectSession).
- *
- * Returns true if all operations succeeded.
- */
-export async function tuiPrompt(
-  serverUrl: string,
-  text: string,
-  directory?: string,
-  sessionId?: string
-): Promise<boolean> {
-  try {
-    const client = getClient(serverUrl);
-    const dirQuery = directory ? { directory } : undefined;
-
-    // Navigate to the target session first (v2 API)
-    if (sessionId) {
-      const selected = await tuiSelectSession(serverUrl, sessionId, directory);
-      if (!selected) {
-        console.warn(`[OPENCODE] Failed to select session ${sessionId} in TUI — proceeding anyway`);
-      }
-    }
-
-    // Clear any existing text first to prevent concatenation
-    await client.tui.clearPrompt({ query: dirQuery });
-    const appendResult = await client.tui.appendPrompt({
-      body: { text },
-      query: dirQuery,
-    });
-    if (!appendResult.data) return false;
-    const submitResult = await client.tui.submitPrompt({ query: dirQuery });
-    return submitResult.data === true;
-  } catch (err) {
-    console.error("[OPENCODE] TUI prompt failed:", err);
-    return false;
-  }
-}
-
-/**
- * Show a toast notification in the TUI.
- * Useful for telling an agent they've been mentioned or received a DM.
- *
- * The `directory` parameter scopes the toast to the TUI connected for
- * that project — only the matching agent's terminal will see it.
- */
-export async function tuiToast(
-  serverUrl: string,
-  message: string,
-  variant: "info" | "success" | "warning" | "error" = "info",
-  directory?: string
-): Promise<boolean> {
-  try {
-    const client = getClient(serverUrl);
-    const result = await client.tui.showToast({
-      body: { message, variant, duration: 5000 },
-      query: directory ? { directory } : undefined,
-    });
-    return result.data === true;
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// TUI invocation — send prompt via TUI, capture response via SSE
-// ---------------------------------------------------------------------------
-
-/**
- * Send a prompt via the TUI and capture the agent's response from the SSE
- * event stream.
- *
- * Unlike `session.prompt()` which returns the response directly, TUI
- * invocation (`tuiPrompt()`) returns only a boolean. The actual response
- * arrives through the SSE stream as `message.part.updated` events with
- * `delta` text fragments, followed by a `session.idle` event when complete.
- *
- * This function:
- * 1. Subscribes to SSE events BEFORE sending the TUI prompt (so no deltas
- *    are missed)
- * 2. Navigates the TUI to the target session via selectSession() (v2 API)
- * 3. Sends the prompt via tuiPrompt() (clear → append → submit)
- * 4. Accumulates text deltas from message.part.updated events
- * 5. Resolves when session.idle fires, returning accumulated text
- * 6. Falls back to session.prompt() if tuiPrompt() fails (TUI disconnected)
- *
- * Accepts the same callback shape as promptSessionWithEvents() for
- * real-time typing indicators and streaming text to the frontend.
- *
- * @returns Same shape as promptSession: { text, cost, tokens } or null on failure
- */
-export async function promptViaTui(
-  serverUrl: string,
-  sessionId: string,
-  text: string,
-  callbacks: {
-    onTypingStart?: () => void;
-    onTextDelta?: (delta: string) => void;
-    onComplete?: () => void;
-    onError?: (error: string) => void;
-  } = {},
-  timeoutMs: number = PROMPT_TIMEOUT_MS,
-  directory?: string
-): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
-  // Subscribe to SSE BEFORE sending the prompt so we don't miss early events
-  let eventStream: AsyncGenerator<OpenCodeEvent, void, unknown> | null = null;
-  let eventLoopDone = false;
-  let accumulatedText = "";
-  let resolveResponse: ((value: string | null) => void) | null = null;
-  let responseCaptured = false;
-
-  const responsePromise = new Promise<string | null>((resolve) => {
-    resolveResponse = resolve;
-  });
-
-  try {
-    eventStream = await subscribeToEvents(serverUrl);
-    if (!eventStream) {
-      console.warn("[OPENCODE] Cannot subscribe to events — falling back to session.prompt()");
-      return promptSessionWithEvents(serverUrl, sessionId, text, callbacks, timeoutMs);
-    }
-
-    // Start consuming events in the background
-    const eventLoop = (async () => {
-      if (!eventStream) return;
-      try {
-        for await (const event of eventStream) {
-          if (eventLoopDone) break;
-          if (!isEventForSession(event, sessionId)) continue;
-
-          switch (event.type) {
-            case "session.status": {
-              const status = (event as EventSessionStatus).properties.status;
-              if (status.type === "busy") {
-                callbacks.onTypingStart?.();
-              } else if (status.type === "idle") {
-                // Session finished processing — resolve with accumulated text
-                if (!responseCaptured) {
-                  responseCaptured = true;
-                  callbacks.onComplete?.();
-                  resolveResponse?.(accumulatedText || null);
-                }
-              }
-              break;
-            }
-            case "session.idle":
-              if (!responseCaptured) {
-                responseCaptured = true;
-                callbacks.onComplete?.();
-                resolveResponse?.(accumulatedText || null);
-              }
-              break;
-            case "message.part.updated": {
-              const delta = (event as EventMessagePartUpdated).properties.delta;
-              if (delta) {
-                accumulatedText += delta;
-                callbacks.onTextDelta?.(delta);
-              }
-              break;
-            }
-            case "session.error": {
-              const err = (event as EventSessionError).properties.error;
-              const msg = err && "name" in err ? err.name : "Unknown error";
-              callbacks.onError?.(msg ?? "Unknown error");
-              if (!responseCaptured) {
-                responseCaptured = true;
-                resolveResponse?.(null);
-              }
-              break;
-            }
-          }
-        }
-      } catch {
-        // Stream ended or errored — expected during cleanup
-      } finally {
-        // If stream ends without session.idle (e.g., SSE disconnect), resolve
-        // with whatever text we accumulated so far rather than waiting for timeout
-        if (!responseCaptured && accumulatedText) {
-          responseCaptured = true;
-          callbacks.onComplete?.();
-          resolveResponse?.(accumulatedText);
-        }
-      }
-    })();
-
-    // Send the prompt via TUI (scoped to agent's session + directory)
-    console.log(`[OPENCODE] Sending prompt via TUI for session ${sessionId}${directory ? ` (dir: ${directory})` : ""}`);
-    const tuiSuccess = await tuiPrompt(serverUrl, text, directory, sessionId);
-
-    if (!tuiSuccess) {
-      // TUI failed (disconnected?) — clean up and fall back to session.prompt()
-      console.warn("[OPENCODE] tuiPrompt() failed — falling back to session.prompt()");
-      eventLoopDone = true;
-      if (eventStream) eventStream.return(undefined).catch(() => {});
-      await eventLoop.catch(() => {});
-      return promptSessionWithEvents(serverUrl, sessionId, text, callbacks, timeoutMs);
-    }
-
-    // Wait for the response (with timeout)
-    const timeoutPromise = new Promise<string | null>((_, reject) =>
-      setTimeout(() => reject(new Error(`TUI prompt timed out after ${timeoutMs}ms`)), timeoutMs)
-    );
-
-    const responseText = await Promise.race([responsePromise, timeoutPromise]);
-
-    // Clean up the event stream
-    eventLoopDone = true;
-    if (eventStream) eventStream.return(undefined).catch(() => {});
-    await eventLoop.catch(() => {});
-
-    if (!responseText) {
-      console.warn(`[OPENCODE] No response captured from TUI for session ${sessionId}`);
-      return null;
-    }
-
-    return {
-      text: responseText.trim(),
-      cost: 0, // TUI path doesn't expose cost/tokens through SSE events
-      tokens: { input: 0, output: 0 },
-    };
-  } catch (err) {
-    eventLoopDone = true;
-    if (eventStream) eventStream.return(undefined).catch(() => {});
-    if (!responseCaptured) resolveResponse?.(null);
-    console.error(`[OPENCODE] Failed promptViaTui for session ${sessionId}:`, err);
-    return null;
-  }
 }
 
 // ---------------------------------------------------------------------------
