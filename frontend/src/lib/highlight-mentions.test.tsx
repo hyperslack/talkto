@@ -30,7 +30,7 @@ describe("highlightMentions", () => {
     expect(container.textContent).toBe("Hey @cosmic-penguin check this");
 
     // The mention span should have the highlight class
-    const mentionSpan = container.querySelector(".text-violet-500");
+    const mentionSpan = container.querySelector(".text-talkto-mention-text");
     expect(mentionSpan).not.toBeNull();
     expect(mentionSpan!.textContent).toBe("@cosmic-penguin");
   });
@@ -40,7 +40,7 @@ describe("highlightMentions", () => {
     const result = highlightMentions(text, ["agent-a", "agent-b"]);
 
     const { container } = render(<span>{result}</span>);
-    const mentions = container.querySelectorAll(".text-violet-500");
+    const mentions = container.querySelectorAll(".text-talkto-mention-text");
     expect(mentions).toHaveLength(2);
     expect(mentions[0].textContent).toBe("@agent-a");
     expect(mentions[1].textContent).toBe("@agent-b");
@@ -52,7 +52,7 @@ describe("highlightMentions", () => {
 
     const { container } = render(<span>{result}</span>);
     expect(container.textContent).toBe("Hey @test.agent");
-    const mention = container.querySelector(".text-violet-500");
+    const mention = container.querySelector(".text-talkto-mention-text");
     expect(mention).not.toBeNull();
   });
 });

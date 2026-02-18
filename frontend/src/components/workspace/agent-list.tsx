@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { Agent } from "@/lib/types";
 import { useAppStore } from "@/stores/app-store";
 import { useOpenDM, useChannels } from "@/hooks/use-queries";
-import { Bot, ChevronRight, Ghost, Zap } from "lucide-react";
+import { Bot, ChevronRight, Ghost } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarBadge } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -18,9 +18,10 @@ import {
 interface AgentListProps {
   agents: Agent[];
   isLoading?: boolean;
+  onSelectChannel?: (id: string) => void;
 }
 
-export function AgentList({ agents, isLoading }: AgentListProps) {
+export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps) {
   const agentStatuses = useAppStore((s) => s.agentStatuses);
 
   if (isLoading) {
@@ -91,20 +92,20 @@ export function AgentList({ agents, isLoading }: AgentListProps) {
             const status =
               agentStatuses.get(agent.agent_name) ?? agent.status;
             return (
-              <AgentItem key={agent.id} agent={agent} status={status} />
+              <AgentItem key={agent.id} agent={agent} status={status} onSelectChannel={onSelectChannel} />
             );
           })}
         </TooltipProvider>
       </div>
 
       {sortedGhosts.length > 0 && (
-        <GhostSection agents={sortedGhosts} />
+        <GhostSection agents={sortedGhosts} onSelectChannel={onSelectChannel} />
       )}
     </div>
   );
 }
 
-function GhostSection({ agents }: { agents: Agent[] }) {
+function GhostSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectChannel?: (id: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const agentStatuses = useAppStore((s) => s.agentStatuses);
 
@@ -136,6 +137,7 @@ function GhostSection({ agents }: { agents: Agent[] }) {
                   agent={agent}
                   status={status}
                   isGhost
+                  onSelectChannel={onSelectChannel}
                 />
               );
             })}
@@ -150,14 +152,14 @@ function AgentItem({
   agent,
   status,
   isGhost = false,
+  onSelectChannel,
 }: {
   agent: Agent;
   status: "online" | "offline";
   isGhost?: boolean;
+  onSelectChannel?: (id: string) => void;
 }) {
   const isOnline = status === "online" && !isGhost;
-  const isInvocable =
-    !isGhost && Boolean(agent.server_url && agent.provider_session_id);
   const hasProfile =
     agent.description || agent.personality || agent.current_task || agent.gender;
   const activeChannelId = useAppStore((s) => s.activeChannelId);
@@ -171,10 +173,12 @@ function AgentItem({
   );
   const isActiveDM = dmChannel?.id === activeChannelId;
 
+  const selectFn = onSelectChannel ?? setActiveChannelId;
+
   const handleClick = () => {
     openDM.mutate(agent.agent_name, {
       onSuccess: (channel) => {
-        setActiveChannelId(channel.id);
+        selectFn(channel.id);
       },
     });
   };
@@ -191,15 +195,14 @@ function AgentItem({
         isGhost && "opacity-50",
       )}
     >
-      {/* Avatar with status badge */}
-      <Avatar size="sm">
+      {/* Avatar with status badge — square for agents */}
+      <Avatar size="sm" shape="square">
         <AvatarFallback
           className={cn(
-            "rounded-md",
             isGhost
               ? "bg-muted text-muted-foreground/20"
               : isOnline
-                ? "bg-emerald-500/15 text-emerald-600"
+                ? "bg-talkto-agent/12 text-talkto-agent"
                 : "bg-muted text-muted-foreground/40",
           )}
         >
@@ -215,7 +218,7 @@ function AgentItem({
             isGhost
               ? "bg-muted-foreground/15"
               : isOnline
-                ? "bg-emerald-500"
+                ? "bg-talkto-online"
                 : "bg-muted-foreground/30",
           )}
         />
@@ -241,18 +244,16 @@ function AgentItem({
         )}
       </div>
 
-      {/* Invocable indicator + agent type badge */}
-      {isInvocable && isOnline && (
-        <Zap className="h-3 w-3 shrink-0 text-amber-500" />
-      )}
+      {/* Agent type badge */}
       <Badge
         variant="outline"
         className={cn(
-          "h-4 shrink-0 px-1 text-[9px] border-sidebar-border",
+          "h-4 shrink-0 max-w-[72px] truncate px-1.5 text-[9px] leading-none border-sidebar-border",
           isGhost
             ? "text-sidebar-foreground/15"
             : "text-sidebar-foreground/30",
         )}
+        title={agent.agent_type}
       >
         {agent.agent_type}
       </Badge>
@@ -283,7 +284,7 @@ function AgentItem({
           )}
         </p>
         {isGhost && (
-          <p className="text-[11px] text-rose-400/80">
+          <p className="text-[11px] text-destructive/70">
             Unreachable — process no longer running
           </p>
         )}
@@ -303,9 +304,8 @@ function AgentItem({
             {agent.current_task}
           </p>
         )}
-        {isInvocable && !isGhost && (
-          <p className="text-[11px] text-amber-500 flex items-center gap-1">
-            <Zap className="h-3 w-3" />
+        {!isGhost && Boolean(agent.server_url && agent.provider_session_id) && (
+          <p className="text-[11px] text-talkto-agent flex items-center gap-1">
             Invocable — messages reach this agent directly
           </p>
         )}

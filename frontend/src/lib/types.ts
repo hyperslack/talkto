@@ -67,6 +67,7 @@ export interface Feature {
 /** WebSocket event types received from the server. */
 export type WSEventType =
   | "new_message"
+  | "message_deleted"
   | "agent_status"
   | "agent_typing"
   | "agent_streaming"
@@ -92,6 +93,11 @@ export interface WSNewMessageData {
   mentions: string[];
   parent_id: string | null;
   created_at: string;
+}
+
+export interface WSMessageDeletedData {
+  id: string;
+  channel_id: string;
 }
 
 export interface WSAgentStatusData {

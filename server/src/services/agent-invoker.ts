@@ -96,40 +96,45 @@ function extractMentionsFromText(text: string, excludeSender?: string): string[]
  * Always excludes the sender to prevent self-invocation.
  */
 function expandAtAll(channelName: string, excludeSender: string): string[] {
-  const db = getDb();
-
   // DM channels — @all doesn't apply
   if (channelName.startsWith("#dm-")) return [];
 
-  // Fetch all invocable agents in one query
-  const allInvocable = db
-    .select({
-      agentName: agents.agentName,
-      projectName: agents.projectName,
-      serverUrl: agents.serverUrl,
-      providerSessionId: agents.providerSessionId,
-    })
-    .from(agents)
-    .where(
-      and(
-        ne(agents.agentType, "system"),
-        ne(agents.status, "ghost"),
-        ne(agents.agentName, excludeSender)
+  try {
+    const db = getDb();
+
+    // Fetch all invocable agents in one query
+    const allInvocable = db
+      .select({
+        agentName: agents.agentName,
+        projectName: agents.projectName,
+        serverUrl: agents.serverUrl,
+        providerSessionId: agents.providerSessionId,
+      })
+      .from(agents)
+      .where(
+        and(
+          ne(agents.agentType, "system"),
+          ne(agents.status, "ghost"),
+          ne(agents.agentName, excludeSender)
+        )
       )
-    )
-    .all()
-    .filter((a) => a.serverUrl && a.providerSessionId);
+      .all()
+      .filter((a) => a.serverUrl && a.providerSessionId);
 
-  // Project channels — filter to matching project
-  if (channelName.startsWith("#project-")) {
-    const projectSlug = channelName.replace("#project-", "");
-    return allInvocable
-      .filter((a) => a.projectName.toLowerCase().replace(/[ _]/g, "-") === projectSlug)
-      .map((a) => a.agentName);
+    // Project channels — filter to matching project
+    if (channelName.startsWith("#project-")) {
+      const projectSlug = channelName.replace("#project-", "");
+      return allInvocable
+        .filter((a) => a.projectName.toLowerCase().replace(/[ _]/g, "-") === projectSlug)
+        .map((a) => a.agentName);
+    }
+
+    // General/random/custom channels — all invocable agents
+    return allInvocable.map((a) => a.agentName);
+  } catch (err) {
+    console.error("[INVOKE] @all expansion failed:", err);
+    return [];
   }
-
-  // General/random/custom channels — all invocable agents
-  return allInvocable.map((a) => a.agentName);
 }
 
 // ---------------------------------------------------------------------------
@@ -192,10 +197,13 @@ async function _invokeForMessage(
   mentions: string[] | null,
   depth: number
 ): Promise<void> {
-  // Expand @all into concrete agent names before processing
+  // Expand @all into concrete agent names before processing.
+  // Track which names came from @all so we can skip unreachable ones silently.
   let resolvedMentions = mentions;
+  const fromAtAll = new Set<string>();
   if (mentions && mentions.includes("all")) {
     const expanded = expandAtAll(channelName, senderName);
+    for (const name of expanded) fromAtAll.add(name);
     // Merge @all expansion with any other explicit mentions, deduplicated
     const explicit = mentions.filter((m) => m !== "all");
     resolvedMentions = [...new Set([...explicit, ...expanded])];
@@ -225,7 +233,8 @@ async function _invokeForMessage(
     // For @mentions, build context from recent channel messages
     const context = fetchRecentContext(channelId, 5);
 
-    // Invoke mentioned agents in parallel
+    // Invoke mentioned agents in parallel.
+    // Agents from @all expansion use silent mode — skip quietly if unreachable.
     const tasks = resolvedMentions
       .filter((name) => !invoked.has(name) && name !== senderName)
       .map(async (mentioned) => {
@@ -235,7 +244,8 @@ async function _invokeForMessage(
           content,
           context
         );
-        await invokeAgent(mentioned, channelId, channelName, prompt, /* isDm */ false, depth);
+        const silent = fromAtAll.has(mentioned);
+        await invokeAgent(mentioned, channelId, channelName, prompt, /* isDm */ false, depth, silent);
         invoked.add(mentioned);
       });
 
@@ -280,24 +290,34 @@ async function invokeAgent(
   channelName: string,
   prompt: string,
   isDm: boolean,
-  depth: number = 0
+  depth: number = 0,
+  silent: boolean = false
 ): Promise<void> {
   console.log(
     `[INVOKE] Invoking '${agentName}' in ${channelName} (${isDm ? "DM" : "@mention"})`
   );
 
-  // Broadcast typing start
-  broadcastEvent(agentTypingEvent(agentName, channelId, true));
+  // Broadcast typing start (skip if silent — e.g. @all expansion where we haven't verified reachability yet)
+  if (!silent) {
+    broadcastEvent(agentTypingEvent(agentName, channelId, true));
+  }
 
   try {
     // Look up invocation info — the agent's registered server_url + session_id
     const info = await getAgentInvocationInfo(agentName);
     if (!info) {
-      console.warn(`[INVOKE] '${agentName}' is not invocable`);
-      broadcastEvent(
-        agentTypingEvent(agentName, channelId, false, `${agentName} is not reachable`)
-      );
+      console.warn(`[INVOKE] '${agentName}' is not invocable — skipping`);
+      if (!silent) {
+        broadcastEvent(
+          agentTypingEvent(agentName, channelId, false, `${agentName} is not reachable`)
+        );
+      }
       return;
+    }
+
+    // Agent is reachable — show typing indicator if we deferred it
+    if (silent) {
+      broadcastEvent(agentTypingEvent(agentName, channelId, true));
     }
 
     // Check if session is currently busy

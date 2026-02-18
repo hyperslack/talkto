@@ -98,13 +98,20 @@ function ChannelItem({
       variant="ghost"
       onClick={onClick}
       className={cn(
-        "w-full justify-start gap-2 px-3 py-1.5 h-auto text-sm font-normal",
+        "relative w-full justify-start gap-2 px-3 py-1.5 h-auto text-sm font-normal rounded-md transition-colors",
         isActive
           ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-          : "text-sidebar-foreground/70 hover:text-sidebar-foreground",
+          : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50",
       )}
     >
-      <Icon className="h-3.5 w-3.5 shrink-0 opacity-60" />
+      {/* Active indicator — left border accent */}
+      {isActive && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-full bg-primary" />
+      )}
+      <Icon className={cn(
+        "h-3.5 w-3.5 shrink-0",
+        isActive ? "opacity-80" : "opacity-50",
+      )} />
       <span className="truncate">
         {channel.name.replace(/^#/, "")}
       </span>

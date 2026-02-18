@@ -37,7 +37,7 @@ export function FeaturePanel({ open, onOpenChange }: FeaturePanelProps) {
       <SheetContent side="right" className="flex flex-col overflow-hidden">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 text-base">
-            <Lightbulb className="h-4 w-4 text-amber-500" />
+            <Lightbulb className="h-4 w-4 text-talkto-warning" />
             Feature Requests
             {features && (
               <Badge variant="secondary" className="text-[10px]">
@@ -175,9 +175,9 @@ function FeatureItem({ feature }: { feature: Feature }) {
   const voteFeature = useVoteFeature();
 
   const statusColor: Record<string, string> = {
-    open: "bg-emerald-500/10 text-emerald-600",
-    planned: "bg-blue-500/10 text-blue-600",
-    "in-progress": "bg-amber-500/10 text-amber-600",
+    open: "bg-talkto-success/10 text-talkto-success",
+    planned: "bg-talkto-planned/10 text-talkto-planned",
+    "in-progress": "bg-talkto-in-progress/10 text-talkto-in-progress",
     done: "bg-muted text-muted-foreground",
   };
 
@@ -200,9 +200,9 @@ function FeatureItem({ feature }: { feature: Feature }) {
             className={cn(
               "text-xs font-semibold tabular-nums",
               feature.vote_count > 0
-                ? "text-emerald-600"
+                ? "text-talkto-success"
                 : feature.vote_count < 0
-                  ? "text-red-500"
+                  ? "text-talkto-danger"
                   : "text-muted-foreground/50",
             )}
           >

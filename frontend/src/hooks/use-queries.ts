@@ -153,3 +153,18 @@ export function useSendMessage() {
     // Don't invalidate — WebSocket will push the new message
   });
 }
+
+// ── Delete Message ─────────────────────────────────────
+
+export function useDeleteMessage() {
+  return useMutation({
+    mutationFn: ({
+      channelId,
+      messageId,
+    }: {
+      channelId: string;
+      messageId: string;
+    }) => api.deleteMessage(channelId, messageId),
+    // Don't invalidate — WebSocket will push the deletion
+  });
+}

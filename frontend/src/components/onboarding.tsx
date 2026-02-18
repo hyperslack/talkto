@@ -1,7 +1,7 @@
 /** Onboarding screen — handles both new and returning users.
  *
- * Returning: "Welcome back, {name}" with Continue / Not me
- * New: 3-step wizard (identity → about → instructions)
+ * Returning: centered welcome-back card with logo above name.
+ * New: 3-step wizard with left branding panel + right form.
  */
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,10 @@ import {
   User as UserIcon,
   BookOpen,
   ScrollText,
+  MessageSquare,
+  Bot,
+  Cpu,
+  Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { User, UserOnboardPayload } from "@/lib/types";
@@ -28,7 +32,6 @@ interface OnboardingProps {
 }
 
 export function Onboarding({ existingUser }: OnboardingProps) {
-  // If there's an existing user, show the welcome-back screen first
   const [showWelcomeBack, setShowWelcomeBack] = useState(!!existingUser);
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
@@ -40,12 +43,10 @@ export function Onboarding({ existingUser }: OnboardingProps) {
   const deleteProfile = useDeleteProfile();
   const setOnboarded = useAppStore((s) => s.setOnboarded);
 
-  // "Yes, that's me" — just continue to workspace
   const handleContinue = () => {
     setOnboarded(true);
   };
 
-  // "Not me" — delete existing user and start fresh onboarding
   const handleNotMe = async () => {
     await deleteProfile.mutateAsync();
     setShowWelcomeBack(false);
@@ -83,52 +84,74 @@ export function Onboarding({ existingUser }: OnboardingProps) {
     else handleSubmit();
   };
 
-  // ── Welcome back screen ────────────────────────────────
+  // ── Welcome back screen — centered, clean ─────────────
 
   if (showWelcomeBack && existingUser) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
-        <div className="relative w-full max-w-md px-6">
-          <DotGrid />
-          <div className="relative space-y-8">
-            <LogoHeader />
+        {/* Subtle background texture */}
+        <div
+          className="pointer-events-none fixed inset-0 opacity-[0.025]"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle, currentColor 1px, transparent 1px)",
+            backgroundSize: "24px 24px",
+          }}
+        />
 
-            <div className="space-y-3 text-center">
-              <p className="text-sm text-muted-foreground">Welcome back,</p>
-              <h2 className="text-3xl font-semibold tracking-tight">
-                {existingUser.display_name || existingUser.name}
-              </h2>
-              {existingUser.display_name && existingUser.display_name !== existingUser.name && (
-                <p className="text-sm text-muted-foreground/60">
-                  ({existingUser.name})
-                </p>
-              )}
+        <div className="relative w-full max-w-sm px-6 text-center">
+          {/* Logo — centered */}
+          <div className="mb-8 flex flex-col items-center gap-3">
+            <img
+              src="/favicon-96x96.png"
+              alt="TalkTo"
+              className="h-14 w-14 rounded-xl"
+            />
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight">TalkTo</h1>
+              <p className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                Where humans and AI collaborate
+              </p>
             </div>
-
-            <div className="flex flex-col gap-3">
-              <Button
-                onClick={handleContinue}
-                className="h-12 w-full gap-2 text-sm font-medium"
-              >
-                Continue to Workspace
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handleNotMe}
-                disabled={deleteProfile.isPending}
-                className="w-full text-sm text-muted-foreground"
-              >
-                {deleteProfile.isPending
-                  ? "Resetting..."
-                  : "That's not me — start over"}
-              </Button>
-            </div>
-
-            <p className="text-center text-[11px] text-muted-foreground/50">
-              Local-only. No data leaves your machine.
-            </p>
           </div>
+
+          {/* Welcome text */}
+          <div className="mb-8 space-y-1.5">
+            <p className="text-sm text-muted-foreground">Welcome back,</p>
+            <h2 className="text-2xl font-semibold tracking-tight">
+              {existingUser.display_name || existingUser.name}
+            </h2>
+            {existingUser.display_name && existingUser.display_name !== existingUser.name && (
+              <p className="text-sm text-muted-foreground/50">
+                {existingUser.name}
+              </p>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="space-y-3">
+            <Button
+              onClick={handleContinue}
+              className="h-11 w-full gap-2 text-sm font-medium"
+            >
+              Continue to Workspace
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={handleNotMe}
+              disabled={deleteProfile.isPending}
+              className="w-full text-sm text-muted-foreground hover:text-foreground"
+            >
+              {deleteProfile.isPending
+                ? "Resetting..."
+                : "That\u2019s not me \u2014 start over"}
+            </Button>
+          </div>
+
+          <p className="mt-8 text-[11px] text-muted-foreground/40">
+            Local-only. No data leaves your machine.
+          </p>
         </div>
       </div>
     );
@@ -137,24 +160,32 @@ export function Onboarding({ existingUser }: OnboardingProps) {
   // ── Multi-step new user onboarding ─────────────────────
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-background">
-      <div className="relative w-full max-w-lg px-6">
-        <DotGrid />
+    <div className="flex h-screen w-screen bg-background">
+      {/* Left branding panel — desktop only */}
+      <BrandPanel />
 
-        <div className="relative space-y-8">
-          <LogoHeader />
+      {/* Right content */}
+      <div className="flex flex-1 items-center justify-center px-6 md:px-12">
+        <div className="w-full max-w-md space-y-6">
+          {/* Mobile logo */}
+          <MobileLogo />
 
           {/* Step indicator */}
-          <div className="flex items-center gap-2">
-            {[1, 2, 3].map((s) => (
-              <div
-                key={s}
-                className={cn(
-                  "h-1 flex-1 rounded-full transition-colors",
-                  s <= step ? "bg-foreground" : "bg-border",
-                )}
-              />
-            ))}
+          <div className="space-y-3">
+            <div className="flex items-center gap-1.5">
+              {[1, 2, 3].map((s) => (
+                <div
+                  key={s}
+                  className={cn(
+                    "h-1 flex-1 rounded-full transition-all duration-300",
+                    s <= step ? "bg-primary" : "bg-border",
+                  )}
+                />
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground/50">
+              Step {step} of {TOTAL_STEPS}
+            </p>
           </div>
 
           {/* Step content */}
@@ -239,7 +270,7 @@ export function Onboarding({ existingUser }: OnboardingProps) {
             </p>
           )}
 
-          <p className="text-center text-[11px] text-muted-foreground/50">
+          <p className="text-[11px] text-muted-foreground/40">
             Local-only. No data leaves your machine. You can change these later.
           </p>
         </div>
@@ -250,31 +281,84 @@ export function Onboarding({ existingUser }: OnboardingProps) {
 
 // ── Shared pieces ──────────────────────────────────────
 
-function DotGrid() {
+/** Left branding panel — atmospheric, hidden on mobile. */
+function BrandPanel() {
   return (
-    <div
-      className="pointer-events-none absolute -inset-20 opacity-[0.03]"
-      style={{
-        backgroundImage:
-          "radial-gradient(circle, currentColor 1px, transparent 1px)",
-        backgroundSize: "24px 24px",
-      }}
-    />
+    <div className="hidden md:flex relative w-[420px] shrink-0 flex-col justify-between overflow-hidden bg-primary p-10 text-primary-foreground">
+      {/* Background pattern — subtle grid */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.06]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)",
+          backgroundSize: "40px 40px",
+        }}
+      />
+
+      {/* Decorative floating shapes */}
+      <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-white/[0.04]" />
+      <div className="pointer-events-none absolute -bottom-20 -left-20 h-80 w-80 rounded-full bg-white/[0.03]" />
+
+      {/* Logo */}
+      <div className="relative flex items-center gap-3">
+        <img
+          src="/favicon-96x96.png"
+          alt="TalkTo"
+          className="h-9 w-9 rounded-lg ring-1 ring-white/10"
+        />
+        <span className="text-lg font-semibold tracking-tight">TalkTo</span>
+      </div>
+
+      {/* Tagline */}
+      <div className="relative space-y-6">
+        <h1 className="text-3xl font-semibold leading-tight tracking-tight">
+          Where humans and AI collaborate.
+        </h1>
+        <p className="text-sm leading-relaxed text-primary-foreground/60">
+          A local-first workspace where your AI agents are first-class team members.
+          Every conversation, every decision, every build &mdash; together.
+        </p>
+
+        {/* Feature pills */}
+        <div className="flex flex-wrap gap-2">
+          {[
+            { icon: MessageSquare, label: "Real-time chat" },
+            { icon: Bot, label: "Agent teams" },
+            { icon: Terminal, label: "MCP native" },
+            { icon: Cpu, label: "Local-first" },
+          ].map(({ icon: Icon, label }) => (
+            <div
+              key={label}
+              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[11px] font-medium text-primary-foreground/70"
+            >
+              <Icon className="h-3 w-3" />
+              {label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <p className="relative text-[11px] text-primary-foreground/30">
+        Open source &middot; Apache 2.0
+      </p>
+    </div>
   );
 }
 
-function LogoHeader() {
+/** Mobile-only logo header — shown when BrandPanel is hidden. */
+function MobileLogo() {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3 md:hidden">
       <img
         src="/favicon-96x96.png"
         alt="TalkTo"
-        className="h-10 w-10 rounded-lg"
+        className="h-9 w-9 rounded-lg"
       />
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">TalkTo</h1>
-        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-          Agent Communication Hub
+        <h1 className="text-xl font-semibold tracking-tight">TalkTo</h1>
+        <p className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+          Where humans and AI collaborate
         </p>
       </div>
     </div>
@@ -298,16 +382,18 @@ function StepIdentity({
 }) {
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2.5 text-muted-foreground">
-        <UserIcon className="h-4 w-4" />
-        <h2 className="text-sm font-semibold text-foreground">
-          Your Identity
-        </h2>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <UserIcon className="h-4 w-4" />
+          <h2 className="text-sm font-semibold text-foreground">
+            Your Identity
+          </h2>
+        </div>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Your AI agents need to know who you are. This info is injected into
+          every agent&apos;s context when they register.
+        </p>
       </div>
-      <p className="text-sm leading-relaxed text-muted-foreground">
-        Your AI agents need to know who you are. This info is injected into
-        every agent's context when they register.
-      </p>
 
       <div className="space-y-4">
         <div className="space-y-2">
@@ -323,7 +409,7 @@ function StepIdentity({
             placeholder="e.g. Yash Khare"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="h-11 border-border/60 bg-muted/30 placeholder:text-muted-foreground/40 focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+            className="h-11 border-border/60 bg-muted/30 placeholder:text-muted-foreground/40 focus-visible:border-primary/30 focus-visible:ring-primary/10"
             autoFocus
             autoComplete="off"
             disabled={disabled}
@@ -346,7 +432,7 @@ function StepIdentity({
             placeholder="e.g. Boss, Captain, Yash"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            className="h-11 border-border/60 bg-muted/30 placeholder:text-muted-foreground/40 focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+            className="h-11 border-border/60 bg-muted/30 placeholder:text-muted-foreground/40 focus-visible:border-primary/30 focus-visible:ring-primary/10"
             autoComplete="off"
             disabled={disabled}
           />
@@ -370,22 +456,24 @@ function StepAbout({
 }) {
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2.5 text-muted-foreground">
-        <BookOpen className="h-4 w-4" />
-        <h2 className="text-sm font-semibold text-foreground">About You</h2>
-        <span className="text-[11px] text-muted-foreground/50">(optional)</span>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <BookOpen className="h-4 w-4" />
+          <h2 className="text-sm font-semibold text-foreground">About You</h2>
+          <span className="text-[11px] text-muted-foreground/50">(optional)</span>
+        </div>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Tell your agents about yourself &mdash; your role, expertise, preferences,
+          what kind of work you do. This is included in every agent&apos;s system
+          prompt.
+        </p>
       </div>
-      <p className="text-sm leading-relaxed text-muted-foreground">
-        Tell your agents about yourself — your role, expertise, preferences,
-        what kind of work you do. This is included in every agent's system
-        prompt.
-      </p>
 
       <Textarea
         placeholder={`e.g.\n- Senior fullstack dev, 5 years experience\n- Prefer TypeScript over JavaScript\n- Working on a SaaS platform\n- Hate verbose boilerplate, keep code tight`}
         value={about}
         onChange={(e) => setAbout(e.target.value)}
-        className="min-h-[140px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+        className="min-h-[140px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-primary/30 focus-visible:ring-primary/10"
         disabled={disabled}
         autoFocus
       />
@@ -404,23 +492,25 @@ function StepInstructions({
 }) {
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-2.5 text-muted-foreground">
-        <ScrollText className="h-4 w-4" />
-        <h2 className="text-sm font-semibold text-foreground">
-          Standing Instructions
-        </h2>
-        <span className="text-[11px] text-muted-foreground/50">(optional)</span>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <ScrollText className="h-4 w-4" />
+          <h2 className="text-sm font-semibold text-foreground">
+            Standing Instructions
+          </h2>
+          <span className="text-[11px] text-muted-foreground/50">(optional)</span>
+        </div>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Rules that ALL your agents must follow at all times. These get injected
+          into the system prompt of every agent that registers.
+        </p>
       </div>
-      <p className="text-sm leading-relaxed text-muted-foreground">
-        Rules that ALL your agents must follow at all times. These get injected
-        into the system prompt of every agent that registers.
-      </p>
 
       <Textarea
         placeholder={`e.g.\n- Always write tests for new functions\n- Use conventional commit messages\n- Ask before deleting any files\n- Keep functions under 50 lines\n- Comment non-obvious business logic`}
         value={instructions}
         onChange={(e) => setInstructions(e.target.value)}
-        className="min-h-[140px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-foreground/30 focus-visible:ring-foreground/10"
+        className="min-h-[140px] resize-none border-border/60 bg-muted/30 text-sm placeholder:text-muted-foreground/30 focus-visible:border-primary/30 focus-visible:ring-primary/10"
         disabled={disabled}
         autoFocus
       />

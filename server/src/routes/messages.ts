@@ -1,5 +1,5 @@
 /**
- * Message endpoints — GET (with cursor pagination) and POST (human sends).
+ * Message endpoints — GET (with cursor pagination), POST (human sends), DELETE.
  */
 
 import { Hono } from "hono";
@@ -7,7 +7,7 @@ import { eq, desc, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, messages, users } from "../db/schema";
 import { MessageCreateSchema } from "../types";
-import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
+import { broadcastEvent, newMessageEvent, messageDeletedEvent } from "../services/broadcaster";
 import { invokeForMessage } from "../services/agent-invoker";
 import type { MessageResponse } from "../types";
 
@@ -147,6 +147,40 @@ app.post("/", async (c) => {
   };
 
   return c.json(response, 201);
+});
+
+// DELETE /channels/:channelId/messages/:messageId
+app.delete("/:messageId", (c) => {
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const db = getDb();
+
+  // Verify channel exists
+  const channel = db.select().from(channels).where(eq(channels.id, channelId)).get();
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  // Verify message exists and belongs to this channel
+  const msg = db
+    .select()
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get();
+  if (!msg) {
+    return c.json({ detail: "Message not found" }, 404);
+  }
+  if (msg.channelId !== channelId) {
+    return c.json({ detail: "Message does not belong to this channel" }, 400);
+  }
+
+  // Delete the message
+  db.delete(messages).where(eq(messages.id, messageId)).run();
+
+  // Broadcast deletion to all WebSocket clients
+  broadcastEvent(messageDeletedEvent({ messageId, channelId }));
+
+  return c.json({ deleted: true, id: messageId });
 });
 
 export default app;

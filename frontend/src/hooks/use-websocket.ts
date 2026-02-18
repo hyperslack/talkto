@@ -12,6 +12,7 @@ import { queryKeys } from "@/hooks/use-queries";
 import type {
   WSEvent,
   WSNewMessageData,
+  WSMessageDeletedData,
   WSAgentStatusData,
   WSAgentTypingData,
   WSAgentStreamingData,
@@ -31,6 +32,7 @@ export function useWebSocket(enabled: boolean = true) {
 
   // Grab stable action references from Zustand (these never change identity)
   const addRealtimeMessage = useAppStore((s) => s.addRealtimeMessage);
+  const removeRealtimeMessage = useAppStore((s) => s.removeRealtimeMessage);
   const setAgentStatus = useAppStore((s) => s.setAgentStatus);
   const setAgentTyping = useAppStore((s) => s.setAgentTyping);
   const appendStreamingDelta = useAppStore((s) => s.appendStreamingDelta);
@@ -67,6 +69,15 @@ export function useWebSocket(enabled: boolean = true) {
           }
           queryClient.invalidateQueries({
             queryKey: queryKeys.messages(msg.channel_id),
+          });
+          break;
+        }
+
+        case "message_deleted": {
+          const del = event.data as WSMessageDeletedData;
+          removeRealtimeMessage(del.id);
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.messages(del.channel_id),
           });
           break;
         }
@@ -108,7 +119,7 @@ export function useWebSocket(enabled: boolean = true) {
           break;
       }
     },
-    [addRealtimeMessage, setAgentStatus, setAgentTyping, appendStreamingDelta, clearStreamingMessage],
+    [addRealtimeMessage, removeRealtimeMessage, setAgentStatus, setAgentTyping, appendStreamingDelta, clearStreamingMessage],
   );
 
   // Keep refs so the WS handlers always use the latest versions without

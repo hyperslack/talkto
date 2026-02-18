@@ -48,6 +48,7 @@ interface AppState {
   // These are merged with TanStack Query cache in the message feed component
   realtimeMessages: Message[];
   addRealtimeMessage: (msg: Message) => void;
+  removeRealtimeMessage: (msgId: string) => void;
 
   // ── Agent status updates (from WebSocket) ──
   agentStatuses: Map<string, "online" | "offline">;
@@ -97,6 +98,10 @@ export const useAppStore = create<AppState>((set) => ({
       const next = [...s.realtimeMessages, msg];
       return { realtimeMessages: next.length > 200 ? next.slice(-200) : next };
     }),
+  removeRealtimeMessage: (msgId) =>
+    set((s) => ({
+      realtimeMessages: s.realtimeMessages.filter((m) => m.id !== msgId),
+    })),
 
   // Agent statuses
   agentStatuses: new Map(),
