@@ -19,6 +19,7 @@ install: ## First-time setup: server deps + frontend deps
 # ── Run ──────────────────────────────────────────────
 
 dev: ## Start backend + frontend with hot reload
+	@$(MAKE) kill
 	@echo "Starting TS backend on :8000 and frontend on :3000..."
 	@cd server && nohup bun run src/index.ts > /tmp/talkto-server.log 2>&1 &
 	@cd frontend && nohup pnpm dev > /tmp/talkto-frontend.log 2>&1 &
@@ -37,11 +38,14 @@ stop: kill ## Stop running servers
 kill: ## Force-kill anything on ports 8000 and 3000
 	@lsof -ti :8000 2>/dev/null | xargs kill -9 2>/dev/null || true
 	@lsof -ti :3000 2>/dev/null | xargs kill -9 2>/dev/null || true
-	@echo "Killed processes on :8000 and :3000"
+	@lsof -ti :3001 2>/dev/null | xargs kill -9 2>/dev/null || true
+	@lsof -ti :3002 2>/dev/null | xargs kill -9 2>/dev/null || true
+	@echo "Killed processes on :8000, :3000-:3002"
 
 status: ## Check if servers are running
 	@echo "Backend  (:8000):" && (lsof -i :8000 -P -n 2>/dev/null | grep LISTEN || echo "  not running")
 	@echo "Frontend (:3000):" && (lsof -i :3000 -P -n 2>/dev/null | grep LISTEN || echo "  not running")
+	@echo "Frontend (:3001):" && (lsof -i :3001 -P -n 2>/dev/null | grep LISTEN || echo "  not running")
 
 # ── Testing ──────────────────────────────────────────
 
