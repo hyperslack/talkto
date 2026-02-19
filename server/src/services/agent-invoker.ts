@@ -93,10 +93,13 @@ function extractMentionsFromText(text: string, excludeSender?: string): string[]
 /**
  * Expand `@all` into concrete agent names based on channel context.
  *
- * - In #general, #random, or other non-project channels: all invocable agents
- *   (non-ghost, non-system, with server_url + session registered).
+ * - In #general, #random, or other non-project channels: all invocable agents.
  * - In #project-* channels: only invocable agents whose projectName matches.
  * - In DM channels: @all is ignored (makes no sense in 1-on-1).
+ *
+ * Invocability is checked per provider:
+ * - OpenCode agents: must have server_url + provider_session_id
+ * - Claude Code agents: must have provider_session_id (no server_url needed)
  *
  * Always excludes the sender to prevent self-invocation.
  */
@@ -107,10 +110,11 @@ function expandAtAll(channelName: string, excludeSender: string): string[] {
   try {
     const db = getDb();
 
-    // Fetch all invocable agents in one query
-    const allInvocable = db
+    // Fetch all non-system, non-ghost agents (excluding sender)
+    const candidates = db
       .select({
         agentName: agents.agentName,
+        agentType: agents.agentType,
         projectName: agents.projectName,
         serverUrl: agents.serverUrl,
         providerSessionId: agents.providerSessionId,
@@ -123,8 +127,16 @@ function expandAtAll(channelName: string, excludeSender: string): string[] {
           ne(agents.agentName, excludeSender)
         )
       )
-      .all()
-      .filter((a) => a.serverUrl && a.providerSessionId);
+      .all();
+
+    // Filter to invocable agents — check per provider type
+    const openCodeAgents = candidates.filter(
+      (a) => a.agentType === "opencode" && a.serverUrl && a.providerSessionId
+    );
+    const claudeAgents = candidates.filter(
+      (a) => a.agentType === "claude_code" && a.providerSessionId
+    );
+    const allInvocable = [...openCodeAgents, ...claudeAgents];
 
     // Project channels — filter to matching project
     if (channelName.startsWith("#project-")) {
@@ -322,7 +334,7 @@ async function invokeAgent(
     // Check if session is currently busy (route by provider)
     const busy = info.agentType === "claude_code"
       ? await isClaudeSessionBusy(info.sessionId)
-      : await isOpenCodeSessionBusy(info.serverUrl, info.sessionId);
+      : await isOpenCodeSessionBusy(info.serverUrl!, info.sessionId);
     if (busy) {
       console.warn(`[INVOKE] '${agentName}' session is busy — prompt will queue`);
     }
@@ -391,8 +403,8 @@ async function promptByProvider(
   if (info.agentType === "claude_code") {
     return claudePromptWithEvents(info.sessionId, prompt, callbacks);
   }
-  // Default: OpenCode
-  return openCodePromptWithEvents(info.serverUrl, info.sessionId, prompt, callbacks);
+  // Default: OpenCode (serverUrl is always present for OpenCode agents)
+  return openCodePromptWithEvents(info.serverUrl!, info.sessionId, prompt, callbacks);
 }
 
 // ---------------------------------------------------------------------------

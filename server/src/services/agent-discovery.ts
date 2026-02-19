@@ -21,7 +21,7 @@ import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 // ---------------------------------------------------------------------------
 
 export interface InvocationInfo {
-  serverUrl: string;
+  serverUrl: string | null;
   sessionId: string;
   projectPath: string;
   agentType: string;
@@ -77,7 +77,7 @@ export async function getAgentInvocationInfo(
       console.log(
         `[DISCOVERY] '${agentName}' is alive: type=${agent.agentType} server=${serverUrl ?? "n/a"} session=${sessionId}`
       );
-      return { serverUrl: serverUrl ?? "", sessionId, projectPath: agent.projectPath, agentType: agent.agentType };
+      return { serverUrl: serverUrl ?? null, sessionId, projectPath: agent.projectPath, agentType: agent.agentType };
     }
 
     // Session is dead — clear stale credentials
