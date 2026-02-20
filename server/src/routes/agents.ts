@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, desc, and } from "drizzle-orm";
 import { getDb } from "../db";
 import { agents, channels, channelMembers, sessions, users } from "../db/schema";
 import type { AgentResponse, ChannelResponse } from "../types";
@@ -68,13 +68,16 @@ async function computeGhost(
     return !(await isSessionAliveViaGet(agent.serverUrl, agent.providerSessionId));
   }
 
+  // Offline agents aren't ghosts — they explicitly disconnected
+  if (agent.status === "offline") return false;
+
   // No invocation credentials — check for active session with live PID
   const db = getDb();
   const activeSession = db
     .select()
     .from(sessions)
-    .where(eq(sessions.agentId, agent.id))
-    .orderBy(asc(sessions.startedAt))
+    .where(and(eq(sessions.agentId, agent.id), eq(sessions.isActive, 1)))
+    .orderBy(desc(sessions.startedAt))
     .limit(1)
     .get();
 

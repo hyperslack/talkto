@@ -19,6 +19,7 @@ install: ## First-time setup: server deps + frontend deps
 # ── Run ──────────────────────────────────────────────
 
 dev: ## Start backend + frontend with hot reload
+	@$(MAKE) kill
 	@echo "Starting TS backend on :15377 and frontend on :3000..."
 	@cd server && nohup bun run src/index.ts > /tmp/talkto-server.log 2>&1 &
 	@cd frontend && nohup pnpm dev > /tmp/talkto-frontend.log 2>&1 &
