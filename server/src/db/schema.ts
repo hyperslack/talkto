@@ -165,6 +165,9 @@ export const messages = sqliteTable(
     content: text("content").notNull(),
     mentions: text("mentions"), // JSON array string, e.g. '["agent1","agent2"]'
     parentId: text("parent_id").references(() => messages.id),
+    isPinned: integer("is_pinned").notNull().default(0),
+    pinnedAt: text("pinned_at"),
+    pinnedBy: text("pinned_by"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [

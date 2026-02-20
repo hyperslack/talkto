@@ -1,6 +1,6 @@
 /** Individual message bubble — lazy-loads markdown renderer for rich content. */
 import type { Message } from "@/lib/types";
-import { Bot, User, Trash2 } from "lucide-react";
+import { Bot, User, Trash2, Pin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isPlainText, formatTime } from "@/lib/message-utils";
 import { highlightMentions } from "@/lib/highlight-mentions";
@@ -16,6 +16,7 @@ interface MessageBubbleProps {
   isOwnMessage: boolean;
   showSender: boolean;
   onDelete?: (messageId: string) => void;
+  onPin?: (messageId: string) => void;
 }
 
 export function MessageBubble({
@@ -23,6 +24,7 @@ export function MessageBubble({
   isOwnMessage: _isOwnMessage, // eslint-disable-line @typescript-eslint/no-unused-vars
   showSender,
   onDelete,
+  onPin,
 }: MessageBubbleProps) {
   const isAgent = message.sender_type === "agent";
   const time = formatTime(message.created_at);
@@ -35,16 +37,32 @@ export function MessageBubble({
         isAgent && "hover:bg-talkto-agent-subtle/50",
       )}
     >
-      {/* Delete button — appears on hover */}
-      {onDelete && (
-        <button
-          onClick={() => onDelete(message.id)}
-          className="absolute right-2 top-1 z-10 rounded p-1 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground/50 hover:!text-destructive hover:bg-destructive/10"
-          title="Delete message"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      )}
+      {/* Action buttons — appear on hover */}
+      <div className="absolute right-2 top-1 z-10 flex items-center gap-0.5">
+        {onPin && (
+          <button
+            onClick={() => onPin(message.id)}
+            className={cn(
+              "rounded p-1 transition-colors",
+              message.is_pinned
+                ? "text-talkto-agent/60 hover:text-talkto-agent"
+                : "text-muted-foreground/0 group-hover:text-muted-foreground/50 hover:!text-talkto-agent",
+            )}
+            title={message.is_pinned ? "Unpin message" : "Pin message"}
+          >
+            <Pin className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={() => onDelete(message.id)}
+            className="rounded p-1 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground/50 hover:!text-destructive hover:bg-destructive/10"
+            title="Delete message"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
 
       {/* Sender line */}
       {showSender && (
@@ -85,6 +103,12 @@ export function MessageBubble({
           <span className="text-[10px] text-muted-foreground/40 shrink-0">
             {time}
           </span>
+          {message.is_pinned && (
+            <span className="inline-flex items-center gap-0.5 text-[9px] text-talkto-agent/50">
+              <Pin className="h-2.5 w-2.5" />
+              pinned
+            </span>
+          )}
         </div>
       )}
 

@@ -33,6 +33,9 @@ export function getDb() {
   // Auto-create tables if they don't exist (zero-config startup)
   createTables(_sqlite);
 
+  // Run additive migrations for existing databases
+  migrateUp(_sqlite);
+
   _db = drizzle(_sqlite, { schema });
   return _db;
 }
@@ -90,6 +93,7 @@ function createTables(sqlite: Database) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       type TEXT NOT NULL,
+      topic TEXT,
       project_path TEXT,
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL
@@ -111,6 +115,9 @@ function createTables(sqlite: Database) {
       content TEXT NOT NULL,
       mentions TEXT,
       parent_id TEXT REFERENCES messages(id),
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      pinned_at TEXT,
+      pinned_by TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -133,6 +140,30 @@ function createTables(sqlite: Database) {
       PRIMARY KEY (feature_id, user_id)
     );
   `);
+}
+
+/**
+ * Additive migrations for existing databases.
+ * Each migration is guarded by a column-existence check so it's safe to re-run.
+ */
+function migrateUp(sqlite: Database) {
+  // Helper: check if a column exists in a table
+  const hasColumn = (table: string, column: string): boolean => {
+    const info = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return info.some((col) => col.name === column);
+  };
+
+  // Migration: add pinning columns to messages
+  if (!hasColumn("messages", "is_pinned")) {
+    sqlite.exec("ALTER TABLE messages ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0");
+    sqlite.exec("ALTER TABLE messages ADD COLUMN pinned_at TEXT");
+    sqlite.exec("ALTER TABLE messages ADD COLUMN pinned_by TEXT");
+  }
+
+  // Migration: add topic column to channels
+  if (!hasColumn("channels", "topic")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
+  }
 }
 
 export function closeDb() {

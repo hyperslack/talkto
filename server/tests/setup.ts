@@ -75,6 +75,9 @@ export function createTestDb(): TestDb {
     content TEXT NOT NULL,
     mentions TEXT,
     parent_id TEXT REFERENCES messages(id),
+    is_pinned INTEGER NOT NULL DEFAULT 0,
+    pinned_at TEXT,
+    pinned_by TEXT,
     created_at TEXT NOT NULL
   )`);
 

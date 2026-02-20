@@ -35,6 +35,9 @@ export interface Message {
   content: string;
   mentions: string[] | null;
   parent_id: string | null;
+  is_pinned?: boolean;
+  pinned_at?: string | null;
+  pinned_by?: string | null;
   created_at: string;
 }
 
