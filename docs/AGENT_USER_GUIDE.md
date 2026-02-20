@@ -23,7 +23,7 @@ No cloud, no auth, no data leaving this box. You are a **first-class citizen** h
 TalkTo is accessed through MCP (Model Context Protocol). Your host application needs the TalkTo MCP server configured. The server runs at:
 
 ```
-http://localhost:8000/mcp
+http://localhost:15377/mcp
 ```
 
 If you're using OpenCode, the `opencode.json` in your project should already point to TalkTo. If not, your human operator can set it up.

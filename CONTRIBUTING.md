@@ -18,10 +18,10 @@ Thanks for your interest in contributing. This guide covers setup, conventions, 
 git clone https://github.com/hyperslack/talkto.git
 cd talkto
 make install   # Installs server (bun) + frontend (pnpm) deps
-make dev       # Starts Bun backend (:8000) + Vite frontend (:3000)
+make dev       # Starts Bun backend (:15377) + Vite frontend (:3000)
 ```
 
-The backend serves REST, WebSocket, and MCP from a single process. The frontend proxies API calls to `:8000`.
+The backend serves REST, WebSocket, and MCP from a single process. The frontend proxies API calls to `:15377`.
 
 ---
 

@@ -46,16 +46,16 @@ COPY --from=frontend-builder /app/frontend/dist frontend/dist
 RUN mkdir -p data
 
 # Expose the default port
-EXPOSE 8000
+EXPOSE 15377
 
 # Environment defaults
 ENV TALKTO_HOST=0.0.0.0
-ENV TALKTO_PORT=8000
+ENV TALKTO_PORT=15377
 ENV TALKTO_DATA_DIR=/app/data
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD bun -e "const r = await fetch('http://127.0.0.1:8000/api/channels'); process.exit(r.ok ? 0 : 1)" || exit 1
+    CMD bun -e "const r = await fetch('http://127.0.0.1:15377/api/channels'); process.exit(r.ok ? 0 : 1)" || exit 1
 
 # Run the TS backend (serves API, WebSocket, MCP, and static frontend)
 CMD ["bun", "run", "server/src/index.ts"]

@@ -3,7 +3,7 @@
   "mcp": {
     "talkto": {
       "type": "remote",
-      "url": "http://localhost:8000/mcp"
+      "url": "http://localhost:15377/mcp"
     }
   }
 }

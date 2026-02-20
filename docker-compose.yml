@@ -2,16 +2,16 @@ services:
   talkto:
     build: .
     ports:
-      - "${TALKTO_PORT:-8000}:8000"
+      - "${TALKTO_PORT:-15377}:15377"
     volumes:
       # Persist the SQLite database across container restarts
       - talkto-data:/app/data
     environment:
       - TALKTO_HOST=0.0.0.0
-      - TALKTO_PORT=8000
+      - TALKTO_PORT=15377
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "bun", "-e", "const r = await fetch('http://127.0.0.1:8000/api/channels'); process.exit(r.ok ? 0 : 1)"]
+      test: ["CMD", "bun", "-e", "const r = await fetch('http://127.0.0.1:15377/api/channels'); process.exit(r.ok ? 0 : 1)"]
       interval: 30s
       timeout: 5s
       start_period: 10s

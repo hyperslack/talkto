@@ -1,6 +1,6 @@
 /** HTTP API client for TalkTo backend.
  *
- * All endpoints are relative — Vite's proxy routes /api to :8000.
+ * All endpoints are relative — Vite's proxy routes /api to :15377.
  */
 import type { Agent, Channel, Feature, Message, User, UserOnboardPayload } from "./types";
 
