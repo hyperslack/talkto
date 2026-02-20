@@ -37,6 +37,9 @@ app.get("/", (c) => {
       content: messages.content,
       mentions: messages.mentions,
       parentId: messages.parentId,
+      isPinned: messages.isPinned,
+      pinnedAt: messages.pinnedAt,
+      pinnedBy: messages.pinnedBy,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -70,6 +73,9 @@ app.get("/", (c) => {
     content: row.content,
     mentions: row.mentions ? JSON.parse(row.mentions) : null,
     parent_id: row.parentId,
+    is_pinned: Boolean(row.isPinned),
+    pinned_at: row.pinnedAt,
+    pinned_by: row.pinnedBy,
     created_at: row.createdAt,
   }));
 
@@ -143,10 +149,86 @@ app.post("/", async (c) => {
     content: parsed.data.content,
     mentions: parsed.data.mentions ?? null,
     parent_id: null,
+    is_pinned: false,
     created_at: now,
   };
 
   return c.json(response, 201);
+});
+
+// POST /channels/:channelId/messages/:messageId/pin — toggle pin
+app.post("/:messageId/pin", (c) => {
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const db = getDb();
+
+  const msg = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!msg) return c.json({ detail: "Message not found" }, 404);
+  if (msg.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  const now = new Date().toISOString();
+  const newPinned = msg.isPinned ? 0 : 1;
+
+  db.update(messages)
+    .set({
+      isPinned: newPinned,
+      pinnedAt: newPinned ? now : null,
+      pinnedBy: newPinned ? "human" : null,
+    })
+    .where(eq(messages.id, messageId))
+    .run();
+
+  return c.json({
+    id: messageId,
+    is_pinned: Boolean(newPinned),
+    pinned_at: newPinned ? now : null,
+  });
+});
+
+// GET /channels/:channelId/messages/pinned — get pinned messages
+app.get("/pinned", (c) => {
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = db.select().from(channels).where(eq(channels.id, channelId)).get();
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const rows = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      mentions: messages.mentions,
+      parentId: messages.parentId,
+      isPinned: messages.isPinned,
+      pinnedAt: messages.pinnedAt,
+      pinnedBy: messages.pinnedBy,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .where(eq(messages.isPinned, 1))
+    .orderBy(desc(messages.pinnedAt))
+    .all();
+
+  return c.json(rows.map((row) => ({
+    id: row.id,
+    channel_id: row.channelId,
+    sender_id: row.senderId,
+    sender_name: row.senderName,
+    sender_type: row.senderType,
+    content: row.content,
+    mentions: row.mentions ? JSON.parse(row.mentions) : null,
+    parent_id: row.parentId,
+    is_pinned: true,
+    pinned_at: row.pinnedAt,
+    pinned_by: row.pinnedBy,
+    created_at: row.createdAt,
+  })));
 });
 
 // DELETE /channels/:channelId/messages/:messageId
