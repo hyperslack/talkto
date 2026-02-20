@@ -10,9 +10,11 @@
     "db:generate": "bunx drizzle-kit generate",
     "db:migrate": "bunx drizzle-kit migrate",
     "db:push": "bunx drizzle-kit push",
-    "db:studio": "bunx drizzle-kit studio"
+    "db:studio": "bunx drizzle-kit studio",
+    "setup": "bun run src/setup.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.45",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@opencode-ai/sdk": "^1.2.6",
     "drizzle-orm": "^0.38.0",

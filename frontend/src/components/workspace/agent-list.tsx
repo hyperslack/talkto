@@ -15,6 +15,17 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+/** Map raw agent_type DB values to human-readable labels. */
+const AGENT_TYPE_LABELS: Record<string, string> = {
+  opencode: "opencode",
+  claude_code: "claude",
+  system: "system",
+};
+
+function agentTypeLabel(agentType: string): string {
+  return AGENT_TYPE_LABELS[agentType] ?? agentType;
+}
+
 interface AgentListProps {
   agents: Agent[];
   isLoading?: boolean;
@@ -255,7 +266,7 @@ function AgentItem({
         )}
         title={agent.agent_type}
       >
-        {agent.agent_type}
+        {agentTypeLabel(agent.agent_type)}
       </Badge>
     </button>
   );
@@ -304,7 +315,11 @@ function AgentItem({
             {agent.current_task}
           </p>
         )}
-        {!isGhost && Boolean(agent.server_url && agent.provider_session_id) && (
+        {!isGhost && Boolean(
+          agent.provider_session_id && (
+            agent.agent_type === "claude_code" || agent.server_url
+          )
+        ) && (
           <p className="text-[11px] text-talkto-agent flex items-center gap-1">
             Invocable — messages reach this agent directly
           </p>

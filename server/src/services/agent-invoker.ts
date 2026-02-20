@@ -2,7 +2,7 @@
  * Agent invocation — send messages to agents and post their responses.
  *
  * Communication protocol:
- * - All replies use session.prompt() via the OpenCode SDK
+ * - All replies use the appropriate SDK (OpenCode or Claude Code)
  * - TalkTo extracts the response text and posts it to the channel as the agent
  * - Agents never need the send_message MCP tool for replies (only for proactive messages)
  * - Text deltas stream to the frontend via agent_streaming WebSocket events
@@ -28,10 +28,15 @@ import {
   agentStreamingEvent,
 } from "./broadcaster";
 import { getAgentInvocationInfo } from "./agent-discovery";
+import type { InvocationInfo } from "./agent-discovery";
 import {
-  promptSessionWithEvents,
-  isSessionBusy,
+  promptSessionWithEvents as openCodePromptWithEvents,
+  isSessionBusy as isOpenCodeSessionBusy,
 } from "../sdk/opencode";
+import {
+  promptSessionWithEvents as claudePromptWithEvents,
+  isSessionBusy as isClaudeSessionBusy,
+} from "../sdk/claude";
 
 // Maximum depth for agent-to-agent invocation chains.
 // Prevents infinite loops when agents keep @mentioning each other.
@@ -88,10 +93,13 @@ function extractMentionsFromText(text: string, excludeSender?: string): string[]
 /**
  * Expand `@all` into concrete agent names based on channel context.
  *
- * - In #general, #random, or other non-project channels: all invocable agents
- *   (non-ghost, non-system, with server_url + session registered).
+ * - In #general, #random, or other non-project channels: all invocable agents.
  * - In #project-* channels: only invocable agents whose projectName matches.
  * - In DM channels: @all is ignored (makes no sense in 1-on-1).
+ *
+ * Invocability is checked per provider:
+ * - OpenCode agents: must have server_url + provider_session_id
+ * - Claude Code agents: must have provider_session_id (no server_url needed)
  *
  * Always excludes the sender to prevent self-invocation.
  */
@@ -102,10 +110,11 @@ function expandAtAll(channelName: string, excludeSender: string): string[] {
   try {
     const db = getDb();
 
-    // Fetch all invocable agents in one query
-    const allInvocable = db
+    // Fetch all non-system, non-ghost agents (excluding sender)
+    const candidates = db
       .select({
         agentName: agents.agentName,
+        agentType: agents.agentType,
         projectName: agents.projectName,
         serverUrl: agents.serverUrl,
         providerSessionId: agents.providerSessionId,
@@ -118,8 +127,16 @@ function expandAtAll(channelName: string, excludeSender: string): string[] {
           ne(agents.agentName, excludeSender)
         )
       )
-      .all()
-      .filter((a) => a.serverUrl && a.providerSessionId);
+      .all();
+
+    // Filter to invocable agents — check per provider type
+    const openCodeAgents = candidates.filter(
+      (a) => a.agentType === "opencode" && a.serverUrl && a.providerSessionId
+    );
+    const claudeAgents = candidates.filter(
+      (a) => a.agentType === "claude_code" && a.providerSessionId
+    );
+    const allInvocable = [...openCodeAgents, ...claudeAgents];
 
     // Project channels — filter to matching project
     if (channelName.startsWith("#project-")) {
@@ -262,22 +279,16 @@ async function _invokeForMessage(
 // ---------------------------------------------------------------------------
 
 /**
- * Invoke a single agent via OpenCode SDK and post the response.
+ * Invoke a single agent via the appropriate SDK and post the response.
  *
- * Uses session.prompt() with SSE event callbacks for real-time streaming.
- * Text deltas stream to the frontend via `agent_streaming` WebSocket events.
- *
- * Note: TUI injection was investigated but OpenCode TUI terminals run without
- * an HTTP server by default (they use in-process RPC via Web Workers). The TUI
- * APIs on the `opencode serve` port publish to a separate Bus instance that
- * doesn't reach the TUI terminal. session.prompt() works reliably and the TUI
- * still sees the conversation via the shared database.
+ * Routes to OpenCode or Claude Code SDK based on agent_type.
+ * Both provide streaming callbacks for real-time typing indicators.
  *
  * Flow:
  * 1. Broadcast agent_typing (start)
- * 2. Look up invocation info (server_url + session_id)
+ * 2. Look up invocation info (server_url + session_id + agent_type)
  * 3. Check if session is busy — log warning but still proceed (will queue)
- * 4. Send prompt via session.prompt() with SSE callbacks
+ * 4. Send prompt via the appropriate SDK with streaming callbacks
  * 5. Extract text from response
  * 6. Post message in channel as the agent
  * 7. Broadcast new_message + agent_typing (stop)
@@ -303,7 +314,7 @@ async function invokeAgent(
   }
 
   try {
-    // Look up invocation info — the agent's registered server_url + session_id
+    // Look up invocation info — the agent's registered server_url + session_id + agent_type
     const info = await getAgentInvocationInfo(agentName);
     if (!info) {
       console.warn(`[INVOKE] '${agentName}' is not invocable — skipping`);
@@ -320,13 +331,15 @@ async function invokeAgent(
       broadcastEvent(agentTypingEvent(agentName, channelId, true));
     }
 
-    // Check if session is currently busy
-    const busy = await isSessionBusy(info.serverUrl, info.sessionId);
+    // Check if session is currently busy (route by provider)
+    const busy = info.agentType === "claude_code"
+      ? await isClaudeSessionBusy(info.sessionId)
+      : await isOpenCodeSessionBusy(info.serverUrl!, info.sessionId);
     if (busy) {
       console.warn(`[INVOKE] '${agentName}' session is busy — prompt will queue`);
     }
 
-    // SSE callbacks — stream real-time events to the frontend
+    // Streaming callbacks — stream real-time events to the frontend
     const callbacks = {
       onTypingStart: () => {
         // Re-broadcast typing to confirm agent is actively processing
@@ -337,20 +350,16 @@ async function invokeAgent(
         broadcastEvent(agentStreamingEvent(agentName, channelId, delta));
       },
       onError: (error: string) => {
-        console.error(`[INVOKE] SSE error for '${agentName}':`, error);
+        console.error(`[INVOKE] Streaming error for '${agentName}':`, error);
       },
     };
 
     console.log(
-      `[INVOKE] Prompting '${agentName}' session=${info.sessionId} server=${info.serverUrl}`
+      `[INVOKE] Prompting '${agentName}' type=${info.agentType} session=${info.sessionId} server=${info.serverUrl || "n/a"}`
     );
 
-    const result = await promptSessionWithEvents(
-      info.serverUrl,
-      info.sessionId,
-      prompt,
-      callbacks
-    );
+    // Route to the correct SDK based on agent type
+    const result = await promptByProvider(info, prompt, callbacks);
 
     if (!result || !result.text) {
       console.warn(`[INVOKE] No response from '${agentName}'`);
@@ -376,6 +385,26 @@ async function invokeAgent(
       agentTypingEvent(agentName, channelId, false, `${agentName} encountered an error`)
     );
   }
+}
+
+/**
+ * Route a prompt to the correct SDK based on agent type.
+ * Encapsulates the provider-specific call signatures.
+ */
+async function promptByProvider(
+  info: InvocationInfo,
+  prompt: string,
+  callbacks: {
+    onTypingStart?: () => void;
+    onTextDelta?: (delta: string) => void;
+    onError?: (error: string) => void;
+  }
+): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
+  if (info.agentType === "claude_code") {
+    return claudePromptWithEvents(info.sessionId, prompt, callbacks);
+  }
+  // Default: OpenCode (serverUrl is always present for OpenCode agents)
+  return openCodePromptWithEvents(info.serverUrl!, info.sessionId, prompt, callbacks);
 }
 
 // ---------------------------------------------------------------------------

@@ -17,5 +17,9 @@ data/
 # TalkTo agent identity (machine-specific, created by agents)
 .talkto
 
+# Large media files
+*.mov
+*.mp4
+
 # OS
 .DS_Store

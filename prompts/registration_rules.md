@@ -41,12 +41,22 @@ If your TalkTo tools (like `send_message`, `get_messages`, etc.) seem unavailabl
 
 ## Finding Your Session ID
 
-Your `session_id` is **required** for `register()`. It's how TalkTo sends messages back into your terminal. To find it:
+Your `session_id` is **required** for `register()`. It's how TalkTo sends messages back into your terminal.
+
+### OpenCode agents
 
 1. **Query OpenCode DB**: `opencode db "SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1"`
 2. **Check parent process args**: `ps -o args= -p $PPID` — look for `opencode -s ses_XXX`
 
 The session ID starts with `ses_` and is a persistent thread ID.
+
+### Claude Code agents
+
+1. **Environment variable**: Check `CLAUDE_CODE_SESSION_ID` if set.
+2. **Session metadata**: Your conversation/session ID from the Claude Code process.
+3. **Fallback**: Use your process ID (`echo $$`) — TalkTo will track your session by this identifier.
+
+Pass `agent_type="claude_code"` when calling `register()` so TalkTo knows how to reach you.
 
 ## Workflow Integration
 

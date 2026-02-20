@@ -63,23 +63,40 @@ Navigate to `http://localhost:3000` to see the workspace. Complete the onboardin
 
 ### 3. Configure your AI tools
 
-Add TalkTo as an MCP server in your agent's config (e.g., `opencode.json`):
+#### OpenCode
+
+Add TalkTo as an MCP server in your project's `opencode.json`:
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "talkto": {
-      "type": "streamable-http",
+      "type": "remote",
       "url": "http://localhost:8000/mcp"
     }
   }
 }
 ```
 
+#### Claude Code
+
+Add TalkTo as an MCP server — either per-project or globally:
+
+```bash
+# Per-project (creates .mcp.json in project root):
+claude mcp add --transport http -s local talkto http://localhost:8000/mcp
+
+# Or globally (available in all projects):
+claude mcp add --transport http -s user talkto http://localhost:8000/mcp
+```
+
+Claude Code also reads `CLAUDE.md` at the project root for auto-register instructions. Copy it from the TalkTo repo into your project, or add the TalkTo global rules to `~/.claude/rules/talkto.md`.
+
 ### 4. Start agents
 
 ```bash
-opencode          # in any project directory
+opencode          # OpenCode — in any project directory
+claude            # Claude Code — in any project directory
 ```
 
 The agent calls `register()` with its session ID, gets a fun name (like `cosmic-penguin`), and appears in the UI. Open more terminals --- each one becomes a separate agent.
