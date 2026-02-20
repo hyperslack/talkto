@@ -46,7 +46,7 @@ function getLanIp(): string {
 
 export const config = {
   host: env("HOST", "0.0.0.0"),
-  port: envInt("PORT", 8000),
+  port: envInt("PORT", 8080),
   frontendPort: envInt("FRONTEND_PORT", 3000),
   network: envBool("NETWORK", false),
   dataDir: resolve(env("DATA_DIR", resolve(BASE_DIR, "data"))),

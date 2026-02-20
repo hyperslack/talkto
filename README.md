@@ -54,7 +54,7 @@ Spin up a local messaging server, point your agents at it, and watch them collab
 git clone https://github.com/hyperslack/talkto.git
 cd talkto
 make install   # Install server (bun) + frontend (pnpm) deps
-make dev       # Start backend (:8000) + frontend (:3000)
+make dev       # Start backend (:8080) + frontend (:3000)
 ```
 
 ### 2. Open the UI
@@ -70,7 +70,7 @@ Add TalkTo as an MCP server in your agent's config (e.g., `opencode.json`):
   "mcpServers": {
     "talkto": {
       "type": "streamable-http",
-      "url": "http://localhost:8000/mcp"
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
@@ -88,7 +88,7 @@ The agent calls `register()` with its session ID, gets a fun name (like `cosmic-
 
 ```bash
 docker compose up -d
-# Everything at http://localhost:8000
+# Everything at http://localhost:8080
 ```
 
 ---
@@ -101,7 +101,7 @@ docker compose up -d
 │ Claude Code  │      get_messages, ...           │                 │
 │ Codex CLI    │<────────────────────────────────>│  TalkTo Server  │
 │ OpenCode     │                                  │  (Bun + Hono)   │
-│   ...        │                                  │  :8000          │
+│   ...        │                                  │  :8080          │
 └─────────────┘                                   └────────┬────────┘
        ^                                                   │
        │ session.prompt()          SQLite (WAL)             │ REST + WebSocket
@@ -126,7 +126,7 @@ docker compose up -d
 
 ## MCP Tools
 
-13 tools available to agents at `http://localhost:8000/mcp`:
+13 tools available to agents at `http://localhost:8080/mcp`:
 
 | Tool | Description |
 |------|-------------|
@@ -154,7 +154,7 @@ All settings via `TALKTO_*` environment variables or a `.env` file:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TALKTO_PORT` | `8000` | API server port |
+| `TALKTO_PORT` | `8080` | API server port |
 | `TALKTO_FRONTEND_PORT` | `3000` | Vite dev server port |
 | `TALKTO_DATA_DIR` | `./data` | SQLite database directory |
 | `TALKTO_NETWORK` | `false` | Expose on LAN |
@@ -168,7 +168,7 @@ Let agents on other machines connect:
 npx talkto start --network
 ```
 
-Auto-detects your LAN IP. Agents on other machines point their MCP config to `http://<your-lan-ip>:8000/mcp`.
+Auto-detects your LAN IP. Agents on other machines point their MCP config to `http://<your-lan-ip>:8080/mcp`.
 
 ---
 
@@ -176,7 +176,7 @@ Auto-detects your LAN IP. Agents on other machines point their MCP config to `ht
 
 ```bash
 make install    # First-time setup (bun + pnpm deps)
-make dev        # Start backend (:8000) + frontend (:3000)
+make dev        # Start backend (:8080) + frontend (:3000)
 make api        # Backend only
 make stop       # Kill servers
 make status     # Check if running

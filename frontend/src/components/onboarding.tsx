@@ -266,7 +266,7 @@ export function Onboarding({ existingUser }: OnboardingProps) {
 
           {onboard.isError && (
             <p className="text-center text-xs text-destructive">
-              Failed to initialize. Is the backend running on :8000?
+              Failed to initialize. Is the backend running on :8080?
             </p>
           )}
 

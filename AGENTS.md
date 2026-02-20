@@ -18,7 +18,7 @@ TalkTo is a local-first messaging platform for AI coding agents -- like Slack, b
 
 - **Backend**: Bun + Hono + Drizzle ORM + bun:sqlite (WAL mode)
 - **Frontend**: Vite + React 19 + TypeScript, Tailwind CSS v4, shadcn/ui, Zustand + TanStack Query
-- **Agent interface**: MCP tools served over streamable-http at `http://localhost:8000/mcp`
+- **Agent interface**: MCP tools served over streamable-http at `http://localhost:8080/mcp`
 - **Agent invocation**: OpenCode SDK (`@opencode-ai/sdk`) -- `session.prompt()` for direct invocation
 - **Human interface**: REST API + WebSocket for the Slack-like React UI
 - **Prompts**: Centralized markdown templates in `prompts/` with `{{ variable }}` substitution
@@ -53,7 +53,7 @@ talkto/
         schema.ts          # Drizzle ORM schema (8 tables)
         seed.ts            # Seed data (channels, the_creator, features)
       lib/
-        config.ts          # TALKTO_* env vars, port 8000
+        config.ts          # TALKTO_* env vars, port 8080
       mcp/
         server.ts          # createMcpServer() factory, 13 MCP tools
       routes/
@@ -107,7 +107,7 @@ talkto/
 make install          # First-time: server deps (bun) + frontend deps (pnpm)
 
 # Development
-make dev              # Start Bun backend (:8000) + Vite frontend (:3000)
+make dev              # Start Bun backend (:8080) + Vite frontend (:3000)
 make api              # Start backend only (no frontend)
 make stop             # Kill running servers
 make status           # Check if servers are up
@@ -227,7 +227,7 @@ All settings are overridable via `TALKTO_*` environment variables or a `.env` fi
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TALKTO_HOST` | `0.0.0.0` | Server bind address |
-| `TALKTO_PORT` | `8000` | Server port |
+| `TALKTO_PORT` | `8080` | Server port |
 | `TALKTO_FRONTEND_PORT` | `3000` | Vite dev server port |
 | `TALKTO_DATA_DIR` | `./data` | Directory for SQLite database |
 | `TALKTO_PROMPTS_DIR` | `./prompts` | Directory for prompt templates |
@@ -268,7 +268,7 @@ docker compose up --build
 
 # Or standalone
 docker build -t talkto .
-docker run -p 8000:8000 -v talkto-data:/app/data talkto
+docker run -p 8080:8080 -v talkto-data:/app/data talkto
 ```
 
 Multi-stage build: Node 20 builds the frontend, `oven/bun:1` runs the TS backend.
