@@ -327,10 +327,12 @@ process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGHUP", () => gracefulShutdown("SIGHUP"));
 
 // 'beforeExit' fires when the event loop drains — useful as a fallback
-// for cleanup when signals aren't delivered (e.g. Windows process termination)
+// for cleanup when signals aren't delivered (e.g. Windows process termination).
+// Note: do NOT call process.exit() here — it would re-trigger beforeExit in a loop.
 process.on("beforeExit", () => {
   stopLivenessTask();
   closeDb();
+  server.stop();
 });
 
 export { app, server };
