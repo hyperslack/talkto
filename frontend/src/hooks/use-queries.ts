@@ -10,10 +10,16 @@ import * as api from "@/lib/api";
 
 export const queryKeys = {
   me: ["me"] as const,
+  authMe: ["auth", "me"] as const,
   channels: ["channels"] as const,
   agents: ["agents"] as const,
   features: (status?: string) => ["features", status] as const,
   messages: (channelId: string) => ["messages", channelId] as const,
+  workspaces: ["workspaces"] as const,
+  workspace: (id: string) => ["workspace", id] as const,
+  members: (workspaceId: string) => ["workspace", workspaceId, "members"] as const,
+  apiKeys: (workspaceId: string) => ["workspace", workspaceId, "keys"] as const,
+  invites: (workspaceId: string) => ["workspace", workspaceId, "invites"] as const,
 };
 
 // ── User ───────────────────────────────────────────────
@@ -216,6 +222,137 @@ export function usePinMessage() {
     onSuccess: (_, { channelId }) => {
       // Refetch messages to update pin state
       queryClient.invalidateQueries({ queryKey: ["messages", channelId] });
+    },
+  });
+}
+
+// ── Auth ────────────────────────────────────────────────
+
+export function useAuthMe() {
+  return useQuery({
+    queryKey: queryKeys.authMe,
+    queryFn: api.getAuthMe,
+    retry: false,
+    staleTime: Infinity,
+  });
+}
+
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.logout(),
+    onSuccess: () => {
+      qc.clear();
+    },
+  });
+}
+
+export function useJoinWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ token, data }: { token: string; data: { name: string; display_name?: string; email?: string } }) =>
+      api.joinWorkspace(token, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.authMe });
+      qc.invalidateQueries({ queryKey: queryKeys.workspaces });
+    },
+  });
+}
+
+// ── Workspaces ──────────────────────────────────────────
+
+export function useWorkspaces() {
+  return useQuery({
+    queryKey: queryKeys.workspaces,
+    queryFn: api.listWorkspaces,
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; slug: string; type?: string; description?: string }) =>
+      api.createWorkspace(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.workspaces });
+    },
+  });
+}
+
+// ── Workspace Members ───────────────────────────────────
+
+export function useMembers(workspaceId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.members(workspaceId ?? ""),
+    queryFn: () => api.listMembers(workspaceId!),
+    enabled: !!workspaceId,
+    staleTime: 30_000,
+  });
+}
+
+// ── API Keys ────────────────────────────────────────────
+
+export function useApiKeys(workspaceId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.apiKeys(workspaceId ?? ""),
+    queryFn: () => api.listApiKeys(workspaceId!),
+    enabled: !!workspaceId,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workspaceId, data }: { workspaceId: string; data?: { name?: string; expires_in_days?: number } }) =>
+      api.createApiKey(workspaceId, data),
+    onSuccess: (_result, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.apiKeys(vars.workspaceId) });
+    },
+  });
+}
+
+export function useRevokeApiKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workspaceId, keyId }: { workspaceId: string; keyId: string }) =>
+      api.revokeApiKey(workspaceId, keyId),
+    onSuccess: (_result, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.apiKeys(vars.workspaceId) });
+    },
+  });
+}
+
+// ── Invites ─────────────────────────────────────────────
+
+export function useInvites(workspaceId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.invites(workspaceId ?? ""),
+    queryFn: () => api.listInvites(workspaceId!),
+    enabled: !!workspaceId,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workspaceId, data }: { workspaceId: string; data?: { role?: string; max_uses?: number; expires_in_days?: number } }) =>
+      api.createInvite(workspaceId, data),
+    onSuccess: (_result, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.invites(vars.workspaceId) });
+    },
+  });
+}
+
+export function useRevokeInvite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ workspaceId, inviteId }: { workspaceId: string; inviteId: string }) =>
+      api.revokeInvite(workspaceId, inviteId),
+    onSuccess: (_result, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.invites(vars.workspaceId) });
     },
   });
 }

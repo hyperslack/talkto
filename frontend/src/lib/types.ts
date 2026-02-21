@@ -8,6 +8,8 @@ export interface User {
   display_name: string | null;
   about: string | null;
   agent_instructions: string | null;
+  email?: string | null;
+  avatar_url?: string | null;
 }
 
 export interface UserOnboardPayload {
@@ -78,6 +80,80 @@ export interface Feature {
   created_at: string;
   updated_at?: string | null;
   vote_count: number;
+}
+
+// ── Workspace ──────────────────────────────────────────
+
+export interface Workspace {
+  id: string;
+  name: string;
+  slug: string;
+  type: "personal" | "shared";
+  description: string | null;
+  created_by: string;
+  created_at: string;
+  member_count?: number;
+}
+
+export interface WorkspaceMember {
+  user_id: string;
+  user_name: string;
+  display_name: string | null;
+  user_type: "human" | "agent";
+  role: "admin" | "member";
+  joined_at: string;
+}
+
+export interface ApiKey {
+  id: string;
+  workspace_id: string;
+  key_prefix: string;
+  name: string | null;
+  created_by: string;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface ApiKeyCreated extends ApiKey {
+  raw_key: string;
+}
+
+export interface Invite {
+  id: string;
+  workspace_id: string;
+  token: string;
+  role: "admin" | "member";
+  max_uses: number | null;
+  use_count: number;
+  expires_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+  invite_url?: string;
+}
+
+export interface AuthInfo {
+  authenticated: boolean;
+  user?: {
+    id: string;
+    name: string;
+    display_name: string | null;
+    type: string;
+    email: string | null;
+    avatar_url: string | null;
+  };
+  workspace_id: string;
+  role: "admin" | "member" | "none";
+  auth_method: "session" | "apikey" | "localhost";
+}
+
+export interface JoinResult {
+  ok: boolean;
+  user_id: string;
+  workspace_id: string;
+  role: string;
+  is_new_user: boolean;
 }
 
 /** WebSocket event types received from the server. */

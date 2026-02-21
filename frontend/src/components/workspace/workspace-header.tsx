@@ -35,6 +35,8 @@ interface WorkspaceHeaderProps {
   featuresOpen?: boolean;
   searchOpen?: boolean;
   onToggleSearch?: () => void;
+  onToggleSettings?: () => void;
+  settingsOpen?: boolean;
 }
 
 export function WorkspaceHeader({
@@ -43,6 +45,8 @@ export function WorkspaceHeader({
   featuresOpen,
   searchOpen: searchOpenProp,
   onToggleSearch: onToggleSearchProp,
+  onToggleSettings,
+  settingsOpen,
 }: WorkspaceHeaderProps) {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -198,6 +202,25 @@ export function WorkspaceHeader({
           >
             <Lightbulb className="h-4 w-4" />
           </Button>
+        )}
+
+        {/* Workspace settings */}
+        {onToggleSettings && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={settingsOpen ? "secondary" : "ghost"}
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={onToggleSettings}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>Workspace settings</p>
+            </TooltipContent>
+          </Tooltip>
         )}
 
         {/* Dark mode toggle */}

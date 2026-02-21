@@ -1,10 +1,12 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Onboarding } from "@/components/onboarding";
+import { JoinWorkspace } from "@/components/join-workspace";
 import { WorkspaceLayout } from "@/components/workspace/workspace-layout";
 import { MessageFeed } from "@/components/workspace/message-feed";
 import { useAppStore } from "@/stores/app-store";
-import { useMe } from "@/hooks/use-queries";
+import { useMe, useAuthMe } from "@/hooks/use-queries";
 
 // Apply dark mode class on initial load (before first paint)
 if (localStorage.getItem("talkto-dark-mode") === "true") {
@@ -20,10 +22,38 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Check if the current URL is an invite join path: /join/:token
+ */
+function getJoinToken(): string | null {
+  const path = window.location.pathname;
+  const match = path.match(/^\/join\/(.+)$/);
+  return match ? match[1] : null;
+}
+
 /** Inner app content that uses hooks. */
 function AppContent() {
   const isOnboarded = useAppStore((s) => s.isOnboarded);
+  const setAuthInfo = useAppStore((s) => s.setAuthInfo);
+  const setActiveWorkspaceId = useAppStore((s) => s.setActiveWorkspaceId);
   const { data: me, isLoading, isError } = useMe();
+  const { data: authInfo } = useAuthMe();
+
+  // Store auth context in Zustand when it loads
+  useEffect(() => {
+    if (authInfo) {
+      setAuthInfo(authInfo);
+      if (authInfo.workspace_id) {
+        setActiveWorkspaceId(authInfo.workspace_id);
+      }
+    }
+  }, [authInfo, setAuthInfo, setActiveWorkspaceId]);
+
+  // Check for invite join flow
+  const joinToken = getJoinToken();
+  if (joinToken) {
+    return <JoinWorkspace token={joinToken} />;
+  }
 
   // Show loading while checking for existing user
   if (isLoading) {

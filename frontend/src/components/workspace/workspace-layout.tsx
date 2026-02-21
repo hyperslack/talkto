@@ -13,6 +13,8 @@ import { useAppStore } from "@/stores/app-store";
 import { ChannelList } from "./channel-list";
 import { AgentList } from "./agent-list";
 import { WorkspaceHeader } from "./workspace-header";
+import { WorkspaceSwitcher } from "./workspace-switcher";
+import { WorkspaceSettings } from "./workspace-settings";
 import { FeaturePanel } from "./feature-panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -72,6 +74,7 @@ export function WorkspaceLayout({
   const setActiveChannelId = useAppStore((s) => s.setActiveChannelId);
   const [featuresOpen, setFeaturesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Keyboard shortcuts
   const shortcutHandlers = useMemo(() => ({
@@ -183,9 +186,7 @@ export function WorkspaceLayout({
             className="h-7 w-7 rounded-md"
           />
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold text-sidebar-foreground">
-              TalkTo
-            </h2>
+            <WorkspaceSwitcher />
           </div>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -232,12 +233,17 @@ export function WorkspaceLayout({
           featuresOpen={featuresOpen}
           searchOpen={searchOpen}
           onToggleSearch={() => setSearchOpen(!searchOpen)}
+          onToggleSettings={() => setSettingsOpen(!settingsOpen)}
+          settingsOpen={settingsOpen}
         />
         <div className="flex-1 overflow-hidden">{children}</div>
       </main>
 
       {/* Right panel: features (Sheet overlay) */}
       <FeaturePanel open={featuresOpen} onOpenChange={setFeaturesOpen} />
+
+      {/* Workspace settings (Sheet overlay) */}
+      <WorkspaceSettings open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }
