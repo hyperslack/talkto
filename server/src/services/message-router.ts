@@ -3,7 +3,7 @@
  */
 
 import { eq, desc, sql, and, inArray, like } from "drizzle-orm";
-import { getDb } from "../db";
+import { getDb, DEFAULT_WORKSPACE_ID } from "../db";
 import {
   agents,
   channels,
@@ -36,11 +36,13 @@ export function sendAgentMessage(
     .get();
   if (!agent) return { error: `Agent '${agentName}' not found.` };
 
-  // Get channel
+  const workspaceId = agent.workspaceId ?? DEFAULT_WORKSPACE_ID;
+
+  // Get channel (scoped to agent's workspace)
   const channel = db
     .select()
     .from(channels)
-    .where(eq(channels.name, channelName))
+    .where(and(eq(channels.name, channelName), eq(channels.workspaceId, workspaceId)))
     .get();
   if (!channel) return { error: `Channel '${channelName}' not found.` };
 
@@ -60,7 +62,7 @@ export function sendAgentMessage(
     })
     .run();
 
-  // Broadcast to WebSocket clients
+  // Broadcast to WebSocket clients (scoped to workspace)
   broadcastEvent(
     newMessageEvent({
       messageId: msgId,
@@ -72,7 +74,8 @@ export function sendAgentMessage(
       parentId: replyTo ?? null,
       createdAt: now,
       senderType: "agent",
-    })
+    }),
+    workspaceId
   );
 
   // Fire-and-forget: invoke agents mentioned in this message (agent-to-agent @mentions)
@@ -110,14 +113,15 @@ export function getAgentMessages(
     .get();
   if (!agent) return { error: `Agent '${agentName}' not found.` };
 
+  const workspaceId = agent.workspaceId ?? DEFAULT_WORKSPACE_ID;
   const result: MessageItem[] = [];
 
   if (channelName) {
-    // Specific channel requested
+    // Specific channel requested (scoped to agent's workspace)
     const ch = db
       .select()
       .from(channels)
-      .where(eq(channels.name, channelName))
+      .where(and(eq(channels.name, channelName), eq(channels.workspaceId, workspaceId)))
       .get();
     if (!ch) return { error: `Channel '${channelName}' not found.` };
 
@@ -152,7 +156,7 @@ export function getAgentMessages(
     // Priority retrieval
     const seenIds = new Set<string>();
 
-    // 1. Messages mentioning this agent
+    // 1. Messages mentioning this agent (scoped to workspace via channels join)
     const mentionRows = db
       .select({
         id: messages.id,
@@ -165,7 +169,12 @@ export function getAgentMessages(
       .from(messages)
       .innerJoin(users, eq(messages.senderId, users.id))
       .innerJoin(channels, eq(messages.channelId, channels.id))
-      .where(sql`${messages.mentions} LIKE ${'%"' + agentName + '"%'}`)
+      .where(
+        and(
+          sql`${messages.mentions} LIKE ${'%"' + agentName + '"%'}`,
+          eq(channels.workspaceId, workspaceId)
+        )
+      )
       .orderBy(desc(messages.createdAt))
       .limit(limit)
       .all();
@@ -183,13 +192,13 @@ export function getAgentMessages(
       seenIds.add(row.id);
     }
 
-    // 2. Project channel messages
+    // 2. Project channel messages (scoped to workspace)
     if (result.length < limit) {
       const projChannelName = `#project-${agent.projectName.toLowerCase().replace(/[ _]/g, "-")}`;
       const projCh = db
         .select()
         .from(channels)
-        .where(eq(channels.name, projChannelName))
+        .where(and(eq(channels.name, projChannelName), eq(channels.workspaceId, workspaceId)))
         .get();
 
       if (projCh) {

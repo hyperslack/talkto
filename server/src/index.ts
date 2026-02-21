@@ -14,7 +14,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 
 import type { AppBindings } from "./types/index";
 import { config, BASE_DIR } from "./lib/config";
-import { getDb, closeDb } from "./db";
+import { getDb, closeDb, DEFAULT_WORKSPACE_ID } from "./db";
 import { agents, messages, channels, users } from "./db/schema";
 import { eq, like, desc, sql } from "drizzle-orm";
 import { seedDefaults } from "./db/seed";
@@ -28,7 +28,7 @@ import {
 } from "./services/ws-manager";
 import { startLivenessTask, stopLivenessTask } from "./routes/agents";
 import { createMcpServer } from "./mcp/server";
-import { authMiddleware } from "./middleware/auth";
+import { authMiddleware, mcpAuthMiddleware } from "./middleware/auth";
 
 // Route modules
 import usersRoutes from "./routes/users";
@@ -141,6 +141,20 @@ app.get("/api/search", (c) => {
 // MCP Server — streamable HTTP transport at /mcp
 // ---------------------------------------------------------------------------
 
+// MCP auth middleware — validates API key or localhost bypass
+app.use("/mcp", mcpAuthMiddleware);
+
+// CORS for MCP endpoint (agents may connect from different origins)
+app.use(
+  "/mcp",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization", "mcp-session-id"],
+    credentials: true,
+  })
+);
+
 // Track transports by session ID for multi-client support
 const mcpTransports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -197,8 +211,12 @@ app.all("/mcp", async (c) => {
     }
   };
 
+  // Resolve workspace from auth context (API key → workspace, or localhost → default)
+  const auth = c.get("auth");
+  const workspaceId = auth?.workspaceId || DEFAULT_WORKSPACE_ID;
+
   // Each session gets its own McpServer instance (connect() can only be called once per instance)
-  const server = createMcpServer();
+  const server = createMcpServer(workspaceId);
   await server.connect(transport);
 
   try {
@@ -302,9 +320,10 @@ const server = Bun.serve({
     const url = new URL(req.url);
 
     // WebSocket upgrade at /ws
+    // For now, default to DEFAULT_WORKSPACE_ID. WS auth is deferred to PR4.
     if (url.pathname === "/ws") {
       const upgraded = server.upgrade(req, {
-        data: { id: 0 } satisfies WsData,
+        data: { id: 0, workspaceId: DEFAULT_WORKSPACE_ID } satisfies WsData,
       });
       if (upgraded) return undefined;
       return new Response("WebSocket upgrade failed", { status: 500 });

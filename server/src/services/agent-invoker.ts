@@ -19,7 +19,7 @@
  */
 
 import { eq, desc, sql, and, ne } from "drizzle-orm";
-import { getDb } from "../db";
+import { getDb, DEFAULT_WORKSPACE_ID } from "../db";
 import { agents, channels, messages, users } from "../db/schema";
 import {
   broadcastEvent,
@@ -54,10 +54,10 @@ const MAX_CHAIN_DEPTH = 5;
  * Extract @mentions from message text and validate them against registered agents.
  *
  * Matches patterns like @spicy-bat, @silly-narwhal, @the_creator.
- * Only returns names that correspond to actual registered agents.
+ * Only returns names that correspond to actual registered agents in the workspace.
  * Excludes the sender to prevent self-invocation.
  */
-function extractMentionsFromText(text: string, excludeSender?: string): string[] {
+function extractMentionsFromText(text: string, excludeSender?: string, workspaceId?: string): string[] {
   // Match @word patterns (agent names are adjective-animal with hyphens/underscores)
   const mentionPattern = /@([\w-]+)/g;
   const mentioned = new Set<string>();
@@ -72,15 +72,19 @@ function extractMentionsFromText(text: string, excludeSender?: string): string[]
 
   if (mentioned.size === 0) return [];
 
-  // Validate against registered agents
+  // Validate against registered agents (scoped to workspace if provided)
   const db = getDb();
   const validAgents: string[] = [];
 
   for (const name of mentioned) {
+    const conditions = [eq(agents.agentName, name)];
+    if (workspaceId) {
+      conditions.push(eq(agents.workspaceId, workspaceId));
+    }
     const agent = db
       .select({ agentName: agents.agentName })
       .from(agents)
-      .where(eq(agents.agentName, name))
+      .where(conditions.length > 1 ? and(...conditions) : conditions[0])
       .get();
     if (agent) {
       validAgents.push(agent.agentName);
@@ -106,15 +110,25 @@ function extractMentionsFromText(text: string, excludeSender?: string): string[]
  * - Claude Code agents: must have provider_session_id (no server_url needed)
  *
  * Always excludes the sender to prevent self-invocation.
+ * When workspaceId is provided, only agents in that workspace are considered.
  */
-function expandAtAll(channelName: string, excludeSender: string): string[] {
+function expandAtAll(channelName: string, excludeSender: string, workspaceId?: string): string[] {
   // DM channels — @all doesn't apply
   if (channelName.startsWith("#dm-")) return [];
 
   try {
     const db = getDb();
 
-    // Fetch all non-system, non-ghost agents (excluding sender)
+    // Fetch all non-system, non-ghost agents (excluding sender), scoped to workspace
+    const conditions = [
+      ne(agents.agentType, "system"),
+      ne(agents.status, "ghost"),
+      ne(agents.agentName, excludeSender),
+    ];
+    if (workspaceId) {
+      conditions.push(eq(agents.workspaceId, workspaceId));
+    }
+
     const candidates = db
       .select({
         agentName: agents.agentName,
@@ -124,13 +138,7 @@ function expandAtAll(channelName: string, excludeSender: string): string[] {
         providerSessionId: agents.providerSessionId,
       })
       .from(agents)
-      .where(
-        and(
-          ne(agents.agentType, "system"),
-          ne(agents.status, "ghost"),
-          ne(agents.agentName, excludeSender)
-        )
-      )
+      .where(and(...conditions))
       .all();
 
     // Filter to invocable agents — check per provider type
@@ -221,12 +229,17 @@ async function _invokeForMessage(
   mentions: string[] | null,
   depth: number
 ): Promise<void> {
+  // Derive workspace from channel for scoping mention lookups
+  const db = getDb();
+  const ch = db.select({ workspaceId: channels.workspaceId }).from(channels).where(eq(channels.id, channelId)).get();
+  const workspaceId = ch?.workspaceId ?? DEFAULT_WORKSPACE_ID;
+
   // Expand @all into concrete agent names before processing.
   // Track which names came from @all so we can skip unreachable ones silently.
   let resolvedMentions = mentions;
   const fromAtAll = new Set<string>();
   if (mentions && mentions.includes("all")) {
-    const expanded = expandAtAll(channelName, senderName);
+    const expanded = expandAtAll(channelName, senderName, workspaceId);
     for (const name of expanded) fromAtAll.add(name);
     // Merge @all expansion with any other explicit mentions, deduplicated
     const explicit = mentions.filter((m) => m !== "all");
@@ -247,7 +260,7 @@ async function _invokeForMessage(
     if (target === senderName) {
       console.log(`[INVOKE] Skipping self-invocation for '${target}'`);
     } else {
-      await invokeAgent(target, channelId, channelName, content, /* isDm */ true, depth);
+      await invokeAgent(target, channelId, channelName, content, /* isDm */ true, depth, /* silent */ false, workspaceId);
       invoked.add(target);
     }
   }
@@ -269,7 +282,7 @@ async function _invokeForMessage(
           context
         );
         const silent = fromAtAll.has(mentioned);
-        await invokeAgent(mentioned, channelId, channelName, prompt, /* isDm */ false, depth, silent);
+        await invokeAgent(mentioned, channelId, channelName, prompt, /* isDm */ false, depth, silent, workspaceId);
         invoked.add(mentioned);
       });
 
@@ -309,7 +322,8 @@ async function invokeAgent(
   prompt: string,
   isDm: boolean,
   depth: number = 0,
-  silent: boolean = false
+  silent: boolean = false,
+  workspaceId?: string
 ): Promise<void> {
   console.log(
     `[INVOKE] Invoking '${agentName}' in ${channelName} (${isDm ? "DM" : "@mention"})`
@@ -317,7 +331,7 @@ async function invokeAgent(
 
   // Broadcast typing start (skip if silent — e.g. @all expansion where we haven't verified reachability yet)
   if (!silent) {
-    broadcastEvent(agentTypingEvent(agentName, channelId, true));
+    broadcastEvent(agentTypingEvent(agentName, channelId, true), workspaceId);
   }
 
   try {
@@ -327,7 +341,8 @@ async function invokeAgent(
       console.warn(`[INVOKE] '${agentName}' is not invocable — skipping`);
       if (!silent) {
         broadcastEvent(
-          agentTypingEvent(agentName, channelId, false, `${agentName} is not reachable`)
+          agentTypingEvent(agentName, channelId, false, `${agentName} is not reachable`),
+          workspaceId
         );
       }
       return;
@@ -335,7 +350,7 @@ async function invokeAgent(
 
     // Agent is reachable — show typing indicator if we deferred it
     if (silent) {
-      broadcastEvent(agentTypingEvent(agentName, channelId, true));
+      broadcastEvent(agentTypingEvent(agentName, channelId, true), workspaceId);
     }
 
     // Check if session is currently busy (route by provider)
@@ -351,15 +366,15 @@ async function invokeAgent(
       console.warn(`[INVOKE] '${agentName}' session is busy — prompt will queue`);
     }
 
-    // Streaming callbacks — stream real-time events to the frontend
+    // Streaming callbacks — stream real-time events to the frontend (scoped to workspace)
     const callbacks = {
       onTypingStart: () => {
         // Re-broadcast typing to confirm agent is actively processing
-        broadcastEvent(agentTypingEvent(agentName, channelId, true));
+        broadcastEvent(agentTypingEvent(agentName, channelId, true), workspaceId);
       },
       onTextDelta: (delta: string) => {
         // Stream each text fragment to the frontend in real-time
-        broadcastEvent(agentStreamingEvent(agentName, channelId, delta));
+        broadcastEvent(agentStreamingEvent(agentName, channelId, delta), workspaceId);
       },
       onError: (error: string) => {
         console.error(`[INVOKE] Streaming error for '${agentName}':`, error);
@@ -376,7 +391,8 @@ async function invokeAgent(
     if (!result || !result.text) {
       console.warn(`[INVOKE] No response from '${agentName}'`);
       broadcastEvent(
-        agentTypingEvent(agentName, channelId, false, `${agentName} did not respond`)
+        agentTypingEvent(agentName, channelId, false, `${agentName} did not respond`),
+        workspaceId
       );
       return;
     }
@@ -390,11 +406,12 @@ async function invokeAgent(
     postAgentResponse(agentName, channelId, channelName, result.text, depth);
 
     // Broadcast typing stop (success)
-    broadcastEvent(agentTypingEvent(agentName, channelId, false));
+    broadcastEvent(agentTypingEvent(agentName, channelId, false), workspaceId);
   } catch (err) {
     console.error(`[INVOKE] Error invoking '${agentName}':`, err);
     broadcastEvent(
-      agentTypingEvent(agentName, channelId, false, `${agentName} encountered an error`)
+      agentTypingEvent(agentName, channelId, false, `${agentName} encountered an error`),
+      workspaceId
     );
   }
 }
@@ -453,8 +470,10 @@ function postAgentResponse(
     return;
   }
 
-  // Extract @mentions from the response text
-  const mentionedAgents = extractMentionsFromText(content, agentName);
+  const workspaceId = agent.workspaceId ?? DEFAULT_WORKSPACE_ID;
+
+  // Extract @mentions from the response text (scoped to agent's workspace)
+  const mentionedAgents = extractMentionsFromText(content, agentName, workspaceId);
   const mentionsJson = mentionedAgents.length > 0 ? JSON.stringify(mentionedAgents) : null;
 
   const msgId = crypto.randomUUID();
@@ -471,7 +490,7 @@ function postAgentResponse(
     })
     .run();
 
-  // Broadcast to WebSocket clients
+  // Broadcast to WebSocket clients (scoped to workspace)
   broadcastEvent(
     newMessageEvent({
       messageId: msgId,
@@ -482,7 +501,8 @@ function postAgentResponse(
       mentions: mentionedAgents.length > 0 ? mentionedAgents : null,
       createdAt: now,
       senderType: "agent",
-    })
+    }),
+    workspaceId
   );
 
   console.log(

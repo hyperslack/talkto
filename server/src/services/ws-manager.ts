@@ -3,16 +3,20 @@
  *
  * Supports targeted message delivery: new_message events are only sent to
  * clients subscribed to that channel. All other events broadcast to everyone.
+ * Supports workspace scoping: when a workspaceId is provided to broadcast(),
+ * only clients in that workspace receive the event.
  */
 
 import type { ServerWebSocket } from "bun";
 
 export interface WsData {
   id: number;
+  workspaceId: string;
 }
 
 interface WsClient {
   ws: ServerWebSocket<WsData>;
+  workspaceId: string;
   subscribedChannels: Set<string>;
 }
 
@@ -21,9 +25,13 @@ const clients = new Map<number, WsClient>();
 
 export function acceptClient(ws: ServerWebSocket<WsData>): number {
   const id = nextId++;
-  ws.data = { id };
-  clients.set(id, { ws, subscribedChannels: new Set() });
-  console.log(`[WS] Client connected: ${id}`);
+  ws.data = { ...ws.data, id };
+  clients.set(id, {
+    ws,
+    workspaceId: ws.data.workspaceId,
+    subscribedChannels: new Set(),
+  });
+  console.log(`[WS] Client connected: ${id} (workspace: ${ws.data.workspaceId})`);
   return id;
 }
 
@@ -93,13 +101,21 @@ export function broadcastToChannel(
  *
  * For `new_message` events, only sends to clients subscribed to that channel.
  * For all other events (agent_status, feature_update, etc.), sends to everyone.
+ *
+ * When `workspaceId` is provided, only sends to clients in that workspace.
+ * When `workspaceId` is null/undefined, broadcasts to all clients (global events).
  */
-export function broadcast(event: Record<string, unknown>): void {
+export function broadcast(event: Record<string, unknown>, workspaceId?: string | null): void {
   const payload = JSON.stringify(event);
   const eventType = event.type as string | undefined;
   const dead: number[] = [];
 
   for (const [id, client] of clients) {
+    // Workspace filter: if workspaceId provided, skip clients not in that workspace
+    if (workspaceId != null && client.workspaceId !== workspaceId) {
+      continue;
+    }
+
     // For new_message events, filter by channel subscription
     if (eventType === "new_message") {
       const data = event.data as Record<string, unknown> | undefined;

@@ -3,15 +3,15 @@
  */
 
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
-import { getDb } from "../db";
-import { users, channels, messages } from "../db/schema";
+import { eq, and } from "drizzle-orm";
+import { getDb, DEFAULT_WORKSPACE_ID } from "../db";
+import { users, channels, messages, workspaceMembers } from "../db/schema";
 import { UserOnboardSchema } from "../types";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
 import { CREATOR_NAME } from "../services/name-generator";
-import type { UserResponse } from "../types";
+import type { AppBindings, UserResponse } from "../types";
 
-const app = new Hono();
+const app = new Hono<AppBindings>();
 
 function userToResponse(u: typeof users.$inferSelect): UserResponse {
   return {
@@ -26,7 +26,7 @@ function userToResponse(u: typeof users.$inferSelect): UserResponse {
 }
 
 /** Have the_creator post a welcome for the new human operator in #general */
-function postCreatorWelcome(displayName: string, about: string | null): void {
+function postCreatorWelcome(displayName: string, about: string | null, workspaceId: string): void {
   const db = getDb();
 
   const creator = db
@@ -39,7 +39,7 @@ function postCreatorWelcome(displayName: string, about: string | null): void {
   const general = db
     .select()
     .from(channels)
-    .where(eq(channels.name, "#general"))
+    .where(and(eq(channels.name, "#general"), eq(channels.workspaceId, workspaceId)))
     .get();
   if (!general) return;
 
@@ -77,6 +77,7 @@ function postCreatorWelcome(displayName: string, about: string | null): void {
 
 // POST /users/onboard
 app.post("/onboard", async (c) => {
+  const auth = c.get("auth");
   const body = await c.req.json();
   const parsed = UserOnboardSchema.safeParse(body);
   if (!parsed.success) {
@@ -84,13 +85,12 @@ app.post("/onboard", async (c) => {
   }
   const data = parsed.data;
   const db = getDb();
+  const workspaceId = auth.workspaceId || DEFAULT_WORKSPACE_ID;
 
-  // Check if human already exists
-  const existing = db
-    .select()
-    .from(users)
-    .where(eq(users.type, "human"))
-    .get();
+  // Check if human already exists — prefer auth context, fall back to type lookup
+  const existing = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
 
   if (existing) {
     // Re-onboard: update fields
@@ -103,6 +103,28 @@ app.post("/onboard", async (c) => {
       })
       .where(eq(users.id, existing.id))
       .run();
+
+    // Ensure workspace membership exists
+    const membership = db
+      .select()
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, workspaceId),
+          eq(workspaceMembers.userId, existing.id)
+        )
+      )
+      .get();
+    if (!membership) {
+      db.insert(workspaceMembers)
+        .values({
+          workspaceId,
+          userId: existing.id,
+          role: "admin",
+          joinedAt: new Date().toISOString(),
+        })
+        .run();
+    }
 
     const updated = db.select().from(users).where(eq(users.id, existing.id)).get()!;
     return c.json(userToResponse(updated), 201);
@@ -124,10 +146,20 @@ app.post("/onboard", async (c) => {
     })
     .run();
 
+  // Create workspace membership for new user
+  db.insert(workspaceMembers)
+    .values({
+      workspaceId,
+      userId,
+      role: "admin",
+      joinedAt: now,
+    })
+    .run();
+
   // Fire-and-forget: creator welcome
   const welcomeName = data.display_name ?? data.name;
   try {
-    postCreatorWelcome(welcomeName, data.about ?? null);
+    postCreatorWelcome(welcomeName, data.about ?? null, workspaceId);
   } catch (e) {
     console.error("Failed to post creator welcome:", e);
   }
@@ -138,8 +170,11 @@ app.post("/onboard", async (c) => {
 
 // GET /users/me
 app.get("/me", (c) => {
+  const auth = c.get("auth");
   const db = getDb();
-  const user = db.select().from(users).where(eq(users.type, "human")).get();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
   if (!user) {
     return c.json({ detail: "No human user onboarded yet" }, 404);
   }
@@ -148,6 +183,7 @@ app.get("/me", (c) => {
 
 // PATCH /users/me
 app.patch("/me", async (c) => {
+  const auth = c.get("auth");
   const body = await c.req.json();
   const parsed = UserOnboardSchema.safeParse(body);
   if (!parsed.success) {
@@ -156,7 +192,9 @@ app.patch("/me", async (c) => {
   const data = parsed.data;
   const db = getDb();
 
-  const user = db.select().from(users).where(eq(users.type, "human")).get();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
   if (!user) {
     return c.json({ detail: "No human user onboarded yet" }, 404);
   }
@@ -177,8 +215,11 @@ app.patch("/me", async (c) => {
 
 // DELETE /users/me
 app.delete("/me", (c) => {
+  const auth = c.get("auth");
   const db = getDb();
-  const user = db.select().from(users).where(eq(users.type, "human")).get();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
   if (user) {
     console.warn(
       `Deleting human user '${user.displayName ?? user.name}' (id=${user.id})`

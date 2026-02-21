@@ -6,11 +6,11 @@ import { Hono } from "hono";
 import { eq, asc, desc, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { agents, channels, channelMembers, messages, sessions, users } from "../db/schema";
-import type { AgentResponse, ChannelResponse } from "../types";
+import type { AgentResponse, AppBindings, ChannelResponse } from "../types";
 import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
 
-const app = new Hono();
+const app = new Hono<AppBindings>();
 
 // ---------------------------------------------------------------------------
 // Ghost cache — updated every 30s by background interval
@@ -165,8 +165,14 @@ function agentToResponse(
 
 // GET /agents
 app.get("/", (c) => {
+  const auth = c.get("auth");
   const db = getDb();
-  const allAgents = db.select().from(agents).orderBy(asc(agents.agentName)).all();
+  const allAgents = db
+    .select()
+    .from(agents)
+    .where(eq(agents.workspaceId, auth.workspaceId))
+    .orderBy(asc(agents.agentName))
+    .all();
 
   // Batch-fetch message counts and last message timestamps for all agents
   const stats = db
@@ -270,6 +276,7 @@ app.get("/:agentName", (c) => {
 
 // POST /agents/:agentName/dm — get or create DM channel
 app.post("/:agentName/dm", (c) => {
+  const auth = c.get("auth");
   const db = getDb();
   const agentName = c.req.param("agentName");
 
@@ -285,8 +292,12 @@ app.post("/:agentName/dm", (c) => {
   const dmName = `#dm-${agentName}`;
   const now = new Date().toISOString();
 
-  // Check if DM channel already exists
-  const existing = db.select().from(channels).where(eq(channels.name, dmName)).get();
+  // Check if DM channel already exists in this workspace
+  const existing = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.name, dmName), eq(channels.workspaceId, auth.workspaceId)))
+    .get();
   if (existing) {
     const resp: ChannelResponse = {
       id: existing.id,
@@ -306,8 +317,9 @@ app.post("/:agentName/dm", (c) => {
       id: channelId,
       name: dmName,
       type: "dm",
-      createdBy: "human",
+      createdBy: auth.userId ?? "human",
       createdAt: now,
+      workspaceId: auth.workspaceId,
     })
     .run();
 
@@ -316,11 +328,10 @@ app.post("/:agentName/dm", (c) => {
     .values({ channelId, userId: agent.id, joinedAt: now })
     .run();
 
-  // Auto-join human
-  const human = db.select().from(users).where(eq(users.type, "human")).get();
-  if (human) {
+  // Auto-join human from auth context
+  if (auth.userId) {
     db.insert(channelMembers)
-      .values({ channelId, userId: human.id, joinedAt: now })
+      .values({ channelId, userId: auth.userId, joinedAt: now })
       .run();
   }
 

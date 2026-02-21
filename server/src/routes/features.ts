@@ -8,9 +8,9 @@ import { getDb } from "../db";
 import { featureRequests, featureVotes, users } from "../db/schema";
 import { FeatureCreateSchema, FeatureUpdateSchema, FeatureVoteCreateSchema } from "../types";
 import { broadcastEvent, featureUpdateEvent } from "../services/broadcaster";
-import type { FeatureResponse } from "../types";
+import type { AppBindings, FeatureResponse } from "../types";
 
-const app = new Hono();
+const app = new Hono<AppBindings>();
 
 // GET /features
 app.get("/", (c) => {
@@ -57,6 +57,7 @@ app.get("/", (c) => {
 
 // POST /features
 app.post("/", async (c) => {
+  const auth = c.get("auth");
   const body = await c.req.json();
   const parsed = FeatureCreateSchema.safeParse(body);
   if (!parsed.success) {
@@ -64,7 +65,9 @@ app.post("/", async (c) => {
   }
   const db = getDb();
 
-  const human = db.select().from(users).where(eq(users.type, "human")).get();
+  const human = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : null;
   if (!human) {
     return c.json({ detail: "No user onboarded" }, 400);
   }
@@ -199,6 +202,7 @@ app.delete("/:featureId", async (c) => {
 
 // POST /features/:featureId/vote
 app.post("/:featureId/vote", async (c) => {
+  const auth = c.get("auth");
   const featureId = c.req.param("featureId");
   const body = await c.req.json();
   const parsed = FeatureVoteCreateSchema.safeParse(body);
@@ -217,7 +221,9 @@ app.post("/:featureId/vote", async (c) => {
     return c.json({ detail: "Feature not found" }, 404);
   }
 
-  const human = db.select().from(users).where(eq(users.type, "human")).get();
+  const human = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : null;
   if (!human) {
     return c.json({ detail: "No user onboarded" }, 400);
   }

@@ -11,6 +11,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import { DEFAULT_WORKSPACE_ID } from "../db";
 import {
   registerOrConnectAgent,
   disconnectAgent,
@@ -108,16 +109,27 @@ async function detectAgentType(
 
 const MAX_SESSIONS = 1000;
 const MAX_MESSAGES = 10;
-const sessionAgents = new Map<string, string>();
+
+interface SessionInfo {
+  agentName: string;
+  workspaceId: string;
+}
+
+const sessionAgents = new Map<string, SessionInfo>();
 
 function getAgent(sessionId: string | undefined): string | undefined {
   if (!sessionId) return undefined;
-  return sessionAgents.get(sessionId);
+  return sessionAgents.get(sessionId)?.agentName;
 }
 
-function setAgent(sessionId: string | undefined, name: string): void {
+function getWorkspaceId(sessionId: string | undefined, fallback: string): string {
+  if (!sessionId) return fallback;
+  return sessionAgents.get(sessionId)?.workspaceId ?? fallback;
+}
+
+function setAgent(sessionId: string | undefined, name: string, workspaceId: string): void {
   if (!sessionId) return;
-  sessionAgents.set(sessionId, name);
+  sessionAgents.set(sessionId, { agentName: name, workspaceId });
   // Evict oldest entries if over capacity
   if (sessionAgents.size > MAX_SESSIONS) {
     const oldest = sessionAgents.keys().next().value;
@@ -129,7 +141,7 @@ function setAgent(sessionId: string | undefined, name: string): void {
 // MCP Server Factory — creates a new instance per session
 // ---------------------------------------------------------------------------
 
-function registerTools(server: McpServer): void {
+function registerTools(server: McpServer, serverWorkspaceId: string): void {
 
 server.tool(
   "register",
@@ -190,17 +202,21 @@ server.tool(
       args.server_url
     );
 
+    // Workspace comes from the MCP auth context (API key → workspace) or default
+    const wsId = serverWorkspaceId;
+
     const result = registerOrConnectAgent({
       sessionId: trimmedSessionId,
       projectPath: args.project_path,
       agentName: args.agent_name,
       serverUrl: resolvedServerUrl,
       agentType,
+      workspaceId: wsId,
     });
 
     const agentName = result.agent_name as string | undefined;
     if (agentName) {
-      setAgent(extra.sessionId, agentName);
+      setAgent(extra.sessionId, agentName, wsId);
     }
 
     return {
@@ -338,7 +354,8 @@ server.tool(
   },
   async (args, extra) => {
     const creator = getAgent(extra.sessionId) ?? "unknown";
-    const result = createNewChannel(args.name, creator);
+    const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
+    const result = createNewChannel(args.name, creator, wsId);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result) }],
     };
@@ -365,7 +382,8 @@ server.tool(
         ],
       };
     }
-    const result = joinAgentToChannel(name, args.channel);
+    const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
+    const result = joinAgentToChannel(name, args.channel, wsId);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result) }],
     };
@@ -391,8 +409,9 @@ server.tool(
   "list_channels",
   "List all available channels.",
   {},
-  async () => {
-    const result = listAllChannels();
+  async (_args, extra) => {
+    const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
+    const result = listAllChannels(wsId);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result) }],
     };
@@ -403,8 +422,9 @@ server.tool(
   "list_agents",
   "List all registered agents and their status, personality, and current task.",
   {},
-  async () => {
-    const result = listAllAgents();
+  async (_args, extra) => {
+    const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
+    const result = listAllAgents(wsId);
     return {
       content: [{ type: "text" as const, text: JSON.stringify(result) }],
     };
@@ -697,12 +717,15 @@ server.tool(
  * Create a new MCP server instance with all tools registered.
  * Each session needs its own McpServer instance because
  * McpServer.connect() can only be called once per instance.
+ *
+ * @param workspaceId - The workspace this MCP session belongs to.
+ *                      Resolved from auth (API key → workspace) or default.
  */
-export function createMcpServer(): McpServer {
+export function createMcpServer(workspaceId: string = DEFAULT_WORKSPACE_ID): McpServer {
   const server = new McpServer({
     name: "TalkTo",
     version: "0.1.0",
   });
-  registerTools(server);
+  registerTools(server, workspaceId);
   return server;
 }
