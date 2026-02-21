@@ -22,6 +22,7 @@ import {
   disconnectClient,
   subscribe,
   unsubscribe,
+  broadcastToChannel,
   type WsData,
 } from "./services/ws-manager";
 import { startLivenessTask, stopLivenessTask } from "./routes/agents";
@@ -331,6 +332,24 @@ const server = Bun.serve({
                 type: "unsubscribed",
                 data: { channel_ids: channelIds },
               })
+            );
+          }
+        } else if (action === "typing") {
+          const channelId = msg.channel_id as string;
+          const userId = msg.user_id as string;
+          const userName = msg.user_name as string;
+          if (channelId && userId) {
+            broadcastToChannel(
+              channelId,
+              {
+                type: "typing",
+                data: {
+                  channel_id: channelId,
+                  user_id: userId,
+                  user_name: userName ?? "Unknown",
+                },
+              },
+              ws.data?.id // exclude sender
             );
           }
         } else if (action === "ping") {

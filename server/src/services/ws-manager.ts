@@ -62,6 +62,33 @@ export function getClientCount(): number {
 }
 
 /**
+ * Broadcast a JSON event to clients subscribed to a specific channel.
+ * Optionally exclude a sender (by client id) to avoid echo.
+ */
+export function broadcastToChannel(
+  channelId: string,
+  event: Record<string, unknown>,
+  excludeClientId?: number
+): void {
+  const payload = JSON.stringify(event);
+  const dead: number[] = [];
+
+  for (const [id, client] of clients) {
+    if (id === excludeClientId) continue;
+    if (!client.subscribedChannels.has(channelId)) continue;
+    try {
+      client.ws.send(payload);
+    } catch {
+      dead.push(id);
+    }
+  }
+
+  for (const id of dead) {
+    clients.delete(id);
+  }
+}
+
+/**
  * Broadcast a JSON event to connected clients.
  *
  * For `new_message` events, only sends to clients subscribed to that channel.
