@@ -111,6 +111,7 @@ function createTables(sqlite: Database) {
       content TEXT NOT NULL,
       mentions TEXT,
       parent_id TEXT REFERENCES messages(id),
+      edited_at TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -133,6 +134,13 @@ function createTables(sqlite: Database) {
       PRIMARY KEY (feature_id, user_id)
     );
   `);
+
+  // Migration: add edited_at column to messages if missing
+  try {
+    sqlite.exec(`ALTER TABLE messages ADD COLUMN edited_at TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 export function closeDb() {

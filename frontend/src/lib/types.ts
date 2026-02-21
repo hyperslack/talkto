@@ -35,6 +35,7 @@ export interface Message {
   content: string;
   mentions: string[] | null;
   parent_id: string | null;
+  edited_at?: string | null;
   created_at: string;
 }
 
@@ -70,6 +71,7 @@ export interface Feature {
 export type WSEventType =
   | "new_message"
   | "message_deleted"
+  | "message_edited"
   | "agent_status"
   | "agent_typing"
   | "agent_streaming"
@@ -94,12 +96,20 @@ export interface WSNewMessageData {
   content: string;
   mentions: string[];
   parent_id: string | null;
+  edited_at?: string | null;
   created_at: string;
 }
 
 export interface WSMessageDeletedData {
   id: string;
   channel_id: string;
+}
+
+export interface WSMessageEditedData {
+  id: string;
+  channel_id: string;
+  content: string;
+  edited_at: string;
 }
 
 export interface WSAgentStatusData {
