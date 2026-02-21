@@ -2,6 +2,7 @@
  * Database connection — bun:sqlite with WAL mode + Drizzle ORM.
  *
  * Auto-creates all tables on first connection (zero-config startup).
+ * Runs lightweight migrations for schema evolution (e.g., adding workspace columns).
  */
 
 import { Database } from "bun:sqlite";
@@ -13,6 +14,10 @@ import * as schema from "./schema";
 
 let _db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 let _sqlite: Database | null = null;
+
+/** Well-known ID for the default workspace (deterministic for migrations). */
+export const DEFAULT_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000";
+export const DEFAULT_WORKSPACE_SLUG = "default";
 
 export function getDb() {
   if (_db) return _db;
@@ -37,6 +42,9 @@ export function getDb() {
   // Run additive migrations for existing databases
   migrateUp(_sqlite);
 
+  // Run lightweight migrations for schema evolution
+  runMigrations(_sqlite);
+
   _db = drizzle(_sqlite, { schema });
   return _db;
 }
@@ -49,6 +57,27 @@ export function getDb() {
  */
 function createTables(sqlite: Database) {
   sqlite.exec(`
+    -- -----------------------------------------------------------------
+    -- workspaces (must come before tables that reference it)
+    -- -----------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL,
+      description TEXT,
+      onboarding_prompt TEXT,
+      human_welcome TEXT,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspaces_slug ON workspaces(slug);
+
+    -- -----------------------------------------------------------------
+    -- users
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -56,9 +85,81 @@ function createTables(sqlite: Database) {
       created_at TEXT NOT NULL,
       display_name TEXT,
       about TEXT,
-      agent_instructions TEXT
+      agent_instructions TEXT,
+      email TEXT,
+      avatar_url TEXT
     );
 
+    -- -----------------------------------------------------------------
+    -- workspace_members
+    -- -----------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS workspace_members (
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      user_id TEXT NOT NULL REFERENCES users(id),
+      role TEXT NOT NULL,
+      joined_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
+
+    -- -----------------------------------------------------------------
+    -- workspace_api_keys
+    -- -----------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS workspace_api_keys (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      key_hash TEXT NOT NULL,
+      key_prefix TEXT NOT NULL,
+      name TEXT,
+      created_by TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL,
+      expires_at TEXT,
+      revoked_at TEXT,
+      last_used_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON workspace_api_keys(key_hash);
+    CREATE INDEX IF NOT EXISTS idx_api_keys_workspace ON workspace_api_keys(workspace_id);
+
+    -- -----------------------------------------------------------------
+    -- workspace_invites
+    -- -----------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS workspace_invites (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      token TEXT NOT NULL UNIQUE,
+      created_by TEXT NOT NULL REFERENCES users(id),
+      role TEXT NOT NULL DEFAULT 'member',
+      max_uses INTEGER,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT,
+      created_at TEXT NOT NULL,
+      revoked_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_invites_token ON workspace_invites(token);
+    CREATE INDEX IF NOT EXISTS idx_invites_workspace ON workspace_invites(workspace_id);
+
+    -- -----------------------------------------------------------------
+    -- user_sessions (browser sessions for humans)
+    -- -----------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      token_hash TEXT NOT NULL,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_active_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+
+    -- -----------------------------------------------------------------
+    -- agents
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY REFERENCES users(id),
       agent_name TEXT NOT NULL UNIQUE,
@@ -71,12 +172,16 @@ function createTables(sqlite: Database) {
       current_task TEXT,
       gender TEXT,
       server_url TEXT,
-      provider_session_id TEXT
+      provider_session_id TEXT,
+      workspace_id TEXT REFERENCES workspaces(id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(agent_name);
     CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_name);
 
+    -- -----------------------------------------------------------------
+    -- sessions (agent login sessions)
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       agent_id TEXT NOT NULL REFERENCES agents(id),
@@ -90,6 +195,9 @@ function createTables(sqlite: Database) {
 
     CREATE INDEX IF NOT EXISTS idx_sessions_agent_active ON sessions(agent_id, is_active);
 
+    -- -----------------------------------------------------------------
+    -- channels
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS channels (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
@@ -99,11 +207,15 @@ function createTables(sqlite: Database) {
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
       is_archived INTEGER NOT NULL DEFAULT 0,
-      archived_at TEXT
+      archived_at TEXT,
+      workspace_id TEXT REFERENCES workspaces(id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_channels_name ON channels(name);
 
+    -- -----------------------------------------------------------------
+    -- channel_members (composite PK)
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS channel_members (
       channel_id TEXT NOT NULL REFERENCES channels(id),
       user_id TEXT NOT NULL REFERENCES users(id),
@@ -111,6 +223,9 @@ function createTables(sqlite: Database) {
       PRIMARY KEY (channel_id, user_id)
     );
 
+    -- -----------------------------------------------------------------
+    -- messages
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
       channel_id TEXT NOT NULL REFERENCES channels(id),
@@ -128,6 +243,9 @@ function createTables(sqlite: Database) {
     CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 
+    -- -----------------------------------------------------------------
+    -- feature_requests
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS feature_requests (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -146,6 +264,9 @@ function createTables(sqlite: Database) {
       PRIMARY KEY (user_id, channel_id)
     );
 
+    -- -----------------------------------------------------------------
+    -- feature_votes (composite PK)
+    -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS feature_votes (
       feature_id TEXT NOT NULL REFERENCES feature_requests(id),
       user_id TEXT NOT NULL REFERENCES users(id),
@@ -221,6 +342,97 @@ function migrateSchema(sqlite: Database) {
   } catch {
     // Column already exists — ignore
   }
+}
+
+/**
+ * Lightweight migrations for schema evolution.
+ *
+ * Each migration checks whether it's already been applied (idempotent).
+ * Uses SQLite's PRAGMA table_info to detect missing columns.
+ */
+function runMigrations(sqlite: Database) {
+  // Helper: check if a column exists on a table
+  const hasColumn = (table: string, column: string): boolean => {
+    const cols = sqlite
+      .prepare(`PRAGMA table_info(${table})`)
+      .all() as { name: string }[];
+    return cols.some((c) => c.name === column);
+  };
+
+  // ---------------------------------------------------------------
+  // Migration 1: Add workspace_id to channels (nullable for compat)
+  // ---------------------------------------------------------------
+  if (!hasColumn("channels", "workspace_id")) {
+    sqlite.exec(
+      `ALTER TABLE channels ADD COLUMN workspace_id TEXT REFERENCES workspaces(id)`
+    );
+  }
+  sqlite.exec(
+    `CREATE INDEX IF NOT EXISTS idx_channels_workspace ON channels(workspace_id)`
+  );
+
+  // ---------------------------------------------------------------
+  // Migration 2: Add workspace_id to agents (nullable for compat)
+  // ---------------------------------------------------------------
+  if (!hasColumn("agents", "workspace_id")) {
+    sqlite.exec(
+      `ALTER TABLE agents ADD COLUMN workspace_id TEXT REFERENCES workspaces(id)`
+    );
+  }
+  sqlite.exec(
+    `CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace_id)`
+  );
+
+  // ---------------------------------------------------------------
+  // Migration 3: Add email + avatar_url to users
+  // ---------------------------------------------------------------
+  if (!hasColumn("users", "email")) {
+    sqlite.exec(`ALTER TABLE users ADD COLUMN email TEXT`);
+  }
+  if (!hasColumn("users", "avatar_url")) {
+    sqlite.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT`);
+  }
+
+  // ---------------------------------------------------------------
+  // Migration 4: Ensure default workspace exists + backfill
+  // ---------------------------------------------------------------
+  ensureDefaultWorkspace(sqlite);
+}
+
+/**
+ * Create the default workspace if it doesn't exist, then backfill
+ * any channels/agents that have NULL workspace_id.
+ */
+function ensureDefaultWorkspace(sqlite: Database) {
+  const now = new Date().toISOString();
+
+  // Insert the default workspace (idempotent via INSERT OR IGNORE)
+  sqlite.exec(`
+    INSERT OR IGNORE INTO workspaces (id, name, slug, type, description, created_by, created_at)
+    VALUES (
+      '${DEFAULT_WORKSPACE_ID}',
+      'Default',
+      '${DEFAULT_WORKSPACE_SLUG}',
+      'personal',
+      'Auto-created default workspace',
+      'system',
+      '${now}'
+    )
+  `);
+
+  // Backfill channels without a workspace
+  sqlite.exec(`
+    UPDATE channels
+    SET workspace_id = '${DEFAULT_WORKSPACE_ID}'
+    WHERE workspace_id IS NULL
+  `);
+
+  // Backfill agents without a workspace
+  sqlite.exec(`
+    UPDATE agents
+    SET workspace_id = '${DEFAULT_WORKSPACE_ID}'
+    WHERE workspace_id IS NULL
+  `);
 }
 
 export function closeDb() {
