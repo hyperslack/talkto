@@ -75,6 +75,7 @@ export function createTestDb(): TestDb {
     content TEXT NOT NULL,
     mentions TEXT,
     parent_id TEXT REFERENCES messages(id),
+    edited_at TEXT,
     created_at TEXT NOT NULL
   )`);
 
