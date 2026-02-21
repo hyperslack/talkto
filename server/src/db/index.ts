@@ -32,6 +32,7 @@ export function getDb() {
 
   // Auto-create tables if they don't exist (zero-config startup)
   createTables(_sqlite);
+  migrateSchema(_sqlite);
 
   _db = drizzle(_sqlite, { schema });
   return _db;
@@ -92,7 +93,9 @@ function createTables(sqlite: Database) {
       type TEXT NOT NULL,
       project_path TEXT,
       created_by TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      archived_at TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_channels_name ON channels(name);
@@ -133,6 +136,24 @@ function createTables(sqlite: Database) {
       PRIMARY KEY (feature_id, user_id)
     );
   `);
+}
+
+/**
+ * Apply schema migrations for existing databases.
+ * Each migration is idempotent — safe to run multiple times.
+ */
+function migrateSchema(sqlite: Database) {
+  // Add is_archived and archived_at columns to channels (added in v0.2)
+  try {
+    sqlite.exec(`ALTER TABLE channels ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // Column already exists — ignore
+  }
+  try {
+    sqlite.exec(`ALTER TABLE channels ADD COLUMN archived_at TEXT`);
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 export function closeDb() {
