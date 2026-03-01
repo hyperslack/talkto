@@ -16,7 +16,7 @@ import type { AppBindings } from "./types/index";
 import { config, BASE_DIR } from "./lib/config";
 import { getDb, closeDb, DEFAULT_WORKSPACE_ID } from "./db";
 import { agents, messages, channels, users } from "./db/schema";
-import { eq, like, desc, sql } from "drizzle-orm";
+import { eq, like, desc, sql, and } from "drizzle-orm";
 import { seedDefaults } from "./db/seed";
 import {
   acceptClient,
@@ -93,6 +93,9 @@ app.get("/api/search", (c) => {
 
   const db = getDb();
 
+  // Escape LIKE wildcards to prevent '%' or '_' in user input from matching everything
+  const escapedQuery = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
+
   let baseQuery = db
     .select({
       id: messages.id,
@@ -109,11 +112,14 @@ app.get("/api/search", (c) => {
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
     .innerJoin(channels, eq(messages.channelId, channels.id))
-    .where(like(messages.content, `%${query}%`))
+    .where(like(messages.content, `%${escapedQuery}%`))
     .$dynamic();
 
   if (channelFilter) {
-    baseQuery = baseQuery.where(eq(channels.name, channelFilter));
+    // Use and() to combine with the existing LIKE filter instead of replacing it
+    baseQuery = baseQuery.where(
+      and(like(messages.content, `%${escapedQuery}%`), eq(channels.name, channelFilter))
+    );
   }
 
   const rows = baseQuery
