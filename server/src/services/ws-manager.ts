@@ -12,16 +12,25 @@ import type { ServerWebSocket } from "bun";
 export interface WsData {
   id: number;
   workspaceId: string;
+  userId: string | null;
 }
 
 interface WsClient {
   ws: ServerWebSocket<WsData>;
   workspaceId: string;
+  userId: string | null;
   subscribedChannels: Set<string>;
+  /** Sliding window rate limiter: timestamps of recent messages. */
+  recentMessages: number[];
 }
 
 let nextId = 1;
 const clients = new Map<number, WsClient>();
+
+/** Max messages per window (sliding window rate limiting). */
+const RATE_LIMIT_MAX = 30;
+/** Sliding window duration in milliseconds. */
+const RATE_LIMIT_WINDOW_MS = 10_000;
 
 export function acceptClient(ws: ServerWebSocket<WsData>): number {
   const id = nextId++;
@@ -29,10 +38,47 @@ export function acceptClient(ws: ServerWebSocket<WsData>): number {
   clients.set(id, {
     ws,
     workspaceId: ws.data.workspaceId,
+    userId: ws.data.userId,
     subscribedChannels: new Set(),
+    recentMessages: [],
   });
   console.log(`[WS] Client connected: ${id} (workspace: ${ws.data.workspaceId})`);
   return id;
+}
+
+/**
+ * Check if a client exceeds the rate limit.
+ * Returns true if the message should be rejected.
+ */
+export function isRateLimited(ws: ServerWebSocket<WsData>): boolean {
+  const id = ws.data?.id;
+  if (id === undefined) return true;
+  const client = clients.get(id);
+  if (!client) return true;
+
+  const now = Date.now();
+  // Prune old entries outside the window
+  client.recentMessages = client.recentMessages.filter(
+    (ts) => now - ts < RATE_LIMIT_WINDOW_MS
+  );
+
+  if (client.recentMessages.length >= RATE_LIMIT_MAX) {
+    return true;
+  }
+
+  client.recentMessages.push(now);
+  return false;
+}
+
+/**
+ * Get the authenticated userId for a WebSocket client.
+ * Returns null if not authenticated or client not found.
+ */
+export function getClientUserId(ws: ServerWebSocket<WsData>): string | null {
+  const id = ws.data?.id;
+  if (id === undefined) return null;
+  const client = clients.get(id);
+  return client?.userId ?? null;
 }
 
 export function disconnectClient(ws: ServerWebSocket<WsData>): void {

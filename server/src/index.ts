@@ -24,11 +24,21 @@ import {
   subscribe,
   unsubscribe,
   broadcastToChannel,
+  isRateLimited,
+  getClientUserId,
   type WsData,
 } from "./services/ws-manager";
 import { startLivenessTask, stopLivenessTask } from "./routes/agents";
 import { createMcpServer } from "./mcp/server";
 import { authMiddleware, mcpAuthMiddleware } from "./middleware/auth";
+import {
+  extractSessionToken,
+  validateSession,
+  validateApiKey,
+  isLocalhost,
+  getLocalhostAuth,
+  API_KEY_PREFIX,
+} from "./services/auth-service";
 
 // Route modules
 import usersRoutes from "./routes/users";
@@ -328,20 +338,67 @@ async function reconnectOpenCodeMcpClients() {
 setTimeout(reconnectOpenCodeMcpClients, 2000);
 
 // ---------------------------------------------------------------------------
+// WebSocket auth — resolve workspace + user before upgrading
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve auth for a WebSocket upgrade request.
+ * Mirrors the REST auth middleware logic: session cookie → API key → localhost bypass.
+ */
+async function resolveWsAuth(
+  req: Request,
+  srv: { requestIP: (req: Request) => { address: string } | null }
+): Promise<{ workspaceId: string; userId: string | null } | null> {
+  // Path 1: Session cookie
+  const cookieHeader = req.headers.get("Cookie") ?? undefined;
+  const sessionToken = extractSessionToken(cookieHeader);
+  if (sessionToken) {
+    const auth = await validateSession(sessionToken);
+    if (auth) {
+      return { workspaceId: auth.workspaceId, userId: auth.userId };
+    }
+  }
+
+  // Path 2: API key via query parameter (WebSocket can't set custom headers easily)
+  // Clients can pass ?token=tk_... in the WS URL
+  const url = new URL(req.url);
+  const tokenParam = url.searchParams.get("token");
+  if (tokenParam?.startsWith(API_KEY_PREFIX)) {
+    const result = await validateApiKey(tokenParam);
+    if (result) {
+      return { workspaceId: result.workspaceId, userId: null };
+    }
+  }
+
+  // Path 3: Localhost bypass
+  const remoteAddr = srv.requestIP(req)?.address;
+  const isLocal = !config.network || isLocalhost(remoteAddr);
+  if (isLocal) {
+    const auth = await getLocalhostAuth();
+    return { workspaceId: auth.workspaceId, userId: auth.userId };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Bun server with WebSocket support
 // ---------------------------------------------------------------------------
 
 const server = Bun.serve({
   port: config.port,
   hostname: config.host,
-  fetch(req, server) {
+  async fetch(req, server) {
     const url = new URL(req.url);
 
-    // WebSocket upgrade at /ws
-    // For now, default to DEFAULT_WORKSPACE_ID. WS auth is deferred to PR4.
+    // WebSocket upgrade at /ws — resolve auth before upgrading
     if (url.pathname === "/ws") {
+      const wsAuth = await resolveWsAuth(req, server);
+      if (!wsAuth) {
+        return new Response("WebSocket auth failed", { status: 401 });
+      }
       const upgraded = server.upgrade(req, {
-        data: { id: 0, workspaceId: DEFAULT_WORKSPACE_ID } satisfies WsData,
+        data: { id: 0, workspaceId: wsAuth.workspaceId, userId: wsAuth.userId } satisfies WsData,
       });
       if (upgraded) return undefined;
       return new Response("WebSocket upgrade failed", { status: 500 });
@@ -356,6 +413,17 @@ const server = Bun.serve({
     },
     message(ws, message) {
       try {
+        // Rate limiting — reject if client is sending too fast
+        if (isRateLimited(ws)) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              data: { message: "Rate limited — too many messages" },
+            })
+          );
+          return;
+        }
+
         const msg = JSON.parse(String(message));
         const action = msg.action as string;
 
@@ -385,7 +453,10 @@ const server = Bun.serve({
           const channelId = msg.channel_id as string;
           const userId = msg.user_id as string;
           const userName = msg.user_name as string;
-          if (channelId && userId) {
+
+          // Validate: typing user_id must match the authenticated WS user
+          const authenticatedUserId = getClientUserId(ws);
+          if (channelId && userId && (authenticatedUserId === null || userId === authenticatedUserId)) {
             broadcastToChannel(
               channelId,
               {
