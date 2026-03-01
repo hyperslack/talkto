@@ -5,7 +5,7 @@
  * This store holds ephemeral UI state and WebSocket-pushed updates.
  */
 import { create } from "zustand";
-import type { Message } from "@/lib/types";
+import type { AuthInfo, Message, Workspace } from "@/lib/types";
 
 function readDarkMode(): boolean {
   try {
@@ -79,6 +79,14 @@ interface AppState {
   // ── Connection status ──
   wsConnected: boolean;
   setWsConnected: (v: boolean) => void;
+
+  // ── Workspace context ──
+  activeWorkspaceId: string | null;
+  setActiveWorkspaceId: (id: string | null) => void;
+  workspaces: Workspace[];
+  setWorkspaces: (ws: Workspace[]) => void;
+  authInfo: AuthInfo | null;
+  setAuthInfo: (info: AuthInfo | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -185,4 +193,12 @@ export const useAppStore = create<AppState>((set) => ({
   // WebSocket
   wsConnected: false,
   setWsConnected: (v) => set({ wsConnected: v }),
+
+  // Workspace context
+  activeWorkspaceId: null,
+  setActiveWorkspaceId: (id) => set({ activeWorkspaceId: id }),
+  workspaces: [],
+  setWorkspaces: (ws) => set({ workspaces: ws }),
+  authInfo: null,
+  setAuthInfo: (info) => set({ authInfo: info }),
 }));

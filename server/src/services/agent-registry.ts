@@ -9,7 +9,7 @@
 import { eq, and, sql } from "drizzle-orm";
 import { spawnSync } from "node:child_process";
 import { basename, normalize } from "node:path";
-import { getDb } from "../db";
+import { getDb, DEFAULT_WORKSPACE_ID } from "../db";
 import {
   agents,
   channels,
@@ -18,6 +18,7 @@ import {
   featureVotes,
   sessions,
   users,
+  workspaceMembers,
 } from "../db/schema";
 import { broadcastEvent, agentStatusEvent, channelCreatedEvent, featureUpdateEvent } from "./broadcaster";
 import { generateUniqueName } from "./name-generator";
@@ -49,6 +50,58 @@ function makeChannelName(projectName: string): string {
 }
 
 /**
+ * Find the human operator for a workspace.
+ *
+ * Looks up workspace members, finds an admin or first human member,
+ * and returns their user record for prompt context. Falls back to
+ * any human user for backward compatibility.
+ */
+function findWorkspaceHuman(
+  db: ReturnType<typeof getDb>,
+  workspaceId: string
+): typeof users.$inferSelect | undefined {
+  // Try to find a human admin in the workspace
+  const adminMember = db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(workspaceMembers.userId, users.id))
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(workspaceMembers.role, "admin"),
+        eq(users.type, "human")
+      )
+    )
+    .limit(1)
+    .get();
+
+  if (adminMember) {
+    return db.select().from(users).where(eq(users.id, adminMember.userId)).get();
+  }
+
+  // Fall back to any human member in the workspace
+  const anyMember = db
+    .select({ userId: workspaceMembers.userId })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(workspaceMembers.userId, users.id))
+    .where(
+      and(
+        eq(workspaceMembers.workspaceId, workspaceId),
+        eq(users.type, "human")
+      )
+    )
+    .limit(1)
+    .get();
+
+  if (anyMember) {
+    return db.select().from(users).where(eq(users.id, anyMember.userId)).get();
+  }
+
+  // Final fallback: any human user (backward compat for pre-workspace setups)
+  return db.select().from(users).where(eq(users.type, "human")).get();
+}
+
+/**
  * Register a new agent or reconnect an existing one.
  *
  * This is the single entry point for agent login. The `sessionId` is
@@ -62,9 +115,11 @@ export function registerOrConnectAgent(opts: {
   agentName?: string | null;
   serverUrl?: string | null;
   agentType?: string;
+  workspaceId?: string;
 }): Record<string, unknown> {
   const { sessionId, projectPath, agentName, serverUrl } = opts;
   const agentType = opts.agentType ?? "opencode";
+  const workspaceId = opts.workspaceId ?? DEFAULT_WORKSPACE_ID;
 
   // For subprocess-based agents, mark the session as alive on registration
   if (agentType === "claude_code") {
@@ -83,7 +138,7 @@ export function registerOrConnectAgent(opts: {
       .get();
 
     if (existing) {
-      return reconnectAgent(existing, sessionId, serverUrl ?? null, projectPath, agentType);
+      return reconnectAgent(existing, sessionId, serverUrl ?? null, projectPath, agentType, workspaceId);
     }
     // Agent name provided but doesn't exist — fall through to create new
   }
@@ -94,6 +149,7 @@ export function registerOrConnectAgent(opts: {
     projectPath,
     agentType,
     serverUrl: serverUrl ?? null,
+    workspaceId,
   });
 }
 
@@ -102,7 +158,8 @@ function reconnectAgent(
   sessionId: string,
   serverUrl: string | null,
   projectPath: string,
-  agentType: string = "opencode"
+  agentType: string = "opencode",
+  workspaceId: string = DEFAULT_WORKSPACE_ID
 ): Record<string, unknown> {
   const db = getDb();
 
@@ -127,6 +184,7 @@ function reconnectAgent(
 
   // Re-fetch to get updated values
   const updated = db.select().from(agents).where(eq(agents.id, agent.id)).get()!;
+  const agentWorkspaceId = updated.workspaceId ?? workspaceId;
 
   broadcastEvent(
     agentStatusEvent({
@@ -134,11 +192,12 @@ function reconnectAgent(
       status: "online",
       agentType: updated.agentType,
       projectName: updated.projectName,
-    })
+    }),
+    agentWorkspaceId
   );
 
-  // Look up human operator for prompt context
-  const human = db.select().from(users).where(eq(users.type, "human")).get();
+  // Look up human operator for prompt context (workspace admin or first human member)
+  const human = findWorkspaceHuman(db, agentWorkspaceId);
 
   const channelName = makeChannelName(updated.projectName);
   const masterPrompt = promptEngine.renderMasterPrompt({
@@ -178,13 +237,15 @@ function createNewAgent(opts: {
   projectPath: string;
   agentType: string;
   serverUrl: string | null;
+  workspaceId: string;
 }): Record<string, unknown> {
   const db = getDb();
   const now = new Date().toISOString();
   const projectName = deriveProjectName(opts.projectPath);
   const channelName = makeChannelName(projectName);
+  const workspaceId = opts.workspaceId;
 
-  // Generate a unique quirky name
+  // Generate a unique quirky name (globally unique)
   let agentName: string;
   let attempt = 0;
   do {
@@ -204,7 +265,7 @@ function createNewAgent(opts: {
     .values({ id: userId, name: agentName, type: "agent", createdAt: now })
     .run();
 
-  // Create agent
+  // Create agent (scoped to workspace)
   db.insert(agents)
     .values({
       id: userId,
@@ -215,11 +276,16 @@ function createNewAgent(opts: {
       status: "online",
       serverUrl: opts.serverUrl,
       providerSessionId: opts.sessionId,
+      workspaceId,
     })
     .run();
 
-  // Ensure project channel exists
-  let channel = db.select().from(channels).where(eq(channels.name, channelName)).get();
+  // Ensure project channel exists (scoped to workspace)
+  let channel = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.name, channelName), eq(channels.workspaceId, workspaceId)))
+    .get();
   let createdChannel = false;
   if (!channel) {
     const channelId = crypto.randomUUID();
@@ -231,35 +297,41 @@ function createNewAgent(opts: {
         projectPath: opts.projectPath,
         createdBy: userId,
         createdAt: now,
+        workspaceId,
       })
       .run();
     channel = db.select().from(channels).where(eq(channels.id, channelId)).get()!;
     createdChannel = true;
   }
 
-  // Add agent to project channel and #general
+  // Add agent to project channel and #general (within workspace)
   db.insert(channelMembers)
     .values({ channelId: channel.id, userId, joinedAt: now })
     .run();
 
-  const general = db.select().from(channels).where(eq(channels.name, "#general")).get();
+  const general = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.name, "#general"), eq(channels.workspaceId, workspaceId)))
+    .get();
   if (general) {
     db.insert(channelMembers)
       .values({ channelId: general.id, userId, joinedAt: now })
       .run();
   }
 
-  // Broadcast agent online status
+  // Broadcast agent online status (scoped to workspace)
   broadcastEvent(
     agentStatusEvent({
       agentName,
       status: "online",
       agentType: opts.agentType,
       projectName,
-    })
+    }),
+    workspaceId
   );
 
-  // Broadcast new channel creation if we created one
+  // Broadcast new channel creation if we created one (scoped to workspace)
   if (createdChannel) {
     broadcastEvent(
       channelCreatedEvent({
@@ -267,12 +339,13 @@ function createNewAgent(opts: {
         channelName: channel.name,
         channelType: "project",
         projectPath: opts.projectPath,
-      })
+      }),
+      workspaceId
     );
   }
 
-  // Look up human operator for prompt context
-  const human = db.select().from(users).where(eq(users.type, "human")).get();
+  // Look up human operator for prompt context (workspace admin or first human member)
+  const human = findWorkspaceHuman(db, workspaceId);
 
   const masterPrompt = promptEngine.renderMasterPrompt({
     agentName,
@@ -319,7 +392,8 @@ export function disconnectAgent(agentName: string): Record<string, unknown> {
       status: "offline",
       agentType: agent.agentType,
       projectName: agent.projectName,
-    })
+    }),
+    agent.workspaceId
   );
 
   return { status: "disconnected", agent_name: agentName };
@@ -341,12 +415,13 @@ export function heartbeatAgent(agentName: string): Record<string, unknown> {
   return { status: "ok", agent_name: agentName };
 }
 
-/** List all agents for MCP tools */
-export function listAllAgents(): Array<Record<string, unknown>> {
+/** List all agents for MCP tools (scoped to workspace) */
+export function listAllAgents(workspaceId: string = DEFAULT_WORKSPACE_ID): Array<Record<string, unknown>> {
   const db = getDb();
   return db
     .select()
     .from(agents)
+    .where(eq(agents.workspaceId, workspaceId))
     .orderBy(agents.agentName)
     .all()
     .map((a) => {

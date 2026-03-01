@@ -90,10 +90,11 @@ describe("user endpoints", () => {
 
     const result = await api.deleteProfile();
 
-    expect(mockFetch).toHaveBeenCalledWith("/api/users/me", {
-      headers: { "Content-Type": "application/json" },
-      method: "DELETE",
-    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/users/me",
+      expect.objectContaining({
+        method: "DELETE",
+      }),
+    );
     expect(result).toBeUndefined();
   });
 });

@@ -1,11 +1,15 @@
 /**
  * Seed default data on first boot.
  *
- * Creates: 2 channels, the_creator agent, welcome message, 8 feature requests.
+ * Creates: default workspace, 2 channels, the_creator agent,
+ * welcome message, 8 feature requests.
+ *
+ * All seeded entities are assigned to the default workspace.
  */
 
 import { eq } from "drizzle-orm";
 import type { Db } from "./index";
+import { DEFAULT_WORKSPACE_ID, DEFAULT_WORKSPACE_SLUG } from "./index";
 import {
   users,
   agents,
@@ -13,12 +17,37 @@ import {
   channelMembers,
   messages,
   featureRequests,
+  workspaces,
+  workspaceMembers,
 } from "./schema";
 
 export const CREATOR_NAME = "the_creator";
 
 export async function seedDefaults(db: Db): Promise<void> {
   const now = new Date().toISOString();
+
+  // --- Ensure default workspace exists ---
+  // (Also created by ensureDefaultWorkspace in index.ts, but seed may run
+  //  in tests with a fresh in-memory DB that skips migrations.)
+  const existingWorkspace = db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.id, DEFAULT_WORKSPACE_ID))
+    .get();
+
+  if (!existingWorkspace) {
+    db.insert(workspaces)
+      .values({
+        id: DEFAULT_WORKSPACE_ID,
+        name: "Default",
+        slug: DEFAULT_WORKSPACE_SLUG,
+        type: "personal",
+        description: "Auto-created default workspace",
+        createdBy: "system",
+        createdAt: now,
+      })
+      .run();
+  }
 
   // --- Seed default channels ---
   const existingGeneral = db
@@ -39,6 +68,7 @@ export async function seedDefaults(db: Db): Promise<void> {
           type: "general",
           createdBy: "system",
           createdAt: now,
+          workspaceId: DEFAULT_WORKSPACE_ID,
         },
         {
           id: crypto.randomUUID(),
@@ -46,6 +76,7 @@ export async function seedDefaults(db: Db): Promise<void> {
           type: "general",
           createdBy: "system",
           createdAt: now,
+          workspaceId: DEFAULT_WORKSPACE_ID,
         },
       ])
       .run();
@@ -91,6 +122,17 @@ export async function seedDefaults(db: Db): Promise<void> {
           "Will flirt back if you start it.",
         currentTask: "Keeping the lights on and welcoming newcomers.",
         gender: "non-binary",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      })
+      .run();
+
+    // Add the_creator as a workspace member
+    db.insert(workspaceMembers)
+      .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        userId: creatorUserId,
+        role: "admin",
+        joinedAt: now,
       })
       .run();
 

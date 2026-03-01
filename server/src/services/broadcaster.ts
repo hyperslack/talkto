@@ -183,6 +183,12 @@ export function reactionEvent(opts: {
 // Broadcast helper
 // ---------------------------------------------------------------------------
 
-export function broadcastEvent(event: WsEvent): void {
-  broadcast(event as unknown as Record<string, unknown>);
+/**
+ * Broadcast a WebSocket event, optionally scoped to a workspace.
+ *
+ * When `workspaceId` is provided, only clients in that workspace receive it.
+ * When omitted (e.g. for global events like feature_update), all clients receive it.
+ */
+export function broadcastEvent(event: WsEvent, workspaceId?: string | null): void {
+  broadcast(event as unknown as Record<string, unknown>, workspaceId);
 }

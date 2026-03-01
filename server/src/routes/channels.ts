@@ -7,9 +7,9 @@ import { eq, asc, and, gt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
-import type { ChannelResponse } from "../types";
+import type { AppBindings, ChannelResponse } from "../types";
 
-const app = new Hono();
+const app = new Hono<AppBindings>();
 
 function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
   return {
@@ -27,9 +27,15 @@ function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
 
 // GET /channels
 app.get("/", (c) => {
+  const auth = c.get("auth");
   const db = getDb();
   const includeArchived = c.req.query("include_archived") === "true";
-  let result = db.select().from(channels).orderBy(asc(channels.name)).all();
+  let result = db
+    .select()
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .orderBy(asc(channels.name))
+    .all();
   if (!includeArchived) {
     result = result.filter((ch) => ch.isArchived !== 1);
   }
@@ -95,6 +101,7 @@ app.get("/unread/counts", (c) => {
 
 // POST /channels
 app.post("/", async (c) => {
+  const auth = c.get("auth");
   const body = await c.req.json();
   const parsed = ChannelCreateSchema.safeParse(body);
   if (!parsed.success) {
@@ -106,8 +113,12 @@ app.post("/", async (c) => {
     : `#${parsed.data.name}`;
   const db = getDb();
 
-  // Check uniqueness
-  const existing = db.select().from(channels).where(eq(channels.name, name)).get();
+  // Check uniqueness within workspace
+  const existing = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.name, name), eq(channels.workspaceId, auth.workspaceId)))
+    .get();
   if (existing) {
     return c.json({ detail: `Channel ${name} already exists` }, 409);
   }
@@ -120,8 +131,9 @@ app.post("/", async (c) => {
       id,
       name,
       type: "custom",
-      createdBy: "human",
+      createdBy: auth.userId ?? "human",
       createdAt: now,
+      workspaceId: auth.workspaceId,
     })
     .run();
 

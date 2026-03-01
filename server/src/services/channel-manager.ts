@@ -7,7 +7,7 @@ import { getDb } from "../db";
 import { agents, channels, channelMembers } from "../db/schema";
 import { broadcastEvent, channelCreatedEvent } from "./broadcaster";
 
-export function listAllChannels(): Array<{
+export function listAllChannels(workspaceId: string): Array<{
   id: string;
   name: string;
   type: string;
@@ -18,6 +18,7 @@ export function listAllChannels(): Array<{
   return db
     .select()
     .from(channels)
+    .where(eq(channels.workspaceId, workspaceId))
     .orderBy(channels.name)
     .all()
     .map((ch) => ({
@@ -31,7 +32,8 @@ export function listAllChannels(): Array<{
 
 export function joinAgentToChannel(
   agentName: string,
-  channelName: string
+  channelName: string,
+  workspaceId: string
 ): Record<string, unknown> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -43,7 +45,11 @@ export function joinAgentToChannel(
     .get();
   if (!agent) return { error: "Agent not found." };
 
-  const ch = db.select().from(channels).where(eq(channels.name, channelName)).get();
+  const ch = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.name, channelName), eq(channels.workspaceId, workspaceId)))
+    .get();
   if (!ch) return { error: `Channel '${channelName}' not found.` };
 
   // Check if already member
@@ -68,7 +74,8 @@ export function joinAgentToChannel(
 
 export function createNewChannel(
   name: string,
-  createdBy: string
+  createdBy: string,
+  workspaceId: string
 ): Record<string, unknown> {
   const channelName = name.startsWith("#") ? name : `#${name}`;
   const db = getDb();
@@ -76,7 +83,7 @@ export function createNewChannel(
   const existing = db
     .select()
     .from(channels)
-    .where(eq(channels.name, channelName))
+    .where(and(eq(channels.name, channelName), eq(channels.workspaceId, workspaceId)))
     .get();
   if (existing) return { error: `Channel '${channelName}' already exists.` };
 
@@ -90,6 +97,7 @@ export function createNewChannel(
       type: "custom",
       createdBy,
       createdAt: now,
+      workspaceId,
     })
     .run();
 
@@ -98,7 +106,8 @@ export function createNewChannel(
       channelId: id,
       channelName,
       channelType: "custom",
-    })
+    }),
+    workspaceId
   );
 
   return { id, name: channelName, type: "custom" };

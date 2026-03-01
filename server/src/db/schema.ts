@@ -1,10 +1,11 @@
 /**
- * Database schema — all 8 tables.
+ * Database schema — 13 tables.
  *
- * Conventions (matching the Python backend):
+ * Conventions:
  * - All IDs are UUID strings (crypto.randomUUID())
  * - All timestamps are ISO 8601 strings (new Date().toISOString())
  * - mentions stored as JSON string array in messages
+ * - Every channel, agent, and feature belongs to a workspace
  */
 
 import {
@@ -15,6 +16,184 @@ import {
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
+
+// ---------------------------------------------------------------------------
+// workspaces
+// ---------------------------------------------------------------------------
+
+export const workspaces = sqliteTable(
+  "workspaces",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull().unique(),
+    slug: text("slug").notNull().unique(),
+    type: text("type").notNull(), // "personal" | "shared"
+    description: text("description"),
+    onboardingPrompt: text("onboarding_prompt"), // custom prompt for agents joining
+    humanWelcome: text("human_welcome"), // welcome message for humans joining
+    createdBy: text("created_by").notNull(), // user UUID or "system"
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at"),
+  },
+  (table) => [
+    index("idx_workspaces_slug").on(table.slug),
+  ]
+);
+
+export const workspacesRelations = relations(workspaces, ({ many }) => ({
+  members: many(workspaceMembers),
+  channels: many(channels),
+  agents: many(agents),
+  apiKeys: many(workspaceApiKeys),
+  invites: many(workspaceInvites),
+}));
+
+// ---------------------------------------------------------------------------
+// workspace_members
+// ---------------------------------------------------------------------------
+
+export const workspaceMembers = sqliteTable(
+  "workspace_members",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    role: text("role").notNull(), // "admin" | "member"
+    joinedAt: text("joined_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.userId] }),
+    index("idx_workspace_members_user").on(table.userId),
+  ]
+);
+
+export const workspaceMembersRelations = relations(workspaceMembers, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [workspaceMembers.workspaceId],
+    references: [workspaces.id],
+  }),
+  user: one(users, {
+    fields: [workspaceMembers.userId],
+    references: [users.id],
+  }),
+}));
+
+// ---------------------------------------------------------------------------
+// workspace_api_keys
+// ---------------------------------------------------------------------------
+
+export const workspaceApiKeys = sqliteTable(
+  "workspace_api_keys",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    keyHash: text("key_hash").notNull(), // SHA-256 hash of the API key
+    keyPrefix: text("key_prefix").notNull(), // first 8 chars for display (e.g., "tk_a1b2...")
+    name: text("name"), // human-readable label
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at"),
+    revokedAt: text("revoked_at"),
+    lastUsedAt: text("last_used_at"),
+  },
+  (table) => [
+    index("idx_api_keys_hash").on(table.keyHash),
+    index("idx_api_keys_workspace").on(table.workspaceId),
+  ]
+);
+
+export const workspaceApiKeysRelations = relations(workspaceApiKeys, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [workspaceApiKeys.workspaceId],
+    references: [workspaces.id],
+  }),
+  creator: one(users, {
+    fields: [workspaceApiKeys.createdBy],
+    references: [users.id],
+  }),
+}));
+
+// ---------------------------------------------------------------------------
+// workspace_invites
+// ---------------------------------------------------------------------------
+
+export const workspaceInvites = sqliteTable(
+  "workspace_invites",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    token: text("token").notNull().unique(), // cryptographic token in the invite URL
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    role: text("role").notNull().default("member"), // role assigned on join
+    maxUses: integer("max_uses"), // null = unlimited
+    useCount: integer("use_count").notNull().default(0),
+    expiresAt: text("expires_at"), // null = never
+    createdAt: text("created_at").notNull(),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [
+    index("idx_invites_token").on(table.token),
+    index("idx_invites_workspace").on(table.workspaceId),
+  ]
+);
+
+export const workspaceInvitesRelations = relations(workspaceInvites, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [workspaceInvites.workspaceId],
+    references: [workspaces.id],
+  }),
+  creator: one(users, {
+    fields: [workspaceInvites.createdBy],
+    references: [users.id],
+  }),
+}));
+
+// ---------------------------------------------------------------------------
+// user_sessions (browser sessions for humans)
+// ---------------------------------------------------------------------------
+
+export const userSessions = sqliteTable(
+  "user_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    tokenHash: text("token_hash").notNull(), // SHA-256 hash of session token
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    lastActiveAt: text("last_active_at"),
+  },
+  (table) => [
+    index("idx_user_sessions_token").on(table.tokenHash),
+    index("idx_user_sessions_user").on(table.userId),
+  ]
+);
+
+export const userSessionsRelations = relations(userSessions, ({ one }) => ({
+  user: one(users, {
+    fields: [userSessions.userId],
+    references: [users.id],
+  }),
+  workspace: one(workspaces, {
+    fields: [userSessions.workspaceId],
+    references: [workspaces.id],
+  }),
+}));
 
 // ---------------------------------------------------------------------------
 // users
@@ -28,11 +207,15 @@ export const users = sqliteTable("users", {
   displayName: text("display_name"),
   about: text("about"),
   agentInstructions: text("agent_instructions"),
+  email: text("email"), // optional, for cross-workspace identification
+  avatarUrl: text("avatar_url"),
 });
 
 export const usersRelations = relations(users, ({ one, many }) => ({
   agent: one(agents, { fields: [users.id], references: [agents.id] }),
   messages: many(messages),
+  workspaceMemberships: many(workspaceMembers),
+  userSessions: many(userSessions),
 }));
 
 // ---------------------------------------------------------------------------
@@ -56,16 +239,19 @@ export const agents = sqliteTable(
     gender: text("gender"),
     serverUrl: text("server_url"),
     providerSessionId: text("provider_session_id"),
+    workspaceId: text("workspace_id").references(() => workspaces.id),
   },
   (table) => [
     index("idx_agents_name").on(table.agentName),
     index("idx_agents_project").on(table.projectName),
+    index("idx_agents_workspace").on(table.workspaceId),
   ]
 );
 
 export const agentsRelations = relations(agents, ({ one, many }) => ({
   user: one(users, { fields: [agents.id], references: [users.id] }),
   sessions: many(sessions),
+  workspace: one(workspaces, { fields: [agents.workspaceId], references: [workspaces.id] }),
 }));
 
 // ---------------------------------------------------------------------------
@@ -111,13 +297,18 @@ export const channels = sqliteTable(
     createdAt: text("created_at").notNull(),
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),
+    workspaceId: text("workspace_id").references(() => workspaces.id),
   },
-  (table) => [index("idx_channels_name").on(table.name)]
+  (table) => [
+    index("idx_channels_name").on(table.name),
+    index("idx_channels_workspace").on(table.workspaceId),
+  ]
 );
 
-export const channelsRelations = relations(channels, ({ many }) => ({
+export const channelsRelations = relations(channels, ({ one, many }) => ({
   members: many(channelMembers),
   messages: many(messages),
+  workspace: one(workspaces, { fields: [channels.workspaceId], references: [workspaces.id] }),
 }));
 
 // ---------------------------------------------------------------------------

@@ -9,10 +9,10 @@ import { channels, messages, users, messageReactions } from "../db/schema";
 import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema } from "../types";
 import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEvent, reactionEvent } from "../services/broadcaster";
 import { invokeForMessage } from "../services/agent-invoker";
-import type { MessageResponse } from "../types";
+import type { AppBindings, MessageResponse } from "../types";
 import { and } from "drizzle-orm";
 
-const app = new Hono();
+const app = new Hono<AppBindings>();
 
 // GET /channels/:channelId/messages
 app.get("/", (c) => {
@@ -126,6 +126,7 @@ app.get("/", (c) => {
 
 // POST /channels/:channelId/messages
 app.post("/", async (c) => {
+  const auth = c.get("auth");
   const channelId = c.req.param("channelId");
   const body = await c.req.json();
   const parsed = MessageCreateSchema.safeParse(body);
@@ -140,8 +141,10 @@ app.post("/", async (c) => {
     return c.json({ detail: "Channel not found" }, 404);
   }
 
-  // Get human user as sender
-  const human = db.select().from(users).where(eq(users.type, "human")).get();
+  // Get human user as sender from auth context
+  const human = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : null;
   if (!human) {
     return c.json({ detail: "No user onboarded" }, 400);
   }
@@ -167,7 +170,7 @@ app.post("/", async (c) => {
 
   const senderName = human.displayName ?? human.name;
 
-  // Broadcast to WebSocket clients
+  // Broadcast to WebSocket clients (scoped to channel's workspace)
   broadcastEvent(
     newMessageEvent({
       messageId: msgId,
@@ -179,7 +182,8 @@ app.post("/", async (c) => {
       parentId,
       createdAt: now,
       senderType: "human",
-    })
+    }),
+    channel.workspaceId
   );
 
   // Build reply context for agent invocations
@@ -347,8 +351,8 @@ app.delete("/:messageId", (c) => {
   // Delete the message
   db.delete(messages).where(eq(messages.id, messageId)).run();
 
-  // Broadcast deletion to all WebSocket clients
-  broadcastEvent(messageDeletedEvent({ messageId, channelId }));
+  // Broadcast deletion to WebSocket clients (scoped to channel's workspace)
+  broadcastEvent(messageDeletedEvent({ messageId, channelId }), channel.workspaceId);
 
   return c.json({ deleted: true, id: messageId });
 });
