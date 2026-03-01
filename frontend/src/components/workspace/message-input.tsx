@@ -126,7 +126,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
     [content, mentionStart, mentionQuery],
   );
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = async () => {
     const trimmed = content.trim();
     if (!trimmed) return;
 
@@ -152,7 +152,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
     } catch {
       // Error state available via sendMessage.isError
     }
-  }, [content, channelId, sendMessage, replyToMessage?.id, setReplyToMessage]);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (mentionOpen && filtered.length > 0) {

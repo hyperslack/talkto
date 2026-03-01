@@ -98,7 +98,7 @@ export function WorkspaceSettings({ open, onOpenChange }: WorkspaceSettingsProps
 
 function MembersSection({
   members,
-  workspaceId: _workspaceId,
+  workspaceId: _workspaceId, // eslint-disable-line @typescript-eslint/no-unused-vars
   isAdmin,
 }: {
   members: WorkspaceMember[];
