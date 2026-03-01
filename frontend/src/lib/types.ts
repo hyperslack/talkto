@@ -64,8 +64,10 @@ export interface Feature {
   title: string;
   description: string;
   status: string;
+  reason?: string | null;
   created_by: string;
   created_at: string;
+  updated_at?: string | null;
   vote_count: number;
 }
 
@@ -137,5 +139,5 @@ export interface WSFeatureUpdateData {
   title: string;
   status: string;
   vote_count: number;
-  update_type: "created" | "voted" | "status_changed";
+  update_type: "created" | "voted" | "status_changed" | "deleted";
 }
