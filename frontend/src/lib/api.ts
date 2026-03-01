@@ -112,6 +112,13 @@ export function deleteMessage(channelId: string, messageId: string) {
   );
 }
 
+export function pinMessage(channelId: string, messageId: string) {
+  return request<{ id: string; is_pinned: boolean; pinned_at: string | null }>(
+    `/channels/${channelId}/messages/${messageId}/pin`,
+    { method: "POST" },
+  );
+}
+
 // ── Agents ─────────────────────────────────────────────
 
 export function listAgents() {

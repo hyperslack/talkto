@@ -168,3 +168,20 @@ export function useDeleteMessage() {
     // Don't invalidate — WebSocket will push the deletion
   });
 }
+
+export function usePinMessage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      channelId,
+      messageId,
+    }: {
+      channelId: string;
+      messageId: string;
+    }) => api.pinMessage(channelId, messageId),
+    onSuccess: (_, { channelId }) => {
+      // Refetch messages to update pin state
+      queryClient.invalidateQueries({ queryKey: ["messages", channelId] });
+    },
+  });
+}
