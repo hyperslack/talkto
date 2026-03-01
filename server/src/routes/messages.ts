@@ -49,7 +49,7 @@ app.get("/", (c) => {
     .where(eq(messages.channelId, channelId))
     .$dynamic();
 
-  // Cursor pagination
+  // Cursor pagination — use and() to preserve the channelId filter
   if (before) {
     const beforeMsg = db
       .select({ createdAt: messages.createdAt })
@@ -57,7 +57,9 @@ app.get("/", (c) => {
       .where(eq(messages.id, before))
       .get();
     if (beforeMsg) {
-      query = query.where(lt(messages.createdAt, beforeMsg.createdAt));
+      query = query.where(
+        and(eq(messages.channelId, channelId), lt(messages.createdAt, beforeMsg.createdAt))
+      );
     }
   }
 
@@ -276,8 +278,7 @@ app.get("/pinned", (c) => {
     })
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
-    .where(eq(messages.channelId, channelId))
-    .where(eq(messages.isPinned, 1))
+    .where(and(eq(messages.channelId, channelId), eq(messages.isPinned, 1)))
     .orderBy(desc(messages.pinnedAt))
     .all();
 
