@@ -113,6 +113,7 @@ export interface AgentResponse {
   server_url?: string | null;
   provider_session_id?: string | null;
   is_ghost: boolean;
+  display_name?: string | null;
   message_count?: number;
   last_message_at?: string | null;
 }
@@ -125,6 +126,9 @@ export const AgentAdminUpdateSchema = z.object({
   agent_type: z.enum(["opencode", "claude_code", "codex", "cursor", "system"]).optional(),
 });
 export type AgentAdminUpdate = z.infer<typeof AgentAdminUpdateSchema>;
+export const AgentDisplayNameSchema = z.object({
+  display_name: z.string().min(1).max(100).trim(),
+});
 
 // ---------------------------------------------------------------------------
 // Feature
