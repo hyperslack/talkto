@@ -5,9 +5,10 @@ import { getMentionQuery } from "@/lib/message-utils";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { SendHorizonal, Loader2, X, Reply } from "lucide-react";
+import { SendHorizonal, Loader2, X, Reply, Slash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
+import { parseSlashCommand, filterSlashCommands } from "@/lib/slash-commands";
 
 interface MessageInputProps {
   channelId: string;
@@ -129,6 +130,51 @@ export function MessageInput({ channelId }: MessageInputProps) {
   const handleSubmit = async () => {
     const trimmed = content.trim();
     if (!trimmed) return;
+
+    // Check for slash commands
+    const cmdResult = parseSlashCommand(trimmed, { channelId });
+    if (cmdResult) {
+      if (cmdResult.action === "clear-messages") {
+        // Clear realtime messages for this channel
+        useAppStore.getState().realtimeMessages
+          .filter((m) => m.channel_id === channelId)
+          .forEach((m) => useAppStore.getState().removeRealtimeMessage(m.id));
+      }
+
+      if (cmdResult.handled) {
+        // Command handled locally — don't send to server
+        setContent("");
+        textareaRef.current?.focus();
+        return;
+      }
+
+      // Command produced replacement text (e.g., /shrug, /me)
+      if (cmdResult.localMessage) {
+        // Replace content and continue to send
+        const sendContent = cmdResult.localMessage;
+        const mentionRegex = /@([\w-]+)/g;
+        const mentions: string[] = [];
+        let match: RegExpExecArray | null;
+        while ((match = mentionRegex.exec(sendContent)) !== null) {
+          mentions.push(match[1]);
+        }
+        try {
+          await sendMessage.mutateAsync({
+            channelId,
+            content: sendContent,
+            mentions: mentions.length > 0 ? mentions : undefined,
+            parentId: replyToMessage?.id,
+          });
+          setContent("");
+          setMentionOpen(false);
+          setReplyToMessage(null);
+          textareaRef.current?.focus();
+        } catch {
+          // Error
+        }
+        return;
+      }
+    }
 
     // Extract @mentions from content
     const mentionRegex = /@([\w-]+)/g;
