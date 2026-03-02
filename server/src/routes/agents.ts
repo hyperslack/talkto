@@ -7,6 +7,9 @@ import { eq, asc, desc, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { agents, channels, channelMembers, messages, sessions, users } from "../db/schema";
 import type { AgentResponse, AppBindings, ChannelResponse } from "../types";
+import { AgentDisplayNameSchema } from "../types";
+import { broadcastEvent } from "../services/broadcaster";
+import type { WsEvent } from "../services/broadcaster";
 import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
 
@@ -144,7 +147,8 @@ export function stopLivenessTask(): void {
 
 function agentToResponse(
   agent: typeof agents.$inferSelect,
-  isGhost: boolean
+  isGhost: boolean,
+  displayName?: string | null
 ): AgentResponse {
   return {
     id: agent.id,
@@ -160,6 +164,7 @@ function agentToResponse(
     server_url: agent.serverUrl,
     provider_session_id: agent.providerSessionId,
     is_ghost: isGhost,
+    display_name: displayName ?? null,
   };
 }
 
@@ -173,6 +178,13 @@ app.get("/", (c) => {
     .where(eq(agents.workspaceId, auth.workspaceId))
     .orderBy(asc(agents.agentName))
     .all();
+
+  // Batch-fetch display names from users table
+  const agentIds = allAgents.map((a) => a.id);
+  const userRows = agentIds.length > 0
+    ? db.select({ id: users.id, displayName: users.displayName }).from(users).all()
+    : [];
+  const displayNameMap = new Map(userRows.map((u) => [u.id, u.displayName]));
 
   // Batch-fetch message counts and last message timestamps for all agents
   const stats = db
@@ -190,7 +202,7 @@ app.get("/", (c) => {
   const responses = allAgents.map((a) => {
     const agentStats = statsMap.get(a.id);
     return {
-      ...agentToResponse(a, ghostCache.get(a.id) ?? false),
+      ...agentToResponse(a, ghostCache.get(a.id) ?? false, displayNameMap.get(a.id)),
       message_count: agentStats?.count ?? 0,
       last_message_at: agentStats?.lastAt ?? null,
     };
@@ -273,7 +285,8 @@ app.get("/:agentName", (c) => {
   if (!agent) {
     return c.json({ detail: "Agent not found" }, 404);
   }
-  return c.json(agentToResponse(agent, ghostCache.get(agent.id) ?? false));
+  const user = db.select().from(users).where(eq(users.id, agent.id)).get();
+  return c.json(agentToResponse(agent, ghostCache.get(agent.id) ?? false, user?.displayName));
 });
 
 // POST /agents/:agentName/dm — get or create DM channel
@@ -347,6 +360,68 @@ app.post("/:agentName/dm", (c) => {
     created_at: channel.createdAt,
   };
   return c.json(resp);
+});
+
+// PATCH /agents/:agentId/display-name — rename an agent's display name (human-only)
+app.patch("/:agentId/display-name", async (c) => {
+  const auth = c.get("auth");
+
+  // Require authenticated human user
+  if (!auth.userId) {
+    return c.json({ error: "Authentication required" }, 401);
+  }
+
+  // Verify caller is a human
+  const db = getDb();
+  const caller = db.select().from(users).where(eq(users.id, auth.userId)).get();
+  if (!caller || caller.type !== "human") {
+    return c.json({ error: "Only humans can rename agents" }, 403);
+  }
+
+  const agentId = c.req.param("agentId");
+  const body = await c.req.json();
+  const parsed = AgentDisplayNameSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "Invalid display name", details: parsed.error.flatten() }, 400);
+  }
+
+  const { display_name } = parsed.data;
+
+  // Find the agent
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) {
+    return c.json({ error: "Agent not found" }, 404);
+  }
+
+  // Update the display_name on the users table
+  db.update(users)
+    .set({ displayName: display_name })
+    .where(eq(users.id, agentId))
+    .run();
+
+  // Broadcast WS event so frontend updates in real-time
+  broadcastEvent(
+    {
+      type: "agent_display_name",
+      data: {
+        agent_id: agentId,
+        agent_name: agent.agentName,
+        display_name,
+      },
+    },
+    auth.workspaceId
+  );
+
+  return c.json({
+    status: "updated",
+    agent_id: agentId,
+    agent_name: agent.agentName,
+    display_name,
+  });
 });
 
 export default app;

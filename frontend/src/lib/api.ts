@@ -151,6 +151,13 @@ export function getOrCreateDM(agentName: string) {
   return request<Channel>(`/agents/${agentName}/dm`, { method: "POST" });
 }
 
+export function renameAgent(agentId: string, displayName: string) {
+  return request<{ status: string; agent_id: string; agent_name: string; display_name: string }>(
+    `/agents/${agentId}/display-name`,
+    { method: "PATCH", body: JSON.stringify({ display_name: displayName }) },
+  );
+}
+
 // ── Features ───────────────────────────────────────────
 
 export function listFeatures(status?: string) {
