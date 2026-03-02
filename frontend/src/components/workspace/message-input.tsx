@@ -293,15 +293,33 @@ export function MessageInput({ channelId }: MessageInputProps) {
         </Button>
       </div>
 
-      {sendMessage.isError && (
-        <button
-          type="button"
-          onClick={handleSubmit}
-          className="mt-1 text-xs text-destructive hover:underline cursor-pointer"
-        >
-          Failed to send. Retry?
-        </button>
-      )}
+      <div className="mt-1 flex items-center justify-between px-1">
+        {sendMessage.isError ? (
+          <button
+            type="button"
+            onClick={handleSubmit}
+            className="text-xs text-destructive hover:underline cursor-pointer"
+          >
+            Failed to send. Retry?
+          </button>
+        ) : (
+          <span />
+        )}
+        {content.length > 0 && (
+          <span
+            className={cn(
+              "text-[10px] tabular-nums",
+              content.length > 32000
+                ? "text-destructive font-medium"
+                : content.length > 28000
+                  ? "text-talkto-warning"
+                  : "text-muted-foreground/40",
+            )}
+          >
+            {content.length.toLocaleString()} / 32,000
+          </span>
+        )}
+      </div>
     </div>
   );
 }
