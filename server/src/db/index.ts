@@ -286,6 +286,13 @@ function createTables(sqlite: Database) {
       PRIMARY KEY (message_id, user_id, emoji)
     );
     CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
+
+    CREATE TABLE IF NOT EXISTS muted_channels (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      muted_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, channel_id)
+    );
   `);
 
   // Migrate existing databases: add new columns if missing
