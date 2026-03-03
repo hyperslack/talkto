@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { eq, desc, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, messages, users, messageReactions } from "../db/schema";
-import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema } from "../types";
+import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema, BulkDeleteSchema } from "../types";
 import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEvent, reactionEvent } from "../services/broadcaster";
 import { invokeForMessage } from "../services/agent-invoker";
 import type { AppBindings, MessageResponse } from "../types";
@@ -504,6 +504,37 @@ app.get("/:messageId/reactions", (c) => {
   }));
 
   return c.json(result);
+});
+
+// POST /channels/:channelId/messages/bulk-delete — delete multiple messages at once
+app.post("/bulk-delete", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const body = await safeJsonBody(c);
+  if (body === null) return c.json({ detail: "Invalid JSON body" }, 400);
+  const parsed = BulkDeleteSchema.safeParse(body);
+  if (!parsed.success) return c.json({ detail: parsed.error.message }, 400);
+
+  const db = getDb();
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const deleted: string[] = [];
+  const failed: string[] = [];
+
+  for (const msgId of parsed.data.message_ids) {
+    const msg = db.select().from(messages).where(eq(messages.id, msgId)).get();
+    if (!msg || msg.channelId !== channelId) {
+      failed.push(msgId);
+      continue;
+    }
+
+    db.delete(messages).where(eq(messages.id, msgId)).run();
+    broadcastEvent(messageDeletedEvent({ messageId: msgId, channelId }), channel.workspaceId);
+    deleted.push(msgId);
+  }
+
+  return c.json({ deleted, failed, deleted_count: deleted.length });
 });
 
 export default app;

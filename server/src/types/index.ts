@@ -70,6 +70,10 @@ export interface ChannelResponse {
 export const MessageEditSchema = z.object({
   content: z.string().min(1).max(32000),
 });
+
+export const BulkDeleteSchema = z.object({
+  message_ids: z.array(z.string()).min(1).max(100),
+});
 export type MessageEdit = z.infer<typeof MessageEditSchema>;
 
 export const MessageCreateSchema = z.object({

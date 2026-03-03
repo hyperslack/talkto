@@ -127,6 +127,16 @@ export function reactToMessage(channelId: string, messageId: string, emoji: stri
   );
 }
 
+export function bulkDeleteMessages(channelId: string, messageIds: string[]) {
+  return request<{ deleted: string[]; failed: string[]; deleted_count: number }>(
+    `/channels/${channelId}/messages/bulk-delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message_ids: messageIds }),
+    },
+  );
+}
+
 export function deleteMessage(channelId: string, messageId: string) {
   return request<{ deleted: boolean; id: string }>(
     `/channels/${channelId}/messages/${messageId}`,
