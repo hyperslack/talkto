@@ -284,6 +284,82 @@ app.post("/:channelId/unarchive", (c) => {
   return c.json(channelToResponse(updated));
 });
 
+// GET /channels/:channelId/analytics — channel statistics
+app.get("/:channelId/analytics", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  // Total message count
+  const totalRow = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .get();
+  const messageCount = totalRow?.count ?? 0;
+
+  // Unique senders
+  const sendersRow = db
+    .select({ count: sql<number>`count(distinct ${messages.senderId})` })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .get();
+  const uniqueSenders = sendersRow?.count ?? 0;
+
+  // First and last message timestamps
+  const firstMsg = db
+    .select({ createdAt: messages.createdAt })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .orderBy(asc(messages.createdAt))
+    .limit(1)
+    .get();
+
+  const lastMsg = db
+    .select({ createdAt: messages.createdAt })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .orderBy(sql`${messages.createdAt} DESC`)
+    .limit(1)
+    .get();
+
+  // Top senders (up to 10)
+  const topSenders = db
+    .select({
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      count: sql<number>`count(*)`,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .groupBy(messages.senderId)
+    .orderBy(sql`count(*) DESC`)
+    .limit(10)
+    .all();
+
+  return c.json({
+    channel_id: channelId,
+    channel_name: channel.name,
+    message_count: messageCount,
+    unique_senders: uniqueSenders,
+    first_message_at: firstMsg?.createdAt ?? null,
+    last_message_at: lastMsg?.createdAt ?? null,
+    top_senders: topSenders.map((s) => ({
+      sender_id: s.senderId,
+      sender_name: s.senderName,
+      sender_type: s.senderType,
+      message_count: s.count,
+    })),
+  });
+});
+
 // POST /channels/:channelId/read — mark channel as read for a user
 app.post("/:channelId/read", async (c) => {
   const auth = c.get("auth");
