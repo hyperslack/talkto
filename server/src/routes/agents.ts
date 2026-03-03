@@ -9,6 +9,7 @@ import { agents, channels, channelMembers, messages, sessions, users } from "../
 import type { AgentResponse, AppBindings, ChannelResponse } from "../types";
 import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
+import { isSessionAlive as isCursorSessionAlive } from "../sdk/cursor";
 
 const app = new Hono<AppBindings>();
 
@@ -75,6 +76,11 @@ async function computeGhost(
   // Codex CLI agents — subprocess model, no server URL
   if (agent.agentType === "codex" && agent.providerSessionId) {
     return !(await isCodexSessionAlive(agent.providerSessionId));
+  }
+
+  // Cursor agents — MCP-only model, no server URL
+  if (agent.agentType === "cursor" && agent.providerSessionId) {
+    return !(await isCursorSessionAlive(agent.providerSessionId));
   }
 
   // OpenCode agents — REST client-server model

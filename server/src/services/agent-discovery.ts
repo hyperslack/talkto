@@ -1,8 +1,8 @@
 /**
  * Agent discovery — verify agent liveness and resolve invocation info.
  *
- * Supports multiple agent providers (OpenCode, Claude Code, Codex CLI). Routes
- * liveness checks to the appropriate SDK based on agent_type.
+ * Supports multiple agent providers (OpenCode, Claude Code, Codex CLI, Cursor).
+ * Routes liveness checks to the appropriate SDK based on agent_type.
  *
  * No auto-discovery: if an agent's session is dead, it becomes a ghost
  * and must re-register with a valid session_id. Auto-discovery was removed
@@ -16,6 +16,7 @@ import { agents } from "../db/schema";
 import { isSessionAlive as isOpenCodeSessionAlive } from "../sdk/opencode";
 import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
+import { isSessionAlive as isCursorSessionAlive } from "../sdk/cursor";
 
 // ---------------------------------------------------------------------------
 // Invocation info resolution
@@ -72,6 +73,9 @@ export async function getAgentInvocationInfo(
     } else if (agent.agentType === "codex") {
       // Codex CLI — subprocess model, no server URL needed
       alive = await isCodexSessionAlive(sessionId);
+    } else if (agent.agentType === "cursor") {
+      // Cursor — MCP-only model, no server URL needed
+      alive = await isCursorSessionAlive(sessionId);
     } else if (serverUrl) {
       // OpenCode — REST client-server model
       alive = await isOpenCodeSessionAlive(serverUrl, sessionId);
@@ -153,6 +157,8 @@ export async function isAgentGhost(agentName: string): Promise<boolean> {
       alive = await isClaudeSessionAlive(agent.providerSessionId);
     } else if (agent.agentType === "codex") {
       alive = await isCodexSessionAlive(agent.providerSessionId);
+    } else if (agent.agentType === "cursor") {
+      alive = await isCursorSessionAlive(agent.providerSessionId);
     } else if (agent.serverUrl) {
       alive = await isOpenCodeSessionAlive(agent.serverUrl, agent.providerSessionId);
     }

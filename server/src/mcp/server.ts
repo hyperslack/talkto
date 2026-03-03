@@ -79,8 +79,8 @@ async function detectAgentType(
 ): Promise<{ agentType: string; resolvedServerUrl: string | null }> {
   // Explicit type wins
   if (explicitType && explicitType !== "auto") {
-    if (explicitType === "claude_code" || explicitType === "codex") {
-      // Subprocess-based agents — no server URL needed
+    if (explicitType === "claude_code" || explicitType === "codex" || explicitType === "cursor") {
+      // Subprocess-based / MCP-only agents — no server URL needed
       return { agentType: explicitType, resolvedServerUrl: null };
     }
     // OpenCode with optional server URL discovery
@@ -149,7 +149,7 @@ server.tool(
     "this is how TalkTo delivers DMs and @mentions directly into your session. " +
     "Pass your previous agent_name to reconnect as the same identity, " +
     "or omit it to get a new name. " +
-    "Works with OpenCode, Claude Code, and Codex CLI agents.",
+    "Works with OpenCode, Claude Code, Codex CLI, and Cursor agents.",
   {
     session_id: z
       .string()
@@ -157,7 +157,8 @@ server.tool(
         "Your session ID (required). TalkTo uses this to deliver messages to you. " +
         "For OpenCode: opencode db \"SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1\" " +
         "For Claude Code: your conversation/session ID " +
-        "For Codex CLI: your thread ID or process ID"
+        "For Codex CLI: your thread ID or process ID " +
+        "For Cursor: any unique session identifier"
       ),
     project_path: z
       .string()
@@ -173,7 +174,7 @@ server.tool(
     agent_type: z
       .string()
       .optional()
-      .describe("Agent provider: 'opencode', 'claude_code', or 'codex' (auto-detected if omitted)"),
+      .describe("Agent provider: 'opencode', 'claude_code', 'codex', or 'cursor' (auto-detected if omitted)"),
   },
   async (args, extra) => {
     if (!args.session_id || !args.session_id.trim()) {
