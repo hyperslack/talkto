@@ -1,9 +1,11 @@
 /** Sidebar agent list — click an agent to open a DM channel. */
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { Agent } from "@/lib/types";
 import { useAppStore } from "@/stores/app-store";
 import { useOpenDM, useChannels } from "@/hooks/use-queries";
-import { Bot, ChevronRight, Ghost } from "lucide-react";
+import { renameAgent } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { Bot, ChevronRight, Ghost, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarBadge } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -190,6 +192,34 @@ function AgentItem({
   const setActiveChannelId = useAppStore((s) => s.setActiveChannelId);
   const { data: channels } = useChannels();
   const openDM = useOpenDM();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(agent.display_name ?? agent.agent_name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleRenameSubmit = async () => {
+    const trimmed = editValue.trim();
+    if (!trimmed || trimmed === (agent.display_name ?? agent.agent_name)) {
+      setIsEditing(false);
+      setEditValue(agent.display_name ?? agent.agent_name);
+      return;
+    }
+    try {
+      await renameAgent(agent.id, trimmed);
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+    } catch {
+      // Revert on error
+      setEditValue(agent.display_name ?? agent.agent_name);
+    }
+    setIsEditing(false);
+  };
 
   // Check if this agent's DM is currently active
   const dmChannel = channels?.find(
@@ -200,6 +230,7 @@ function AgentItem({
   const selectFn = onSelectChannel ?? setActiveChannelId;
 
   const handleClick = () => {
+    if (isEditing) return;
     openDM.mutate(agent.agent_name, {
       onSuccess: (channel) => {
         selectFn(channel.id);
@@ -207,11 +238,13 @@ function AgentItem({
     });
   };
 
+  const displayLabel = agent.display_name || agent.agent_name;
+
   const item = (
     <button
       onClick={handleClick}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-sm text-left transition-colors",
+        "group flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-sm text-left transition-colors",
         isActiveDM
           ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
           : "hover:bg-sidebar-accent/50",
@@ -249,29 +282,68 @@ function AgentItem({
       </Avatar>
 
       <div className="min-w-0 flex-1">
-        <span
-          className={cn(
-            "block truncate text-xs",
-            isGhost
-              ? "text-sidebar-foreground/25 line-through"
-              : isOnline
-                ? "text-sidebar-foreground"
-                : "text-sidebar-foreground/40",
-          )}
-        >
-          {agent.agent_name}
-        </span>
-        {!isGhost && agent.current_task && isOnline && (
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleRenameSubmit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleRenameSubmit();
+              if (e.key === "Escape") {
+                setEditValue(agent.display_name ?? agent.agent_name);
+                setIsEditing(false);
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="block w-full truncate text-xs bg-transparent border-b border-sidebar-foreground/30 outline-none px-0 py-0"
+            maxLength={100}
+          />
+        ) : (
+          <span
+            className={cn(
+              "block truncate text-xs",
+              isGhost
+                ? "text-sidebar-foreground/25 line-through"
+                : isOnline
+                  ? "text-sidebar-foreground"
+                  : "text-sidebar-foreground/40",
+            )}
+          >
+            {displayLabel}
+          </span>
+        )}
+        {!isEditing && agent.display_name && (
+          <span className="block truncate text-[10px] text-sidebar-foreground/25">
+            @{agent.agent_name}
+          </span>
+        )}
+        {!isEditing && !isGhost && agent.current_task && isOnline && (
           <span className="block truncate text-[10px] text-sidebar-foreground/30 max-w-[140px]">
             {agent.current_task}
           </span>
         )}
-        {!isGhost && !isOnline && agent.message_count != null && agent.message_count > 0 && (
+        {!isEditing && !isGhost && !isOnline && agent.message_count != null && agent.message_count > 0 && (
           <span className="block truncate text-[10px] text-sidebar-foreground/20">
             {agent.message_count} message{agent.message_count !== 1 ? "s" : ""}
           </span>
         )}
       </div>
+
+      {/* Rename button — visible on hover */}
+      {!isEditing && !isGhost && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setEditValue(agent.display_name ?? agent.agent_name);
+            setIsEditing(true);
+          }}
+          className="hidden group-hover:flex h-5 w-5 shrink-0 items-center justify-center rounded text-sidebar-foreground/30 hover:text-sidebar-foreground/60 hover:bg-sidebar-accent"
+          title="Rename agent"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      )}
 
       {/* Agent type badge */}
       <Badge
@@ -296,7 +368,12 @@ function AgentItem({
       <TooltipTrigger asChild>{item}</TooltipTrigger>
       <TooltipContent side="right" className="max-w-64 space-y-1.5 p-3">
         <p className="text-xs font-medium">
-          {agent.agent_name}
+          {agent.display_name || agent.agent_name}
+          {agent.display_name && (
+            <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/60">
+              @{agent.agent_name}
+            </span>
+          )}
           {isGhost && (
             <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/60">
               (ghost)
