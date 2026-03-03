@@ -2,7 +2,7 @@
 import type { Message } from "@/lib/types";
 import { Bot, User, Trash2, Pin, Pencil, Check, X, Reply, SmilePlus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isPlainText, formatTime, formatFullTimestamp } from "@/lib/message-utils";
+import { isPlainText, formatTime, formatFullTimestamp, formatRelativeTime } from "@/lib/message-utils";
 import { highlightMentions } from "@/lib/highlight-mentions";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { lazy, Suspense, useState, useRef, useEffect } from "react";
@@ -194,7 +194,7 @@ export function MessageBubble({
 
           <span
             className="text-[10px] text-muted-foreground/40 shrink-0 cursor-default"
-            title={formatFullTimestamp(message.created_at)}
+            title={`${formatFullTimestamp(message.created_at)} (${formatRelativeTime(message.created_at)})`}
           >
             {time}
           </span>
