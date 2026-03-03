@@ -162,6 +162,18 @@ export function deleteChannel(channelId: string) {
   });
 }
 
+});
+
+export function toggleMuteChannel(channelId: string) {
+  return request<{ channel_id: string; muted: boolean }>(`/channels/${channelId}/mute`, {
+    method: "POST",
+  });
+}
+
+export function getMutedChannels() {
+  return request<{ channel_id: string; muted_at: string }[]>("/channels/muted/list");
+}
+
 // ── Messages ───────────────────────────────────────────
 
 export function getMessages(
