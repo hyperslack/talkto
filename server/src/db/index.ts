@@ -286,6 +286,14 @@ function createTables(sqlite: Database) {
       PRIMARY KEY (message_id, user_id, emoji)
     );
     CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
+
+    CREATE TABLE IF NOT EXISTS bookmarks (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id);
   `);
 
   // Migrate existing databases: add new columns if missing

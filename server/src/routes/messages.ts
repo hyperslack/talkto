@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import { eq, desc, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { channels, messages, users, messageReactions } from "../db/schema";
+import { channels, messages, users, messageReactions, bookmarks } from "../db/schema";
 import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema } from "../types";
 import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEvent, reactionEvent } from "../services/broadcaster";
 import { invokeForMessage } from "../services/agent-invoker";
@@ -504,6 +504,45 @@ app.get("/:messageId/reactions", (c) => {
   }));
 
   return c.json(result);
+});
+
+// POST /channels/:channelId/messages/:messageId/bookmark — toggle bookmark
+app.post("/:messageId/bookmark", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const msg = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!msg) return c.json({ detail: "Message not found" }, 404);
+  if (msg.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  let userId = auth.userId ?? "";
+  if (!userId) {
+    const human = db.select().from(users).where(eq(users.type, "human")).get();
+    if (!human) return c.json({ detail: "No user found" }, 400);
+    userId = human.id;
+  }
+
+  const existing = db
+    .select()
+    .from(bookmarks)
+    .where(and(eq(bookmarks.userId, userId), eq(bookmarks.messageId, messageId)))
+    .get();
+
+  if (existing) {
+    db.delete(bookmarks)
+      .where(and(eq(bookmarks.userId, userId), eq(bookmarks.messageId, messageId)))
+      .run();
+    return c.json({ message_id: messageId, bookmarked: false });
+  } else {
+    const now = new Date().toISOString();
+    db.insert(bookmarks).values({ userId, messageId, createdAt: now }).run();
+    return c.json({ message_id: messageId, bookmarked: true });
+  }
 });
 
 export default app;

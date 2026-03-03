@@ -15,7 +15,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { AppBindings } from "./types/index";
 import { config, BASE_DIR } from "./lib/config";
 import { getDb, closeDb, DEFAULT_WORKSPACE_ID } from "./db";
-import { agents, messages, channels, users } from "./db/schema";
+import { agents, messages, channels, users, bookmarks } from "./db/schema";
 import { eq, like, desc, sql, and } from "drizzle-orm";
 import { seedDefaults } from "./db/seed";
 import {
@@ -163,6 +163,48 @@ app.get("/api/search", (c) => {
   }));
 
   return c.json({ query, results, count: results.length });
+});
+
+// GET /api/bookmarks — list all bookmarked messages for the authenticated user
+app.get("/api/bookmarks", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  let userId = auth.userId ?? "";
+  if (!userId) {
+    const human = db.select().from(users).where(eq(users.type, "human")).get();
+    if (!human) return c.json({ detail: "No user found" }, 400);
+    userId = human.id;
+  }
+
+  const rows = db
+    .select({
+      messageId: bookmarks.messageId,
+      channelId: messages.channelId,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      createdAt: messages.createdAt,
+      bookmarkedAt: bookmarks.createdAt,
+    })
+    .from(bookmarks)
+    .innerJoin(messages, eq(bookmarks.messageId, messages.id))
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(bookmarks.userId, userId))
+    .orderBy(desc(bookmarks.createdAt))
+    .all();
+
+  return c.json(rows.map((r) => ({
+    message_id: r.messageId,
+    channel_id: r.channelId,
+    sender_id: r.senderId,
+    sender_name: r.senderName,
+    sender_type: r.senderType,
+    content: r.content,
+    created_at: r.createdAt,
+    bookmarked_at: r.bookmarkedAt,
+  })));
 });
 
 // ---------------------------------------------------------------------------
