@@ -125,6 +125,36 @@ export function formatTextStats(text: string): string {
   const words = countWords(text);
   const chars = text.length;
   return `${words} word${words !== 1 ? "s" : ""} · ${chars} char${chars !== 1 ? "s" : ""}`;
+ * Format an ISO timestamp as a relative time string ("just now", "5m ago", "2h ago", "3d ago").
+ */
+export function formatRelativeTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const now = Date.now();
+    const diffMs = now - d.getTime();
+    if (diffMs < 0) return "just now";
+
+    const seconds = Math.floor(diffMs / 1000);
+    if (seconds < 60) return "just now";
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months}mo ago`;
+
+    const years = Math.floor(months / 12);
+    return `${years}y ago`;
+  } catch {
+    return "";
+  }
 }
 
 /** Extract the @-mention query being typed at the cursor position. */
