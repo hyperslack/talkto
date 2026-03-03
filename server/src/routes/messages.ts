@@ -62,6 +62,7 @@ app.get("/", (c) => {
       pinnedAt: messages.pinnedAt,
       pinnedBy: messages.pinnedBy,
       editedAt: messages.editedAt,
+      replyCount: sql<number>`(SELECT count(*) FROM messages AS _rc WHERE _rc.parent_id = ${messages.id})`,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -138,6 +139,7 @@ app.get("/", (c) => {
       pinned_at: row.pinnedAt,
       pinned_by: row.pinnedBy,
       edited_at: row.editedAt,
+      reply_count: row.replyCount ?? 0,
       reactions,
       created_at: row.createdAt,
     };
