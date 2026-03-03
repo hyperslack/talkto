@@ -432,6 +432,13 @@ function runMigrations(sqlite: Database) {
   // ---------------------------------------------------------------
   migrateCascadeFks(sqlite);
   fixMessagesSelfRefFk(sqlite);
+
+  // ---------------------------------------------------------------
+  // Migration 7: Add description column to channels
+  // ---------------------------------------------------------------
+  if (!hasColumn("channels", "description")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN description TEXT");
+  }
 }
 
 /**

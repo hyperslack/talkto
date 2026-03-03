@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { eq, asc, and, gt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
-import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
+import { ChannelCreateSchema, ChannelTopicSchema, ChannelDescriptionSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
@@ -29,6 +29,7 @@ function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
     name: ch.name,
     type: ch.type,
     topic: ch.topic,
+    description: ch.description,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
@@ -176,6 +177,30 @@ app.patch("/:channelId/topic", async (c) => {
 
   db.update(channels)
     .set({ topic: parsed.data.topic || null })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
+});
+
+// PATCH /channels/:channelId/description — set channel description
+app.patch("/:channelId/description", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelDescriptionSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ description: parsed.data.description || null })
     .where(eq(channels.id, channel.id))
     .run();
 
