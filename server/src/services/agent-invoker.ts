@@ -42,6 +42,7 @@ import {
   isSessionBusy as isCodexSessionBusy,
 } from "../sdk/codex";
 import {
+  promptSessionWithEvents as cursorPromptWithEvents,
   isSessionBusy as isCursorSessionBusy,
 } from "../sdk/cursor";
 
@@ -154,7 +155,10 @@ function expandAtAll(channelName: string, excludeSender: string, workspaceId?: s
     const codexAgents = candidates.filter(
       (a) => a.agentType === "codex" && a.providerSessionId
     );
-    const allInvocable = [...openCodeAgents, ...claudeAgents, ...codexAgents];
+    const cursorAgents = candidates.filter(
+      (a) => a.agentType === "cursor" && a.providerSessionId
+    );
+    const allInvocable = [...openCodeAgents, ...claudeAgents, ...codexAgents, ...cursorAgents];
 
     // Project channels — filter to matching project
     if (channelName.startsWith("#project-")) {
@@ -394,13 +398,6 @@ async function invokeAgent(
     const result = await promptByProvider(info, prompt, callbacks);
 
     if (!result || !result.text) {
-      // Cursor agents are MCP-only in Phase 1 — post a helpful system message
-      if (info.agentType === "cursor") {
-        console.log(`[INVOKE] '${agentName}' is a Cursor agent (MCP-only) — posting system notice`);
-        postCursorNotInvocableNotice(agentName, channelId, channelName);
-        broadcastEvent(agentTypingEvent(agentName, channelId, false), workspaceId);
-        return;
-      }
       console.warn(`[INVOKE] No response from '${agentName}'`);
       broadcastEvent(
         agentTypingEvent(agentName, channelId, false, `${agentName} did not respond`),
@@ -442,9 +439,7 @@ async function promptByProvider(
   }
 ): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
   if (info.agentType === "cursor") {
-    // Phase 1: Cursor agents are MCP-only — they can't be invoked by TalkTo.
-    // They participate proactively via MCP tools (send_message, etc.).
-    return null;
+    return cursorPromptWithEvents(info.sessionId, prompt, callbacks);
   }
   if (info.agentType === "claude_code") {
     return claudePromptWithEvents(info.sessionId, prompt, callbacks);
@@ -454,59 +449,6 @@ async function promptByProvider(
   }
   // Default: OpenCode (serverUrl is always present for OpenCode agents)
   return openCodePromptWithEvents(info.serverUrl!, info.sessionId, prompt, callbacks);
-}
-
-// ---------------------------------------------------------------------------
-// Cursor "not invocable" system notice
-// ---------------------------------------------------------------------------
-
-/**
- * Post a system message explaining that a Cursor agent can't be invoked directly.
- * Cursor agents participate proactively via MCP tools — TalkTo can't push prompts to them yet.
- */
-function postCursorNotInvocableNotice(
-  agentName: string,
-  channelId: string,
-  channelName: string,
-): void {
-  const db = getDb();
-  const systemUser = db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.userType, "human"))
-    .get();
-
-  const notice =
-    `@${agentName} is a Cursor agent and participates proactively via MCP tools. ` +
-    `They can't be invoked directly through @mentions or DMs yet. ` +
-    `To communicate with them, send a message in a channel they're watching.`;
-
-  const msgId = crypto.randomUUID();
-  const now = new Date().toISOString();
-
-  db.insert(messages).values({
-    id: msgId,
-    channelId,
-    userId: systemUser?.id ?? "system",
-    content: notice,
-    createdAt: now,
-    editedAt: null,
-    reactions: null,
-  }).run();
-
-  broadcastEvent(
-    newMessageEvent({
-      id: msgId,
-      channel_id: channelId,
-      user_id: systemUser?.id ?? "system",
-      content: notice,
-      created_at: now,
-      sender_name: "system",
-      sender_type: "system",
-    }),
-    // Derive workspace from channel or use default
-    DEFAULT_WORKSPACE_ID,
-  );
 }
 
 // ---------------------------------------------------------------------------

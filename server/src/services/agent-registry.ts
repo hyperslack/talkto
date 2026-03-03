@@ -25,7 +25,7 @@ import { generateUniqueName } from "./name-generator";
 import { promptEngine } from "./prompt-engine";
 import { markSessionAlive as markClaudeSessionAlive } from "../sdk/claude";
 import { markSessionAlive as markCodexSessionAlive } from "../sdk/codex";
-import { markSessionAlive as markCursorSessionAlive } from "../sdk/cursor";
+import { markSessionAlive as markCursorSessionAlive, setCursorSessionMeta } from "../sdk/cursor";
 
 /** Derive project name from path (git repo name or folder basename).
  *  Uses spawnSync to avoid shell-quoting issues across platforms. */
@@ -129,6 +129,7 @@ export function registerOrConnectAgent(opts: {
     markCodexSessionAlive(sessionId);
   } else if (agentType === "cursor") {
     markCursorSessionAlive(sessionId);
+    setCursorSessionMeta(sessionId, { projectPath });
   }
 
   // --- Reconnect path: agent_name provided and exists ---

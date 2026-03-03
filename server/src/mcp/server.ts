@@ -158,7 +158,7 @@ server.tool(
         "For OpenCode: opencode db \"SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1\" " +
         "For Claude Code: your conversation/session ID " +
         "For Codex CLI: your thread ID or process ID " +
-        "For Cursor: any unique session identifier"
+        "For Cursor: your chat/session ID (used for --resume)"
       ),
     project_path: z
       .string()

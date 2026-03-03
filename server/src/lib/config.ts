@@ -72,4 +72,8 @@ export const config = {
   get frontendUrl() {
     return `http://${this.advertiseHost}:${this.frontendPort}`;
   },
+
+  // Cursor CLI agent configuration
+  cursorApiKey: process.env.CURSOR_API_KEY ?? null,
+  cursorCliPath: process.env.CURSOR_CLI_PATH ?? null,
 } as const;
