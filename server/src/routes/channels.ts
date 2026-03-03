@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import { eq, asc, and, gt, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
+import { channels, channelMembers, users, agents, messages, readReceipts, mutedChannels } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 
@@ -333,6 +333,63 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// POST /channels/:channelId/mute — toggle mute for authenticated user
+app.post("/:channelId/mute", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  let userId = auth.userId ?? "";
+  if (!userId) {
+    const human = db.select().from(users).where(eq(users.type, "human")).get();
+    if (!human) return c.json({ detail: "No user found" }, 400);
+    userId = human.id;
+  }
+
+  // Check if already muted — toggle
+  const existing = db
+    .select()
+    .from(mutedChannels)
+    .where(and(eq(mutedChannels.userId, userId), eq(mutedChannels.channelId, channelId)))
+    .get();
+
+  if (existing) {
+    db.delete(mutedChannels)
+      .where(and(eq(mutedChannels.userId, userId), eq(mutedChannels.channelId, channelId)))
+      .run();
+    return c.json({ channel_id: channelId, muted: false });
+  } else {
+    const now = new Date().toISOString();
+    db.insert(mutedChannels).values({ userId, channelId, mutedAt: now }).run();
+    return c.json({ channel_id: channelId, muted: true });
+  }
+});
+
+// GET /channels/muted/list — get all muted channel IDs for authenticated user
+// NOTE: Must be before /:channelId to avoid route conflict
+app.get("/muted/list", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  let userId = auth.userId ?? "";
+  if (!userId) {
+    const human = db.select().from(users).where(eq(users.type, "human")).get();
+    if (!human) return c.json({ detail: "No user found" }, 400);
+    userId = human.id;
+  }
+
+  const muted = db
+    .select({ channelId: mutedChannels.channelId, mutedAt: mutedChannels.mutedAt })
+    .from(mutedChannels)
+    .where(eq(mutedChannels.userId, userId))
+    .all();
+
+  return c.json(muted.map((m) => ({ channel_id: m.channelId, muted_at: m.mutedAt })));
 });
 
 export default app;
