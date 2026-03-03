@@ -45,8 +45,32 @@ export function getDb() {
   // Run lightweight migrations for schema evolution
   runMigrations(_sqlite);
 
+  // Repair any leftover messages_new from a partial migration
+  repairMessagesTable(_sqlite);
+
   _db = drizzle(_sqlite, { schema });
   return _db;
+}
+
+/**
+ * If "messages" table is missing but "messages_new" exists (e.g. migration 5
+ * failed after creating messages_new), rename it so the app and seed work.
+ */
+function repairMessagesTable(sqlite: Database) {
+  const rows = sqlite
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('messages', 'messages_new')"
+    )
+    .all() as { name: string }[];
+  const hasMessages = rows.some((r) => r.name === "messages");
+  const hasNew = rows.some((r) => r.name === "messages_new");
+  if (!hasMessages && hasNew) {
+    sqlite.exec("ALTER TABLE messages_new RENAME TO messages");
+    sqlite.exec(
+      "CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)"
+    );
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
+  }
 }
 
 /**
@@ -538,6 +562,31 @@ function migrateCascadeFks(sqlite: Database) {
       ]
     );
 
+    // --- messages: fix self-FK (SQLite keeps original ref in sqlite_master after RENAME, so parent_id still pointed at messages_new) ---
+    sqlite.exec(`
+      CREATE TABLE messages_fixed (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        mentions TEXT,
+        parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+        is_pinned INTEGER NOT NULL DEFAULT 0,
+        pinned_at TEXT,
+        pinned_by TEXT,
+        edited_at TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    sqlite.exec(
+      `INSERT INTO messages_fixed (id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at)
+       SELECT id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at FROM messages`
+    );
+    sqlite.exec("DROP TABLE messages");
+    sqlite.exec("ALTER TABLE messages_fixed RENAME TO messages");
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)");
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
+
     // --- workspace_members: CASCADE on workspace + user FKs ---
     rebuild(
       `CREATE TABLE workspace_members_new (
@@ -676,6 +725,9 @@ function migrateCascadeFks(sqlite: Database) {
 
     // Re-enable FK checks after transaction
     sqlite.exec("PRAGMA foreign_keys = ON");
+
+    // Repair: if "messages" is missing but "messages_new" exists (e.g. partial run), rename it
+    repairMessagesTable(sqlite);
 
     console.log("[DB] Migration 5: Rebuilt tables with CASCADE FK constraints");
   } catch (err) {
