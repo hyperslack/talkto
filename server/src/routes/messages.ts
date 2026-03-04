@@ -403,6 +403,63 @@ app.delete("/:messageId", (c) => {
   return c.json({ deleted: true, id: messageId });
 });
 
+// GET /channels/:channelId/messages/:messageId/thread — get thread summary and replies
+app.get("/:messageId/thread", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const db = getDb();
+
+  // Verify channel
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  // Get parent message
+  const parent = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!parent) return c.json({ detail: "Message not found" }, 404);
+  if (parent.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  // Get replies
+  const replies = db
+    .select({
+      id: messages.id,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.parentId, messageId))
+    .orderBy(messages.createdAt)
+    .all();
+
+  // Unique participants
+  const participantMap = new Map<string, string>();
+  for (const r of replies) {
+    participantMap.set(r.senderId, r.senderName);
+  }
+
+  return c.json({
+    parent_id: messageId,
+    reply_count: replies.length,
+    participants: Array.from(participantMap.entries()).map(([id, name]) => ({
+      user_id: id,
+      name,
+    })),
+    last_reply_at: replies.length > 0 ? replies[replies.length - 1].createdAt : null,
+    replies: replies.map((r) => ({
+      id: r.id,
+      sender_id: r.senderId,
+      sender_name: r.senderName,
+      sender_type: r.senderType,
+      content: r.content,
+      created_at: r.createdAt,
+    })),
+  });
+});
+
 // POST /channels/:channelId/messages/:messageId/react — toggle reaction
 app.post("/:messageId/react", async (c) => {
   const auth = c.get("auth");
