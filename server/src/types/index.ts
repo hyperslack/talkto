@@ -74,6 +74,9 @@ export interface ChannelResponse {
 });
 
   category?: string | null;
+});
+
+  slow_mode_seconds?: number;
   project_path?: string | null;
   created_by: string;
   created_by_name?: string | null;
@@ -87,6 +90,12 @@ export const ChannelCategorySchema = z.object({
   category: z.string().max(100).nullable(),
 });
 export type ChannelCategory = z.infer<typeof ChannelCategorySchema>;
+});
+
+export const ChannelSlowModeSchema = z.object({
+  seconds: z.number().int().min(0).max(86400), // 0 to 24h
+});
+export type ChannelSlowMode = z.infer<typeof ChannelSlowModeSchema>;
 
 // ---------------------------------------------------------------------------
 // Message
