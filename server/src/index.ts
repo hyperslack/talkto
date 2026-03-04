@@ -48,6 +48,7 @@ import agentsRoutes from "./routes/agents";
 import featuresRoutes from "./routes/features";
 import workspacesRoutes from "./routes/workspaces";
 import authRoutes from "./routes/auth";
+import auditRoutes from "./routes/audit";
 
 // ---------------------------------------------------------------------------
 // Initialize database
@@ -98,6 +99,7 @@ app.route("/api/users", usersRoutes);
 app.route("/api/channels", channelsRoutes);
 app.route("/api/agents", agentsRoutes);
 app.route("/api/features", featuresRoutes);
+app.route("/api/audit", auditRoutes);
 
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
