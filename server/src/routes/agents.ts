@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import { eq, asc, desc, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { agents, channels, channelMembers, messages, sessions, users } from "../db/schema";
+import { agents, agentTags, channels, channelMembers, messages, sessions, users } from "../db/schema";
 import type { AgentResponse, AppBindings, ChannelResponse } from "../types";
 import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
@@ -198,6 +198,28 @@ app.get("/", (c) => {
   return c.json(responses);
 });
 
+// GET /agents/tags/search?tag=... — find agents by tag
+app.get("/tags/search", (c) => {
+  const auth = c.get("auth");
+  const tag = c.req.query("tag");
+  if (!tag) return c.json({ detail: "tag query parameter required" }, 400);
+
+  const db = getDb();
+  const rows = db
+    .select({
+      agentName: agents.agentName,
+      agentType: agents.agentType,
+      status: agents.status,
+      tag: agentTags.tag,
+    })
+    .from(agentTags)
+    .innerJoin(agents, eq(agentTags.agentId, agents.id))
+    .where(and(eq(agentTags.tag, tag.toLowerCase()), eq(agents.workspaceId, auth.workspaceId)))
+    .all();
+
+  return c.json({ tag, agents: rows.map(r => ({ agent_name: r.agentName, agent_type: r.agentType, status: r.status })) });
+});
+
 // GET /agents/:agentName/stats — activity stats for an agent
 app.get("/:agentName/stats", (c) => {
   const auth = c.get("auth");
@@ -347,6 +369,59 @@ app.post("/:agentName/dm", (c) => {
     created_at: channel.createdAt,
   };
   return c.json(resp);
+});
+
+// GET /agents/:agentName/tags — list tags for an agent
+app.get("/:agentName/tags", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, c.req.param("agentName")), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) return c.json({ detail: "Agent not found" }, 404);
+
+  const tags = db
+    .select({ tag: agentTags.tag, createdAt: agentTags.createdAt })
+    .from(agentTags)
+    .where(eq(agentTags.agentId, agent.id))
+    .all();
+
+  return c.json({ agent_name: agent.agentName, tags: tags.map(t => t.tag) });
+});
+
+// PUT /agents/:agentName/tags — set tags for an agent (replaces all)
+app.put("/:agentName/tags", async (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, c.req.param("agentName")), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) return c.json({ detail: "Agent not found" }, 404);
+
+  const body = await c.req.json();
+  const tagsArray = body?.tags;
+  if (!Array.isArray(tagsArray) || tagsArray.some((t: unknown) => typeof t !== "string")) {
+    return c.json({ detail: "tags must be an array of strings" }, 400);
+  }
+  if (tagsArray.length > 20) {
+    return c.json({ detail: "Maximum 20 tags allowed" }, 400);
+  }
+
+  // Delete existing and insert new
+  db.delete(agentTags).where(eq(agentTags.agentId, agent.id)).run();
+  const now = new Date().toISOString();
+  for (const tag of tagsArray) {
+    const cleaned = tag.trim().toLowerCase().slice(0, 50);
+    if (cleaned) {
+      db.insert(agentTags).values({ agentId: agent.id, tag: cleaned, createdAt: now }).run();
+    }
+  }
+
+  return c.json({ agent_name: agent.agentName, tags: tagsArray.map((t: string) => t.trim().toLowerCase().slice(0, 50)).filter(Boolean) });
 });
 
 export default app;

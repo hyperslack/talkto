@@ -510,3 +510,22 @@ export const messageReactionsRelations = relations(messageReactions, ({ one }) =
     references: [users.id],
   }),
 }));
+
+// ---------------------------------------------------------------------------
+// agent_tags — capability/skill tags for agents
+// ---------------------------------------------------------------------------
+
+export const agentTags = sqliteTable(
+  "agent_tags",
+  {
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    tag: text("tag").notNull(), // e.g. "code-review", "testing", "frontend", "devops"
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.agentId, table.tag] }),
+    index("idx_agent_tags_tag").on(table.tag),
+  ]
+);
