@@ -46,6 +46,9 @@ function channelToResponse(ch: typeof channels.$inferSelect, extras?: { pinned_c
 });
 
     slow_mode_seconds: ch.slowModeSeconds ?? 0,
+});
+
+    is_read_only: ch.isReadOnly === 1,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
@@ -310,6 +313,15 @@ app.patch("/:channelId/position", async (c) => {
   const position = body?.position;
   if (typeof position !== "number" || !Number.isInteger(position) || position < 0) {
     return c.json({ detail: "position must be a non-negative integer" }, 400);
+});
+
+// PATCH /channels/:channelId/read-only — toggle read-only mode
+app.patch("/:channelId/read-only", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const readOnly = body?.read_only;
+  if (typeof readOnly !== "boolean") {
+    return c.json({ detail: "read_only must be a boolean" }, 400);
   }
 
   const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
@@ -347,6 +359,9 @@ app.patch("/:channelId/slow-mode", async (c) => {
 });
 
     .set({ slowModeSeconds: parsed.data.seconds })
+});
+
+    .set({ isReadOnly: readOnly ? 1 : 0 })
     .where(eq(channels.id, channel.id))
     .run();
 
@@ -354,7 +369,6 @@ app.patch("/:channelId/slow-mode", async (c) => {
   return c.json(channelToResponse(updated));
 });
 
-<<<<<<< HEAD
 // PUT /channels/reorder — bulk reorder channels
 app.put("/reorder", async (c) => {
   const auth = c.get("auth");
@@ -394,8 +408,10 @@ app.get("/categories/list", (c) => {
   return c.json({ categories });
 });
 
+<<<<<<< HEAD
 =======
->>>>>>> 1c06015 (feat: add channel slow mode)
+>>>>>>> 487001f (feat: add schema, migration, and route for read-only channels)
+>>>>>>> 41e1d13 (feat: add schema, migration, and route for read-only channels)
 // GET /channels/:channelId
 app.get("/:channelId", (c) => {
   const auth = c.get("auth");

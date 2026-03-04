@@ -307,6 +307,9 @@ export const channels = sqliteTable(
 });
 
     slowModeSeconds: integer("slow_mode_seconds").default(0), // 0 = disabled
+});
+
+    isReadOnly: integer("is_read_only").notNull().default(0),
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),
     workspaceId: text("workspace_id")
