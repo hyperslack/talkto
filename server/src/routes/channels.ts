@@ -284,6 +284,26 @@ app.post("/:channelId/unarchive", (c) => {
   return c.json(channelToResponse(updated));
 });
 
+// DELETE /channels/:channelId — permanently delete a channel
+app.delete("/:channelId", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+  if (channel.type === "general") {
+    return c.json({ detail: "Cannot delete the #general channel" }, 400);
+  }
+
+  // Delete channel (CASCADE will remove messages, members, read_receipts)
+  db.delete(channels).where(eq(channels.id, channelId)).run();
+
+  return c.json({ deleted: true, id: channelId });
+});
+
 // POST /channels/:channelId/read — mark channel as read for a user
 app.post("/:channelId/read", async (c) => {
   const auth = c.get("auth");
