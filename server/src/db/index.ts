@@ -300,6 +300,17 @@ function createTables(sqlite: Database) {
     );
   `);
 
+  // agent_tags table
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS agent_tags (
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      tag TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (agent_id, tag)
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_tags_tag ON agent_tags(tag);
+  `);
+
   // message_reactions table
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS message_reactions (
