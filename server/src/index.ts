@@ -26,6 +26,7 @@ import {
   broadcastToChannel,
   isRateLimited,
   getClientUserId,
+  getClientCount,
   type WsData,
 } from "./services/ws-manager";
 import { startLivenessTask, stopLivenessTask } from "./routes/agents";
@@ -89,7 +90,15 @@ app.use(
 app.use("/api/*", authMiddleware);
 
 // Health check (before other routes — authMiddleware skips /api/health)
-app.get("/api/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
+app.get("/api/health", (c) => {
+  const wsClients = getClientCount();
+  return c.json({
+    status: "ok",
+    version: "0.1.0",
+    ws_clients: wsClients,
+    uptime_seconds: Math.floor(process.uptime()),
+  });
+});
 
 // Mount API routes
 app.route("/api/auth", authRoutes);
