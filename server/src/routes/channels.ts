@@ -21,7 +21,7 @@ function getChannelInWorkspace(channelId: string, workspaceId: string) {
     .get() ?? null;
 }
 
-function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
+function channelToResponse(ch: typeof channels.$inferSelect, extras?: { pinned_count?: number }): ChannelResponse {
   return {
     id: ch.id,
     name: ch.name,
@@ -32,6 +32,7 @@ function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
     created_at: ch.createdAt,
     is_archived: ch.isArchived === 1,
     archived_at: ch.archivedAt,
+    pinned_count: extras?.pinned_count,
   };
 }
 
@@ -49,7 +50,25 @@ app.get("/", (c) => {
   if (!includeArchived) {
     result = result.filter((ch) => ch.isArchived !== 1);
   }
-  return c.json(result.map(channelToResponse));
+
+  // Batch-fetch pinned counts for all channels
+  const pinnedCounts = new Map<string, number>();
+  if (result.length > 0) {
+    const rows = db
+      .select({
+        channelId: messages.channelId,
+        count: sql<number>`count(*)`,
+      })
+      .from(messages)
+      .where(eq(messages.isPinned, 1))
+      .groupBy(messages.channelId)
+      .all();
+    for (const row of rows) {
+      pinnedCounts.set(row.channelId, row.count);
+    }
+  }
+
+  return c.json(result.map((ch) => channelToResponse(ch, { pinned_count: pinnedCounts.get(ch.id) ?? 0 })));
 });
 
 // GET /channels/unread/counts — get unread counts for all channels for a user
