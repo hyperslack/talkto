@@ -234,6 +234,58 @@ app.get("/:channelId/members", (c) => {
   return c.json(result);
 });
 
+// GET /channels/:channelId/stats — get channel statistics
+app.get("/:channelId/stats", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+
+  // Message count
+  const msgCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .get();
+
+  // Member count
+  const memberCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(channelMembers)
+    .where(eq(channelMembers.channelId, channelId))
+    .get();
+
+  // Pinned message count
+  const pinnedCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(and(eq(messages.channelId, channelId), eq(messages.isPinned, 1)))
+    .get();
+
+  // Last message timestamp
+  const lastMsg = db
+    .select({ createdAt: messages.createdAt })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .orderBy(sql`${messages.createdAt} DESC`)
+    .limit(1)
+    .get();
+
+  return c.json({
+    channel_id: channelId,
+    message_count: msgCount?.count ?? 0,
+    member_count: memberCount?.count ?? 0,
+    pinned_count: pinnedCount?.count ?? 0,
+    last_message_at: lastMsg?.createdAt ?? null,
+    created_at: channel.createdAt,
+  });
+});
+
 // POST /channels/:channelId/archive — archive a channel
 app.post("/:channelId/archive", (c) => {
   const auth = c.get("auth");
