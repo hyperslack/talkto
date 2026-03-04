@@ -431,6 +431,19 @@ function runMigrations(sqlite: Database) {
   // Uses a sentinel pragma to avoid re-running on subsequent boots.
   // ---------------------------------------------------------------
   migrateCascadeFks(sqlite);
+
+  // ---------------------------------------------------------------
+  // Post-rebuild migrations: columns added after migration 5
+  // Must run after migrateCascadeFks since it rebuilds tables
+  // ---------------------------------------------------------------
+  const hasColumnPost = (table: string, column: string): boolean => {
+    const info = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return info.some((col) => col.name === column);
+  };
+
+  if (!hasColumnPost("channels", "is_read_only")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN is_read_only INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 /**

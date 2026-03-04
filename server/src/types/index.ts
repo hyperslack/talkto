@@ -59,6 +59,7 @@ export interface ChannelResponse {
   project_path?: string | null;
   created_by: string;
   created_at: string;
+  is_read_only?: boolean;
   is_archived?: boolean;
   archived_at?: string | null;
 }

@@ -27,6 +27,7 @@ function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
     name: ch.name,
     type: ch.type,
     topic: ch.topic,
+    is_read_only: ch.isReadOnly === 1,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
@@ -174,6 +175,28 @@ app.patch("/:channelId/topic", async (c) => {
 
   db.update(channels)
     .set({ topic: parsed.data.topic || null })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
+});
+
+// PATCH /channels/:channelId/read-only — toggle read-only mode
+app.patch("/:channelId/read-only", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const readOnly = body?.read_only;
+  if (typeof readOnly !== "boolean") {
+    return c.json({ detail: "read_only must be a boolean" }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  db.update(channels)
+    .set({ isReadOnly: readOnly ? 1 : 0 })
     .where(eq(channels.id, channel.id))
     .run();
 
