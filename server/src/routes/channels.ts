@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { eq, asc, and, gt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
-import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
+import { ChannelCreateSchema, ChannelTopicSchema, ChannelCategorySchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 
 const app = new Hono<AppBindings>();
@@ -27,6 +27,7 @@ function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
     name: ch.name,
     type: ch.type,
     topic: ch.topic,
+    category: ch.category ?? null,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
@@ -179,6 +180,44 @@ app.patch("/:channelId/topic", async (c) => {
 
   const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
   return c.json(channelToResponse(updated));
+});
+
+// PATCH /channels/:channelId/category — set channel category
+app.patch("/:channelId/category", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelCategorySchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ category: parsed.data.category || null })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
+});
+
+// GET /channels/categories — list all categories in workspace
+app.get("/categories/list", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const rows = db
+    .select({ category: channels.category })
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .all();
+
+  const categories = [...new Set(rows.map(r => r.category).filter(Boolean))].sort();
+  return c.json({ categories });
 });
 
 // GET /channels/:channelId

@@ -298,6 +298,7 @@ export const channels = sqliteTable(
     projectPath: text("project_path"),
     createdBy: text("created_by").notNull(), // user UUID or "system" — NOT a FK
     createdAt: text("created_at").notNull(),
+    category: text("category"), // grouping label, e.g. "Projects", "DMs", "General"
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),
     workspaceId: text("workspace_id")

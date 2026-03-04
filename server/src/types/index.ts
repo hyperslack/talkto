@@ -56,12 +56,18 @@ export interface ChannelResponse {
   name: string;
   type: string;
   topic?: string | null;
+  category?: string | null;
   project_path?: string | null;
   created_by: string;
   created_at: string;
   is_archived?: boolean;
   archived_at?: string | null;
 }
+
+export const ChannelCategorySchema = z.object({
+  category: z.string().max(100).nullable(),
+});
+export type ChannelCategory = z.infer<typeof ChannelCategorySchema>;
 
 // ---------------------------------------------------------------------------
 // Message
