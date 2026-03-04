@@ -8,6 +8,7 @@ import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
+import { logAudit } from "../services/audit-logger";
 
 const app = new Hono<AppBindings>();
 
@@ -153,6 +154,16 @@ app.post("/", async (c) => {
     .run();
 
   const channel = db.select().from(channels).where(eq(channels.id, id)).get()!;
+
+  logAudit({
+    workspaceId: auth.workspaceId,
+    actorId: auth.userId,
+    action: "channel.create",
+    targetType: "channel",
+    targetId: id,
+    metadata: { name },
+  });
+
   return c.json(channelToResponse(channel), 201);
 });
 
@@ -256,6 +267,15 @@ app.post("/:channelId/archive", (c) => {
     .set({ isArchived: 1, archivedAt: now })
     .where(eq(channels.id, channelId))
     .run();
+
+  logAudit({
+    workspaceId: auth.workspaceId,
+    actorId: auth.userId,
+    action: "channel.archive",
+    targetType: "channel",
+    targetId: channelId,
+    metadata: { name: channel.name },
+  });
 
   const updated = db.select().from(channels).where(eq(channels.id, channelId)).get()!;
   return c.json(channelToResponse(updated));
