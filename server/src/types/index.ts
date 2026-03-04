@@ -71,6 +71,9 @@ export interface ChannelResponse {
   type: string;
   topic?: string | null;
   position?: number;
+});
+
+  category?: string | null;
   project_path?: string | null;
   created_by: string;
   created_by_name?: string | null;
@@ -79,6 +82,11 @@ export interface ChannelResponse {
   archived_at?: string | null;
   pinned_count?: number;
 }
+
+export const ChannelCategorySchema = z.object({
+  category: z.string().max(100).nullable(),
+});
+export type ChannelCategory = z.infer<typeof ChannelCategorySchema>;
 
 // ---------------------------------------------------------------------------
 // Message

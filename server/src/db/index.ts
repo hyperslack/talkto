@@ -229,6 +229,7 @@ function createTables(sqlite: Database) {
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       topic TEXT,
+      category TEXT,
       project_path TEXT,
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -370,6 +371,11 @@ function migrateUp(sqlite: Database) {
   // Migration: add position column to channels
   if (!hasColumn("channels", "position")) {
     sqlite.exec("ALTER TABLE channels ADD COLUMN position INTEGER DEFAULT 0");
+});
+
+  // Migration: add category column to channels
+  if (!hasColumn("channels", "category")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN category TEXT");
   }
 }
 

@@ -11,6 +11,9 @@ import { ChannelCreateSchema, ChannelRenameSchema, ChannelTopicSchema } from "..
 
 import { channels, channelMembers, users, agents, messages, readReceipts, workspaceMembers } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
+});
+
+import { ChannelCreateSchema, ChannelTopicSchema, ChannelCategorySchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
@@ -34,6 +37,9 @@ function channelToResponse(ch: typeof channels.$inferSelect, extras?: { pinned_c
     type: ch.type,
     topic: ch.topic,
     position: ch.position ?? 0,
+});
+
+    category: ch.category ?? null,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
@@ -306,6 +312,25 @@ app.patch("/:channelId/position", async (c) => {
   const db = getDb();
   db.update(channels)
     .set({ position })
+});
+
+// PATCH /channels/:channelId/category — set channel category
+app.patch("/:channelId/category", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelCategorySchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ category: parsed.data.category || null })
     .where(eq(channels.id, channel.id))
     .run();
 
@@ -338,6 +363,18 @@ app.put("/reorder", async (c) => {
   }
 
   return c.json({ updated: order.length });
+// GET /channels/categories — list all categories in workspace
+app.get("/categories/list", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const rows = db
+    .select({ category: channels.category })
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .all();
+
+  const categories = [...new Set(rows.map(r => r.category).filter(Boolean))].sort();
+  return c.json({ categories });
 });
 
 // GET /channels/:channelId
