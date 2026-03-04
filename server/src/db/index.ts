@@ -230,6 +230,7 @@ function createTables(sqlite: Database) {
       project_path TEXT,
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      position INTEGER DEFAULT 0,
       is_archived INTEGER NOT NULL DEFAULT 0,
       archived_at TEXT,
       workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -348,6 +349,11 @@ function migrateUp(sqlite: Database) {
   // Migration: add topic column to channels
   if (!hasColumn("channels", "topic")) {
     sqlite.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
+  }
+
+  // Migration: add position column to channels
+  if (!hasColumn("channels", "position")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN position INTEGER DEFAULT 0");
   }
 }
 

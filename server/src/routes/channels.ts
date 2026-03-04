@@ -27,6 +27,7 @@ function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
     name: ch.name,
     type: ch.type,
     topic: ch.topic,
+    position: ch.position ?? 0,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
@@ -44,7 +45,7 @@ app.get("/", (c) => {
     .select()
     .from(channels)
     .where(eq(channels.workspaceId, auth.workspaceId))
-    .orderBy(asc(channels.name))
+    .orderBy(asc(channels.position), asc(channels.name))
     .all();
   if (!includeArchived) {
     result = result.filter((ch) => ch.isArchived !== 1);
@@ -179,6 +180,55 @@ app.patch("/:channelId/topic", async (c) => {
 
   const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
   return c.json(channelToResponse(updated));
+});
+
+// PATCH /channels/:channelId/position — set channel position
+app.patch("/:channelId/position", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const position = body?.position;
+  if (typeof position !== "number" || !Number.isInteger(position) || position < 0) {
+    return c.json({ detail: "position must be a non-negative integer" }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  db.update(channels)
+    .set({ position })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
+});
+
+// PUT /channels/reorder — bulk reorder channels
+app.put("/reorder", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const order = body?.order;
+  if (!Array.isArray(order) || !order.every((item: unknown) =>
+    typeof item === "object" && item !== null &&
+    typeof (item as Record<string, unknown>).channel_id === "string" &&
+    typeof (item as Record<string, unknown>).position === "number"
+  )) {
+    return c.json({ detail: "order must be array of { channel_id, position }" }, 400);
+  }
+
+  const db = getDb();
+  for (const item of order) {
+    const ch = getChannelInWorkspace(item.channel_id, auth.workspaceId);
+    if (ch) {
+      db.update(channels)
+        .set({ position: item.position })
+        .where(eq(channels.id, item.channel_id))
+        .run();
+    }
+  }
+
+  return c.json({ updated: order.length });
 });
 
 // GET /channels/:channelId
