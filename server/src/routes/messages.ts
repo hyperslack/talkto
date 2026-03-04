@@ -172,6 +172,29 @@ app.post("/", async (c) => {
     return c.json({ detail: "No user onboarded" }, 400);
   }
 
+  // Enforce slow mode
+  const slowModeSeconds = (channel as Record<string, unknown>).slowModeSeconds as number ?? 0;
+  if (slowModeSeconds > 0 && human) {
+    const lastMsg = db
+      .select({ createdAt: messages.createdAt })
+      .from(messages)
+      .where(and(eq(messages.channelId, channelId), eq(messages.senderId, human.id)))
+      .orderBy(desc(messages.createdAt))
+      .limit(1)
+      .get();
+
+    if (lastMsg) {
+      const elapsed = (Date.now() - new Date(lastMsg.createdAt).getTime()) / 1000;
+      if (elapsed < slowModeSeconds) {
+        const waitSeconds = Math.ceil(slowModeSeconds - elapsed);
+        return c.json({
+          detail: `Slow mode active. Wait ${waitSeconds}s before posting again.`,
+          retry_after_seconds: waitSeconds,
+        }, 429);
+      }
+    }
+  }
+
   const msgId = crypto.randomUUID();
   const now = new Date().toISOString();
   const mentionsJson = parsed.data.mentions
