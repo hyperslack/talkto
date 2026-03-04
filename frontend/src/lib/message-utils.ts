@@ -99,6 +99,34 @@ export function shouldShowDateSeparator(
   }
 }
 
+/**
+ * Count words in a text string.
+ * Splits on whitespace and filters out empty entries.
+ */
+export function countWords(text: string): number {
+  if (!text.trim()) return 0;
+  return text.trim().split(/\s+/).length;
+}
+
+/**
+ * Estimate reading time in minutes for a given text.
+ * Average reading speed: ~200 words per minute.
+ */
+export function estimateReadingTime(text: string): number {
+  const words = countWords(text);
+  return Math.max(1, Math.ceil(words / 200));
+}
+
+/**
+ * Format a word/character count for display.
+ * Returns a compact string like "42 words · 256 chars".
+ */
+export function formatTextStats(text: string): string {
+  const words = countWords(text);
+  const chars = text.length;
+  return `${words} word${words !== 1 ? "s" : ""} · ${chars} char${chars !== 1 ? "s" : ""}`;
+}
+
 /** Extract the @-mention query being typed at the cursor position. */
 export function getMentionQuery(
   text: string,
