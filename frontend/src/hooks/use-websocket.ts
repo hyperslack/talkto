@@ -35,6 +35,7 @@ export function useWebSocket(enabled: boolean = true) {
   const removeRealtimeMessage = useAppStore((s) => s.removeRealtimeMessage);
   const setAgentStatus = useAppStore((s) => s.setAgentStatus);
   const setAgentTyping = useAppStore((s) => s.setAgentTyping);
+  const setHumanTyping = useAppStore((s) => s.setHumanTyping);
   const appendStreamingDelta = useAppStore((s) => s.appendStreamingDelta);
   const clearStreamingMessage = useAppStore((s) => s.clearStreamingMessage);
   const setWsConnected = useAppStore((s) => s.setWsConnected);
@@ -114,6 +115,16 @@ export function useWebSocket(enabled: boolean = true) {
           break;
         }
 
+        case "typing": {
+          const data = event.data as { channel_id: string; user_id: string; user_name: string };
+          setHumanTyping(data.channel_id, data.user_name, true);
+          // Auto-clear after 4 seconds (if no new typing event refreshes it)
+          setTimeout(() => {
+            setHumanTyping(data.channel_id, data.user_name, false);
+          }, 4000);
+          break;
+        }
+
         case "reaction": {
           // Invalidate messages to refetch with updated reactions
           const reaction = event.data as { channel_id: string };
@@ -137,7 +148,7 @@ export function useWebSocket(enabled: boolean = true) {
           break;
       }
     },
-    [addRealtimeMessage, removeRealtimeMessage, setAgentStatus, setAgentTyping, appendStreamingDelta, clearStreamingMessage],
+    [addRealtimeMessage, removeRealtimeMessage, setAgentStatus, setAgentTyping, setHumanTyping, appendStreamingDelta, clearStreamingMessage],
   );
 
   // Keep refs so the WS handlers always use the latest versions without
@@ -221,5 +232,12 @@ export function useWebSocket(enabled: boolean = true) {
     };
   }, [enabled, connect]);
 
-  return { subscribe };
+  const sendTyping = useCallback((channelId: string, userId: string, userName: string) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: "typing", channel_id: channelId, user_id: userId, user_name: userName }));
+    }
+  }, []);
+
+  return { subscribe, sendTyping };
 }

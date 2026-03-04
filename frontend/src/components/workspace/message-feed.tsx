@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MessageBubble } from "./message-bubble";
 import { MessageInput } from "./message-input";
-import { AlertTriangle, Bot, MessageSquare } from "lucide-react";
+import { AlertTriangle, Bot, MessageSquare, User } from "lucide-react";
 import { formatDateSeparator, shouldShowDateSeparator } from "@/lib/message-utils";
 import type { Message } from "@/lib/types";
 
@@ -18,6 +18,7 @@ export function MessageFeed() {
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const realtimeMessages = useAppStore((s) => s.realtimeMessages);
   const typingAgents = useAppStore((s) => s.typingAgents);
+  const typingHumans = useAppStore((s) => s.typingHumans);
   const streamingMessages = useAppStore((s) => s.streamingMessages);
   const invocationError = useAppStore((s) => s.invocationError);
   const clearInvocationError = useAppStore((s) => s.clearInvocationError);
@@ -33,6 +34,11 @@ export function MessageFeed() {
   // Get typing agents for current channel
   const currentTyping = activeChannelId
     ? Array.from(typingAgents.get(activeChannelId) ?? [])
+    : [];
+
+  // Get typing humans for current channel
+  const currentTypingHumans = activeChannelId
+    ? Array.from(typingHumans.get(activeChannelId) ?? [])
     : [];
 
   // Get streaming text for typing agents in current channel
@@ -241,6 +247,11 @@ export function MessageFeed() {
             <TypingIndicator agents={waitingAgents} />
           )}
 
+          {/* Human typing indicator */}
+          {currentTypingHumans.length > 0 && (
+            <HumanTypingIndicator humans={currentTypingHumans} />
+          )}
+
           {/* Invocation error */}
           {currentError && !currentTyping.length && (
             <InvocationError message={currentError} />
@@ -323,6 +334,26 @@ function TypingIndicator({ agents }: { agents: string[] }) {
       <span className="text-xs text-muted-foreground/60">
         {label}
       </span>
+      <span className="inline-flex gap-0.5">
+        <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:0ms]" />
+        <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:150ms]" />
+        <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:300ms]" />
+      </span>
+    </div>
+  );
+}
+
+/** Typing indicator shown when a human user is typing. */
+function HumanTypingIndicator({ humans }: { humans: string[] }) {
+  const label =
+    humans.length === 1
+      ? `${humans[0]} is typing`
+      : `${humans.slice(0, -1).join(", ")} and ${humans[humans.length - 1]} are typing`;
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-1.5">
+      <User className="h-3.5 w-3.5 text-muted-foreground/50" />
+      <span className="text-xs text-muted-foreground/60">{label}</span>
       <span className="inline-flex gap-0.5">
         <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:0ms]" />
         <span className="h-1 w-1 animate-bounce rounded-full bg-muted-foreground/40 [animation-delay:150ms]" />

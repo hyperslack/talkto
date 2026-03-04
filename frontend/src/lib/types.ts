@@ -169,6 +169,7 @@ export type WSEventType =
   | "subscribed"
   | "unsubscribed"
   | "reaction"
+  | "typing"
   | "pong"
   | "error";
 

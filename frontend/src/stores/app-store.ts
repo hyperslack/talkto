@@ -75,6 +75,10 @@ interface AppState {
   typingAgents: Map<string, Set<string>>; // channelId → Set<agent_name>
   setAgentTyping: (channelId: string, agentName: string, isTyping: boolean, error?: string) => void;
 
+  // ── Human typing indicators ──
+  typingHumans: Map<string, Set<string>>; // channelId → Set<user_name>
+  setHumanTyping: (channelId: string, userName: string, isTyping: boolean) => void;
+
   // ── Streaming text (from agent_streaming WebSocket events) ──
   // channelId → agentName → accumulated text so far
   streamingMessages: Map<string, Map<string, string>>;
@@ -147,6 +151,23 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Typing indicators
   typingAgents: new Map(),
+  typingHumans: new Map(),
+  setHumanTyping: (channelId, userName, isTyping) =>
+    set((s) => {
+      const next = new Map(s.typingHumans);
+      const humans = new Set(next.get(channelId) ?? []);
+      if (isTyping) {
+        humans.add(userName);
+      } else {
+        humans.delete(userName);
+      }
+      if (humans.size === 0) {
+        next.delete(channelId);
+      } else {
+        next.set(channelId, humans);
+      }
+      return { typingHumans: next };
+    }),
   setAgentTyping: (channelId, agentName, isTyping, error?) =>
     set((s) => {
       const next = new Map(s.typingAgents);
