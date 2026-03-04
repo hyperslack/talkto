@@ -158,6 +158,9 @@ export function createChannel(name: string) {
 
 export function deleteChannel(channelId: string) {
   return request<{ deleted: boolean; id: string; name: string }>(`/channels/${channelId}`, {
+});
+
+  return request<{ deleted: boolean; id: string }>(`/channels/${channelId}`, {
     method: "DELETE",
   });
 }
