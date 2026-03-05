@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, asc, and, gt, sql } from "drizzle-orm";
+import { eq, asc, and, gt, sql, desc } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
@@ -49,7 +49,22 @@ app.get("/", (c) => {
   if (!includeArchived) {
     result = result.filter((ch) => ch.isArchived !== 1);
   }
-  return c.json(result.map(channelToResponse));
+
+  // Batch-fetch last_active_at for all channels
+  const lastActiveRows = db
+    .select({
+      channelId: messages.channelId,
+      lastActiveAt: sql<string>`MAX(${messages.createdAt})`.as("last_active_at"),
+    })
+    .from(messages)
+    .groupBy(messages.channelId)
+    .all();
+  const lastActiveMap = new Map(lastActiveRows.map((r) => [r.channelId, r.lastActiveAt]));
+
+  return c.json(result.map((ch) => ({
+    ...channelToResponse(ch),
+    last_active_at: lastActiveMap.get(ch.id) ?? null,
+  })));
 });
 
 // GET /channels/unread/counts — get unread counts for all channels for a user
@@ -188,7 +203,19 @@ app.get("/:channelId", (c) => {
   if (!channel) {
     return c.json({ detail: "Channel not found" }, 404);
   }
-  return c.json(channelToResponse(channel));
+
+  const db = getDb();
+  // Get last active timestamp for this channel
+  const lastActive = db
+    .select({ lastActiveAt: sql<string>`MAX(${messages.createdAt})` })
+    .from(messages)
+    .where(eq(messages.channelId, channel.id))
+    .get();
+
+  return c.json({
+    ...channelToResponse(channel),
+    last_active_at: lastActive?.lastActiveAt ?? null,
+  });
 });
 
 // GET /channels/:channelId/members — list all members in a channel
