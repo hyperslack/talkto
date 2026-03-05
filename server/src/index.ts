@@ -102,6 +102,35 @@ app.route("/api/features", featuresRoutes);
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
 
+// Daily message activity — returns message counts grouped by date
+app.get("/api/activity/daily", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const days = Math.min(parseInt(c.req.query("days") ?? "30", 10) || 30, 365);
+
+  const rows = db
+    .select({
+      date: sql<string>`date(${messages.createdAt})`.as("date"),
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`date(${messages.createdAt}) >= date('now', '-' || ${days} || ' days')`
+      )
+    )
+    .groupBy(sql`date(${messages.createdAt})`)
+    .orderBy(sql`date(${messages.createdAt})`)
+    .all();
+
+  return c.json({
+    days,
+    activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
+  });
+});
+
 // Search messages across all channels
 app.get("/api/search", (c) => {
   const auth = c.get("auth");
