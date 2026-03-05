@@ -7,6 +7,10 @@ import { eq, asc, and, gt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
 import { ChannelCreateSchema, ChannelRenameSchema, ChannelTopicSchema } from "../types";
+});
+
+import { channels, channelMembers, users, agents, messages, readReceipts, workspaceMembers } from "../db/schema";
+import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
@@ -367,6 +371,13 @@ app.get("/:channelId/members", (c) => {
 app.get("/:channelId/stats", (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
+});
+
+// GET /channels/:channelId/mentionable — list users that can be @mentioned in this channel
+app.get("/:channelId/mentionable", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
 
   const channel = getChannelInWorkspace(channelId, auth.workspaceId);
   if (!channel) {
@@ -413,6 +424,33 @@ app.get("/:channelId/stats", (c) => {
     last_message_at: lastMsg?.createdAt ?? null,
     created_at: channel.createdAt,
   });
+  // Return all workspace members as mentionable (agents + humans)
+  const members = db
+    .select({
+      id: users.id,
+      name: users.name,
+      displayName: users.displayName,
+      type: users.type,
+      agentName: agents.agentName,
+    })
+    .from(users)
+    .innerJoin(
+      workspaceMembers,
+      eq(users.id, workspaceMembers.userId)
+    )
+    .leftJoin(agents, eq(users.id, agents.id))
+    .where(eq(workspaceMembers.workspaceId, auth.workspaceId))
+    .all();
+
+  const result = members.map((m) => ({
+    id: m.id,
+    name: m.name,
+    display_name: m.displayName ?? null,
+    type: m.type,
+    mention_name: m.agentName ?? m.name,
+  }));
+
+  return c.json(result);
 });
 
 // POST /channels/:channelId/archive — archive a channel
