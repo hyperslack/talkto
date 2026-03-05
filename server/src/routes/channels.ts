@@ -49,7 +49,34 @@ app.get("/", (c) => {
   if (!includeArchived) {
     result = result.filter((ch) => ch.isArchived !== 1);
   }
-  return c.json(result.map(channelToResponse));
+
+  // Batch-fetch member counts for all channels
+  const memberCountRows = db
+    .select({
+      channelId: channelMembers.channelId,
+      memberCount: sql<number>`count(*)`.as("member_count"),
+    })
+    .from(channelMembers)
+    .groupBy(channelMembers.channelId)
+    .all();
+  const memberCountMap = new Map(memberCountRows.map((r) => [r.channelId, r.memberCount]));
+
+  // Batch-fetch message counts for all channels
+  const messageCountRows = db
+    .select({
+      channelId: messages.channelId,
+      messageCount: sql<number>`count(*)`.as("message_count"),
+    })
+    .from(messages)
+    .groupBy(messages.channelId)
+    .all();
+  const messageCountMap = new Map(messageCountRows.map((r) => [r.channelId, r.messageCount]));
+
+  return c.json(result.map((ch) => ({
+    ...channelToResponse(ch),
+    member_count: memberCountMap.get(ch.id) ?? 0,
+    message_count: messageCountMap.get(ch.id) ?? 0,
+  })));
 });
 
 // GET /channels/unread/counts — get unread counts for all channels for a user
