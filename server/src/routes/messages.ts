@@ -146,6 +146,58 @@ app.get("/", (c) => {
   return c.json(result);
 });
 
+// GET /channels/:channelId/messages/pinned — list pinned messages
+app.get("/pinned", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const rows = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      senderId: messages.senderId,
+      senderName: sql<string>`COALESCE(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      mentions: messages.mentions,
+      parentId: messages.parentId,
+      isPinned: messages.isPinned,
+      pinnedAt: messages.pinnedAt,
+      pinnedBy: messages.pinnedBy,
+      editedAt: messages.editedAt,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), eq(messages.isPinned, 1)))
+    .orderBy(desc(messages.pinnedAt))
+    .all();
+
+  const result: MessageResponse[] = rows.map((row) => ({
+    id: row.id,
+    channel_id: row.channelId,
+    sender_id: row.senderId,
+    sender_name: row.senderName,
+    sender_type: row.senderType as "human" | "agent",
+    content: row.content,
+    mentions: row.mentions ? JSON.parse(row.mentions) : null,
+    parent_id: row.parentId,
+    is_pinned: true,
+    pinned_at: row.pinnedAt,
+    pinned_by: row.pinnedBy,
+    edited_at: row.editedAt,
+    created_at: row.createdAt,
+  }));
+
+  return c.json(result);
+});
+
 // POST /channels/:channelId/messages
 app.post("/", async (c) => {
   const auth = c.get("auth");
