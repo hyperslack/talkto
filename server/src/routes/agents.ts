@@ -276,6 +276,42 @@ app.get("/:agentName", (c) => {
   return c.json(agentToResponse(agent, ghostCache.get(agent.id) ?? false));
 });
 
+// PATCH /agents/:agentName/task — update agent's current task
+app.patch("/:agentName/task", async (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const agentName = c.req.param("agentName");
+
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, agentName), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) {
+    return c.json({ detail: "Agent not found" }, 404);
+  }
+
+  let body: { current_task?: string | null } = {};
+  try { body = await c.req.json(); } catch { /* empty */ }
+
+  if (!("current_task" in body)) {
+    return c.json({ detail: "Missing 'current_task' field" }, 400);
+  }
+
+  const task = body.current_task ?? null;
+  if (task !== null && task.length > 500) {
+    return c.json({ detail: "current_task must be 500 characters or less" }, 400);
+  }
+
+  db.update(agents)
+    .set({ currentTask: task })
+    .where(eq(agents.id, agent.id))
+    .run();
+
+  const updated = db.select().from(agents).where(eq(agents.id, agent.id)).get()!;
+  return c.json(agentToResponse(updated, ghostCache.get(agent.id) ?? false));
+});
+
 // POST /agents/:agentName/dm — get or create DM channel
 app.post("/:agentName/dm", (c) => {
   const auth = c.get("auth");
