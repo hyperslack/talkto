@@ -48,6 +48,7 @@ import agentsRoutes from "./routes/agents";
 import featuresRoutes from "./routes/features";
 import workspacesRoutes from "./routes/workspaces";
 import authRoutes from "./routes/auth";
+import channelWelcomeRoutes from "./routes/channel-welcome";
 
 // ---------------------------------------------------------------------------
 // Initialize database
@@ -101,6 +102,9 @@ app.route("/api/features", featuresRoutes);
 
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
+
+// Channel welcome messages
+app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
 // Search messages across all channels
 app.get("/api/search", (c) => {
