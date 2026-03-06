@@ -48,6 +48,8 @@ import agentsRoutes from "./routes/agents";
 import featuresRoutes from "./routes/features";
 import workspacesRoutes from "./routes/workspaces";
 import authRoutes from "./routes/auth";
+import scheduledMessagesRoutes from "./routes/scheduled-messages";
+import { startScheduleDelivery, stopScheduleDelivery } from "./routes/scheduled-messages";
 
 // ---------------------------------------------------------------------------
 // Initialize database
@@ -101,6 +103,9 @@ app.route("/api/features", featuresRoutes);
 
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
+
+// Scheduled messages
+app.route("/api/channels/:channelId/messages/schedule", scheduledMessagesRoutes);
 
 // Search messages across all channels
 app.get("/api/search", (c) => {
@@ -273,6 +278,10 @@ const disableServerBootstrap = process.env.TALKTO_DISABLE_SERVER === "1";
 if (!disableServerBootstrap) {
   startLivenessTask();
 }
+});
+
+startLivenessTask();
+startScheduleDelivery();
 
 // ---------------------------------------------------------------------------
 // Reconnect OpenCode MCP clients after server restart
@@ -517,6 +526,7 @@ console.log(`[SERVER] MCP at ${config.mcpUrl} (placeholder)`);
 function gracefulShutdown(signal: string) {
   console.log(`\n[SERVER] Shutting down (${signal})...`);
   stopLivenessTask();
+  stopScheduleDelivery();
   closeDb();
   server?.stop();
   process.exit(0);
