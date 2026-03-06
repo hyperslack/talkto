@@ -50,6 +50,9 @@ import featuresRoutes from "./routes/features";
 import workspacesRoutes from "./routes/workspaces";
 import authRoutes from "./routes/auth";
 import webhooksRoutes from "./routes/webhooks";
+});
+
+import channelWelcomeRoutes from "./routes/channel-welcome";
 
 // ---------------------------------------------------------------------------
 // Initialize database
@@ -141,6 +144,8 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+// Channel welcome messages
+app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
 // Search messages across all channels
 app.get("/api/search", (c) => {
