@@ -300,6 +300,68 @@ app.delete("/:channelId", requireAdmin, (c) => {
   return c.json(deleteChannelGraph(channel));
 });
 
+// POST /channels/:channelId/join — join the current user to a channel
+app.post("/:channelId/join", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+  if (channel.isArchived === 1) return c.json({ detail: "Cannot join archived channel" }, 400);
+
+  const userId = auth.userId;
+  if (!userId) return c.json({ detail: "No authenticated user" }, 401);
+
+  // Check if already a member
+  const existing = db
+    .select()
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)))
+    .get();
+
+  if (existing) {
+    return c.json({ detail: "Already a member" }, 409);
+  }
+
+  const now = new Date().toISOString();
+  db.insert(channelMembers)
+    .values({ channelId, userId, joinedAt: now })
+    .run();
+
+  return c.json({ channel_id: channelId, user_id: userId, joined_at: now }, 201);
+});
+
+// POST /channels/:channelId/leave — remove the current user from a channel
+app.post("/:channelId/leave", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+  if (channel.type === "general") return c.json({ detail: "Cannot leave #general channel" }, 400);
+
+  const userId = auth.userId;
+  if (!userId) return c.json({ detail: "No authenticated user" }, 401);
+
+  const existing = db
+    .select()
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)))
+    .get();
+
+  if (!existing) {
+    return c.json({ detail: "Not a member of this channel" }, 404);
+  }
+
+  db.delete(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)))
+    .run();
+
+  return c.json({ channel_id: channelId, user_id: userId, left: true });
+});
+
 // POST /channels/:channelId/read — mark channel as read for a user
 app.post("/:channelId/read", async (c) => {
   const auth = c.get("auth");
