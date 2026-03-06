@@ -294,11 +294,42 @@ app.patch("/me/status", async (c) => {
       statusEmoji: parsed.data.status_emoji ?? null,
       statusText: parsed.data.status_text ?? null,
     })
+});
+
+// PATCH /users/me/avatar — set or clear avatar URL
+app.patch("/me/avatar", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ detail: "Invalid JSON body" }, 400);
+
+  const { z } = await import("zod");
+  const AvatarSchema = z.object({
+    avatar_url: z.string().url().nullable(),
+  });
+
+  const parsed = AvatarSchema.safeParse(body);
+  if (!parsed.success) return c.json({ detail: parsed.error.message }, 400);
+
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No human user onboarded yet" }, 404);
+
+  db.update(users)
+    .set({ avatarUrl: parsed.data.avatar_url })
     .where(eq(users.id, user.id))
     .run();
 
   const updated = db.select().from(users).where(eq(users.id, user.id)).get()!;
   return c.json(userToResponse(updated));
+});
+
+  return c.json({
+    id: updated.id,
+    name: updated.name,
+    avatar_url: updated.avatarUrl,
+  });
 });
 
 // DELETE /users/me
