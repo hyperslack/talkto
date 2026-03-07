@@ -207,6 +207,43 @@ app.get("/", (c) => {
   return c.json(responses);
 });
 
+// GET /agents/health — aggregated health summary
+app.get("/health", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const allAgents = db
+    .select()
+    .from(agents)
+    .where(eq(agents.workspaceId, auth.workspaceId))
+    .all();
+
+  let online = 0;
+  let offline = 0;
+  let ghost = 0;
+
+  const agentStatuses = allAgents.map((a) => {
+    const isGhost = ghostCache.get(a.id) ?? false;
+    if (isGhost) ghost++;
+    else if (a.status === "online") online++;
+    else offline++;
+
+    return {
+      agent_name: a.agentName,
+      agent_type: a.agentType,
+      status: a.status,
+      is_ghost: isGhost,
+    };
+  });
+
+  return c.json({
+    total: allAgents.length,
+    online,
+    offline,
+    ghost,
+    agents: agentStatuses,
+  });
+});
+
 // GET /agents/:agentName/stats — activity stats for an agent
 app.get("/:agentName/stats", (c) => {
   const auth = c.get("auth");
