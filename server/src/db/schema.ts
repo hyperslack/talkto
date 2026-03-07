@@ -210,6 +210,8 @@ export const users = sqliteTable("users", {
   agentInstructions: text("agent_instructions"),
   email: text("email"), // optional, for cross-workspace identification
   avatarUrl: text("avatar_url"),
+  statusEmoji: text("status_emoji"), // e.g. "🏠", "🎯", "🔴"
+  statusText: text("status_text"), // e.g. "In a meeting", "On vacation"
 });
 
 export const usersRelations = relations(users, ({ one, many }) => ({

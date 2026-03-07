@@ -17,7 +17,7 @@ import {
   featureVotes,
   userSessions,
 } from "../db/schema";
-import { UserOnboardSchema } from "../types";
+import { UserOnboardSchema, UserStatusSchema } from "../types";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
 import { CREATOR_NAME } from "../services/name-generator";
 import type { AppBindings, UserResponse } from "../types";
@@ -33,6 +33,8 @@ function userToResponse(u: typeof users.$inferSelect): UserResponse {
     display_name: u.displayName,
     about: u.about,
     agent_instructions: u.agentInstructions,
+    status_emoji: u.statusEmoji ?? null,
+    status_text: u.statusText ?? null,
   };
 }
 
@@ -216,6 +218,35 @@ app.patch("/me", async (c) => {
       displayName: data.display_name ?? null,
       about: data.about ?? null,
       agentInstructions: data.agent_instructions ?? null,
+    })
+    .where(eq(users.id, user.id))
+    .run();
+
+  const updated = db.select().from(users).where(eq(users.id, user.id)).get()!;
+  return c.json(userToResponse(updated));
+});
+
+// PATCH /users/me/status — set custom status emoji + text
+app.patch("/me/status", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = UserStatusSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+  const db = getDb();
+
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) {
+    return c.json({ detail: "No human user onboarded yet" }, 404);
+  }
+
+  db.update(users)
+    .set({
+      statusEmoji: parsed.data.status_emoji ?? null,
+      statusText: parsed.data.status_text ?? null,
     })
     .where(eq(users.id, user.id))
     .run();

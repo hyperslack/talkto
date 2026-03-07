@@ -21,6 +21,11 @@ export const UserUpdateSchema = z.object({
   about: z.string().optional(),
   agent_instructions: z.string().optional(),
 });
+
+export const UserStatusSchema = z.object({
+  status_emoji: z.string().max(10).optional().nullable(),
+  status_text: z.string().max(100).optional().nullable(),
+});
 export type UserUpdate = z.infer<typeof UserUpdateSchema>;
 
 export interface UserResponse {
