@@ -55,6 +55,11 @@ export function getDb() {
 /**
  * If "messages" table is missing but "messages_new" exists (e.g. migration 5
  * failed after creating messages_new), rename it so the app and seed work.
+ *
+ * Also detects and fixes the self-FK issue where parent_id references
+ * "messages_new" or "messages_repaired" instead of "messages" — a known
+ * SQLite quirk where ALTER TABLE RENAME doesn't update FK references in
+ * the stored DDL in sqlite_master.
  */
 function repairMessagesTable(sqlite: Database) {
   const rows = sqlite
@@ -70,6 +75,49 @@ function repairMessagesTable(sqlite: Database) {
       "CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)"
     );
     sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
+  }
+
+  // Fix broken self-FK: if parent_id references anything other than "messages",
+  // rebuild the table with correct FK.
+  if (hasMessages || (!hasMessages && hasNew)) {
+    const ddl = sqlite
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'")
+      .get() as { sql: string } | undefined;
+    if (ddl?.sql && /REFERENCES\s+(?!messages\()(\w+)\(id\)/i.test(ddl.sql)) {
+      // The FK is broken — rebuild with correct reference
+      sqlite.exec("PRAGMA foreign_keys = OFF");
+      sqlite.exec("BEGIN");
+      try {
+        sqlite.exec(`
+          CREATE TABLE messages_fixed (
+            id TEXT PRIMARY KEY,
+            channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            content TEXT NOT NULL,
+            mentions TEXT,
+            parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+            is_pinned INTEGER NOT NULL DEFAULT 0,
+            pinned_at TEXT,
+            pinned_by TEXT,
+            edited_at TEXT,
+            created_at TEXT NOT NULL
+          )
+        `);
+        sqlite.exec(
+          `INSERT INTO messages_fixed SELECT id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at FROM messages`
+        );
+        sqlite.exec("DROP TABLE messages");
+        sqlite.exec("ALTER TABLE messages_fixed RENAME TO messages");
+        sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)");
+        sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
+        sqlite.exec("COMMIT");
+        console.log("[DB] Repaired messages table self-FK reference");
+      } catch (err) {
+        sqlite.exec("ROLLBACK");
+        console.error("[DB] Failed to repair messages FK:", err);
+      }
+      sqlite.exec("PRAGMA foreign_keys = ON");
+    }
   }
 }
 
