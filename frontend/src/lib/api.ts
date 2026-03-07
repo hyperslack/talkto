@@ -243,6 +243,30 @@ export function pinMessage(channelId: string, messageId: string) {
   );
 }
 
+// ── Bookmarks ──────────────────────────────────────────
+
+export function toggleBookmark(channelId: string, messageId: string) {
+  return request<{ message_id: string; bookmarked: boolean }>(
+    `/channels/${channelId}/messages/${messageId}/bookmark`,
+    { method: "POST" },
+  );
+}
+
+export interface BookmarkedMessage {
+  message_id: string;
+  channel_id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_type: string;
+  content: string;
+  created_at: string;
+  bookmarked_at: string;
+}
+
+export function listBookmarks() {
+  return request<BookmarkedMessage[]>("/bookmarks");
+}
+
 // ── Agents ─────────────────────────────────────────────
 
 export function listAgents() {

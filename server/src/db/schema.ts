@@ -510,3 +510,35 @@ export const messageReactionsRelations = relations(messageReactions, ({ one }) =
     references: [users.id],
   }),
 }));
+
+// ---------------------------------------------------------------------------
+// bookmarks — per-user saved messages
+// ---------------------------------------------------------------------------
+
+export const bookmarks = sqliteTable(
+  "bookmarks",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.messageId] }),
+    index("idx_bookmarks_user").on(table.userId),
+  ]
+);
+
+export const bookmarksRelations = relations(bookmarks, ({ one }) => ({
+  user: one(users, {
+    fields: [bookmarks.userId],
+    references: [users.id],
+  }),
+  message: one(messages, {
+    fields: [bookmarks.messageId],
+    references: [messages.id],
+  }),
+}));
