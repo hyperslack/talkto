@@ -9,13 +9,19 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/app-store";
 import {
+  useChannels,
+  useAgents,
+  useDeleteChannel,
   useMembers,
   useRemoveMember,
+  useUpdateAgent,
+  useDeleteAgent,
   useApiKeys,
   useCreateApiKey,
   useRevokeApiKey,
@@ -27,14 +33,17 @@ import {
   Users,
   KeyRound,
   Link2,
+  Bot,
+  Hash,
   Plus,
   Trash2,
   Copy,
+  Pencil,
   Check,
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ApiKey, ApiKeyCreated, Invite, WorkspaceMember } from "@/lib/types";
+import type { Agent, ApiKey, ApiKeyCreated, Channel, Invite, WorkspaceMember } from "@/lib/types";
 
 interface WorkspaceSettingsProps {
   open: boolean;
@@ -47,6 +56,8 @@ export function WorkspaceSettings({ open, onOpenChange }: WorkspaceSettingsProps
   const isAdmin = role === "admin";
 
   const { data: members } = useMembers(workspaceId);
+  const { data: channels } = useChannels();
+  const { data: agents } = useAgents();
   const { data: apiKeys } = useApiKeys(workspaceId);
   const { data: invites } = useInvites(workspaceId);
 
@@ -56,7 +67,7 @@ export function WorkspaceSettings({ open, onOpenChange }: WorkspaceSettingsProps
         <SheetHeader>
           <SheetTitle className="text-base">Workspace Settings</SheetTitle>
           <SheetDescription>
-            Manage members, API keys, and invite links.
+            Manage members, channels, agents, API keys, and invite links.
           </SheetDescription>
         </SheetHeader>
 
@@ -68,6 +79,20 @@ export function WorkspaceSettings({ open, onOpenChange }: WorkspaceSettingsProps
             <MembersSection
               members={members ?? []}
               workspaceId={workspaceId}
+              isAdmin={isAdmin}
+            />
+
+            <Separator className="opacity-30" />
+
+            <ChannelsSection
+              channels={channels ?? []}
+              isAdmin={isAdmin}
+            />
+
+            <Separator className="opacity-30" />
+
+            <AgentsSection
+              agents={agents ?? []}
               isAdmin={isAdmin}
             />
 
@@ -189,6 +214,309 @@ function MemberRow({
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
+      )}
+    </div>
+  );
+}
+
+// ── Channels Section ─────────────────────────────────────
+
+function ChannelsSection({
+  channels,
+  isAdmin,
+}: {
+  channels: Channel[];
+  isAdmin: boolean;
+}) {
+  const deleteChannel = useDeleteChannel();
+  const activeChannelId = useAppStore((s) => s.activeChannelId);
+  const setActiveChannelId = useAppStore((s) => s.setActiveChannelId);
+  const manageableChannels = channels.filter((channel) => channel.type !== "dm");
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Hash className="h-4 w-4" />
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          Channels
+        </h3>
+        <Badge variant="secondary" className="ml-auto text-[10px]">
+          {manageableChannels.length}
+        </Badge>
+      </div>
+
+      <div className="space-y-1">
+        {manageableChannels.map((channel) => {
+          const isProtected = channel.type === "general";
+          return (
+            <div
+              key={channel.id}
+              className="group flex items-center gap-2 rounded-md border border-border/30 bg-card/50 px-3 py-2 transition-colors hover:border-border/60"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-foreground">
+                  {channel.name}
+                </p>
+                <p className="text-[10px] text-muted-foreground/60">
+                  {channel.type}
+                  {channel.topic ? ` · ${channel.topic}` : ""}
+                </p>
+              </div>
+              {isProtected ? (
+                <Badge variant="secondary" className="text-[10px]">
+                  protected
+                </Badge>
+              ) : null}
+              {isAdmin && !isProtected ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground/40 opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                  title="Delete channel"
+                  disabled={deleteChannel.isPending}
+                  onClick={() =>
+                    deleteChannel.mutate(
+                      { channelId: channel.id },
+                      {
+                        onSuccess: () => {
+                          if (activeChannelId === channel.id) {
+                            setActiveChannelId(null);
+                          }
+                        },
+                      }
+                    )
+                  }
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+            </div>
+          );
+        })}
+
+        {manageableChannels.length === 0 ? (
+          <p className="py-4 text-center text-xs text-muted-foreground/50">
+            No channels found.
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+// ── Agents Section ───────────────────────────────────────
+
+function AgentsSection({
+  agents,
+  isAdmin,
+}: {
+  agents: Agent[];
+  isAdmin: boolean;
+}) {
+  const visibleAgents = agents.filter((agent) => agent.agent_type !== "system");
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Bot className="h-4 w-4" />
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+          Agents
+        </h3>
+        <Badge variant="secondary" className="ml-auto text-[10px]">
+          {visibleAgents.length}
+        </Badge>
+      </div>
+
+      <div className="space-y-2">
+        {visibleAgents.map((agent) => (
+          <AgentAdminRow key={agent.id} agent={agent} isAdmin={isAdmin} />
+        ))}
+
+        {visibleAgents.length === 0 ? (
+          <p className="py-4 text-center text-xs text-muted-foreground/50">
+            No editable agents found.
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function AgentAdminRow({
+  agent,
+  isAdmin,
+}: {
+  agent: Agent;
+  isAdmin: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [description, setDescription] = useState(agent.description ?? "");
+  const [personality, setPersonality] = useState(agent.personality ?? "");
+  const [currentTask, setCurrentTask] = useState(agent.current_task ?? "");
+  const [gender, setGender] = useState<"male" | "female" | "non-binary" | "">(
+    (agent.gender as "male" | "female" | "non-binary" | "") ?? ""
+  );
+  const [agentType, setAgentType] = useState(agent.agent_type);
+  const updateAgent = useUpdateAgent();
+  const deleteAgent = useDeleteAgent();
+
+  const reset = () => {
+    setDescription(agent.description ?? "");
+    setPersonality(agent.personality ?? "");
+    setCurrentTask(agent.current_task ?? "");
+    setGender((agent.gender as "male" | "female" | "non-binary" | "") ?? "");
+    setAgentType(agent.agent_type);
+  };
+
+  return (
+    <div className="rounded-md border border-border/30 bg-card/50 px-3 py-3">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-xs font-medium text-foreground">
+              {agent.agent_name}
+            </p>
+            <Badge variant="secondary" className="text-[10px]">
+              {agent.agent_type}
+            </Badge>
+            {agent.is_ghost ? (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                ghost
+              </Badge>
+            ) : null}
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground/60">
+            {agent.project_name}
+            {agent.provider_session_id ? " · invocable" : " · not invocable"}
+          </p>
+        </div>
+
+        {isAdmin ? (
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              title={editing ? "Cancel edit" : "Edit agent"}
+              onClick={() => {
+                if (editing) reset();
+                setEditing((value) => !value);
+              }}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+              title="Delete agent"
+              disabled={deleteAgent.isPending}
+              onClick={() => deleteAgent.mutate({ agentName: agent.agent_name })}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      {editing ? (
+        <form
+          className="mt-3 space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            updateAgent.mutate(
+              {
+                agentName: agent.agent_name,
+                data: {
+                  description: description || null,
+                  personality: personality || null,
+                  current_task: currentTask || null,
+                  gender: gender || null,
+                  agent_type: agentType as "opencode" | "claude_code" | "codex" | "cursor" | "system",
+                },
+              },
+              {
+                onSuccess: () => {
+                  setEditing(false);
+                },
+              }
+            );
+          }}
+        >
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Description"
+            className="min-h-20 text-xs"
+          />
+          <Input
+            value={personality}
+            onChange={(e) => setPersonality(e.target.value)}
+            placeholder="Personality"
+            className="h-8 text-xs"
+          />
+          <Input
+            value={currentTask}
+            onChange={(e) => setCurrentTask(e.target.value)}
+            placeholder="Current task"
+            className="h-8 text-xs"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              value={agentType}
+              onChange={(e) => setAgentType(e.target.value)}
+              className="h-8 rounded-md border border-input bg-background px-3 text-xs"
+            >
+              <option value="opencode">opencode</option>
+              <option value="claude_code">claude_code</option>
+              <option value="codex">codex</option>
+              <option value="cursor">cursor</option>
+            </select>
+            <select
+              value={gender}
+              onChange={(e) => setGender(e.target.value as "male" | "female" | "non-binary" | "")}
+              className="h-8 rounded-md border border-input bg-background px-3 text-xs"
+            >
+              <option value="">No pronouns</option>
+              <option value="male">he/him</option>
+              <option value="female">she/her</option>
+              <option value="non-binary">they/them</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => {
+                reset();
+                setEditing(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              className="h-7 text-xs"
+              disabled={updateAgent.isPending}
+            >
+              {updateAgent.isPending ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <div className="mt-3 space-y-1">
+          {agent.description ? (
+            <p className="text-[11px] text-muted-foreground">{agent.description}</p>
+          ) : null}
+          {agent.current_task ? (
+            <p className="text-[11px] text-muted-foreground/70">
+              Working on: {agent.current_task}
+            </p>
+          ) : null}
+        </div>
       )}
     </div>
   );

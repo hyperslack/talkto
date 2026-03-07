@@ -81,6 +81,19 @@ export function channelCreatedEvent(opts: {
   };
 }
 
+export function channelDeletedEvent(opts: {
+  channelId: string;
+  channelName: string;
+}): WsEvent {
+  return {
+    type: "channel_deleted",
+    data: {
+      id: opts.channelId,
+      name: opts.channelName,
+    },
+  };
+}
+
 export function agentTypingEvent(
   agentName: string,
   channelId: string,
@@ -107,6 +120,31 @@ export function agentStreamingEvent(
       agent_name: agentName,
       channel_id: channelId,
       delta,
+    },
+  };
+}
+
+export function agentErrorEvent(opts: {
+  agentName: string;
+  channelId: string;
+  message: string;
+  agentType?: string;
+  errorCode?: string;
+  provider?: string;
+  recovery?: string;
+  fatal?: boolean;
+}): WsEvent {
+  return {
+    type: "agent_error",
+    data: {
+      agent_name: opts.agentName,
+      channel_id: opts.channelId,
+      message: opts.message,
+      agent_type: opts.agentType ?? "",
+      error_code: opts.errorCode ?? "agent_error",
+      provider: opts.provider ?? "",
+      recovery: opts.recovery ?? "",
+      fatal: opts.fatal ?? false,
     },
   };
 }
@@ -156,6 +194,44 @@ export function featureUpdateEvent(opts: {
       status: opts.status,
       vote_count: opts.voteCount ?? 0,
       update_type: opts.updateType ?? "created",
+    },
+  };
+}
+
+export function agentUpdatedEvent(opts: {
+  agentId: string;
+  agentName: string;
+  agentType: string;
+  projectName: string;
+  description?: string | null;
+  personality?: string | null;
+  currentTask?: string | null;
+  gender?: string | null;
+}): WsEvent {
+  return {
+    type: "agent_updated",
+    data: {
+      id: opts.agentId,
+      agent_name: opts.agentName,
+      agent_type: opts.agentType,
+      project_name: opts.projectName,
+      description: opts.description ?? null,
+      personality: opts.personality ?? null,
+      current_task: opts.currentTask ?? null,
+      gender: opts.gender ?? null,
+    },
+  };
+}
+
+export function agentDeletedEvent(opts: {
+  agentId: string;
+  agentName: string;
+}): WsEvent {
+  return {
+    type: "agent_deleted",
+    data: {
+      id: opts.agentId,
+      agent_name: opts.agentName,
     },
   };
 }

@@ -10,13 +10,14 @@
  * project-based session matching meaningless and causing identity theft.
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../db";
-import { agents } from "../db/schema";
+import { agents, sessions } from "../db/schema";
 import { isSessionAlive as isOpenCodeSessionAlive } from "../sdk/opencode";
 import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
 import { isSessionAlive as isCursorSessionAlive } from "../sdk/cursor";
+import { agentStatusEvent, broadcastEvent } from "./broadcaster";
 
 // ---------------------------------------------------------------------------
 // Invocation info resolution
@@ -115,6 +116,7 @@ export async function getAgentInvocationInfo(
  */
 export function clearStaleCredentials(agentName: string): void {
   const db = getDb();
+  const now = new Date().toISOString();
   const agent = db
     .select()
     .from(agents)
@@ -122,10 +124,25 @@ export function clearStaleCredentials(agentName: string): void {
     .get();
 
   if (agent) {
+    db.update(sessions)
+      .set({ isActive: 0, endedAt: now })
+      .where(and(eq(sessions.agentId, agent.id), eq(sessions.isActive, 1)))
+      .run();
+
     db.update(agents)
       .set({ serverUrl: null, providerSessionId: null, status: "offline" })
       .where(eq(agents.id, agent.id))
       .run();
+
+    broadcastEvent(
+      agentStatusEvent({
+        agentName,
+        status: "offline",
+        agentType: agent.agentType,
+        projectName: agent.projectName,
+      }),
+      agent.workspaceId
+    );
     console.log(
       `[DISCOVERY] Cleared stale credentials for '${agentName}' — marked offline`
     );

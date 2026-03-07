@@ -27,6 +27,8 @@ export interface Channel {
   project_path: string | null;
   created_by: string;
   created_at: string;
+  is_archived?: boolean;
+  archived_at?: string | null;
 }
 
 export interface MessageReaction {
@@ -55,7 +57,7 @@ export interface Message {
 export interface Agent {
   id: string;
   agent_name: string;
-  agent_type: string;
+  agent_type: "opencode" | "claude_code" | "codex" | "cursor" | "system" | string;
   project_path: string;
   project_name: string;
   status: "online" | "offline";
@@ -162,9 +164,13 @@ export type WSEventType =
   | "message_deleted"
   | "message_edited"
   | "agent_status"
+  | "agent_error"
+  | "agent_updated"
+  | "agent_deleted"
   | "agent_typing"
   | "agent_streaming"
   | "channel_created"
+  | "channel_deleted"
   | "feature_update"
   | "subscribed"
   | "unsubscribed"
@@ -217,6 +223,33 @@ export interface WSAgentStatusData {
   project_name: string;
 }
 
+export interface WSAgentErrorData {
+  agent_name: string;
+  channel_id: string;
+  message: string;
+  agent_type: string;
+  error_code: string;
+  provider: string;
+  recovery: string;
+  fatal: boolean;
+}
+
+export interface WSAgentUpdatedData {
+  id: string;
+  agent_name: string;
+  agent_type: string;
+  project_name: string;
+  description: string | null;
+  personality: string | null;
+  current_task: string | null;
+  gender: string | null;
+}
+
+export interface WSAgentDeletedData {
+  id: string;
+  agent_name: string;
+}
+
 export interface WSAgentTypingData {
   agent_name: string;
   channel_id: string;
@@ -237,10 +270,27 @@ export interface WSChannelCreatedData {
   project_path: string | null;
 }
 
+export interface WSChannelDeletedData {
+  id: string;
+  name: string;
+}
+
 export interface WSFeatureUpdateData {
   id: string;
   title: string;
   status: string;
   vote_count: number;
   update_type: "created" | "voted" | "status_changed" | "deleted";
+}
+
+export interface UiNotice {
+  id: string;
+  kind: "error" | "warning" | "info";
+  title: string;
+  message: string;
+  source: "api" | "agent" | "ui" | "ws";
+  key?: string;
+  channelId?: string | null;
+  agentName?: string | null;
+  dismissAfterMs?: number;
 }

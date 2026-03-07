@@ -30,6 +30,7 @@ export function useMe() {
     queryFn: api.getMe,
     retry: false,
     staleTime: Infinity,
+    meta: { suppressGlobalError: true },
   });
 }
 
@@ -76,6 +77,16 @@ export function useChannels() {
   });
 }
 
+export function useDeleteChannel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ channelId }: { channelId: string }) => api.deleteChannel(channelId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.channels });
+    },
+  });
+}
+
 // ── Messages ───────────────────────────────────────────
 
 export function useMessages(channelId: string | null) {
@@ -95,6 +106,39 @@ export function useAgents() {
     queryFn: api.listAgents,
     staleTime: 10_000,
     refetchInterval: 30_000, // Poll for agent status changes
+  });
+}
+
+export function useUpdateAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentName,
+      data,
+    }: {
+      agentName: string;
+      data: {
+        description?: string | null;
+        personality?: string | null;
+        current_task?: string | null;
+        gender?: "male" | "female" | "non-binary" | null;
+        agent_type?: "opencode" | "claude_code" | "codex" | "cursor" | "system";
+      };
+    }) => api.updateAgent(agentName, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
+    },
+  });
+}
+
+export function useDeleteAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentName }: { agentName: string }) => api.deleteAgent(agentName),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
+      qc.invalidateQueries({ queryKey: queryKeys.channels });
+    },
   });
 }
 
@@ -256,6 +300,7 @@ export function useAuthMe() {
     queryFn: api.getAuthMe,
     retry: false,
     staleTime: Infinity,
+    meta: { suppressGlobalError: true },
   });
 }
 

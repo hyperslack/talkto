@@ -5,7 +5,7 @@
  * This store holds ephemeral UI state and WebSocket-pushed updates.
  */
 import { create } from "zustand";
-import type { AuthInfo, Message, Workspace } from "@/lib/types";
+import type { AuthInfo, Message, UiNotice, Workspace } from "@/lib/types";
 
 function readDarkMode(): boolean {
   try {
@@ -32,55 +32,46 @@ function applyDarkClass(dark: boolean): void {
 }
 
 interface AppState {
-  // ── Onboarding ──
   isOnboarded: boolean;
   setOnboarded: (v: boolean) => void;
 
-  // ── Active channel ──
   activeChannelId: string | null;
   setActiveChannelId: (id: string | null) => void;
 
-  // ── Sidebar ──
   sidebarOpen: boolean;
   toggleSidebar: () => void;
 
-  // ── Real-time messages (optimistic, from WebSocket) ──
-  // These are merged with TanStack Query cache in the message feed component
   realtimeMessages: Message[];
   addRealtimeMessage: (msg: Message) => void;
   removeRealtimeMessage: (msgId: string) => void;
 
-  // ── Agent status updates (from WebSocket) ──
   agentStatuses: Map<string, "online" | "offline">;
   setAgentStatus: (name: string, status: "online" | "offline") => void;
 
-  // ── Typing indicators (from WebSocket) ──
-  typingAgents: Map<string, Set<string>>; // channelId → Set<agent_name>
+  typingAgents: Map<string, Set<string>>;
   setAgentTyping: (channelId: string, agentName: string, isTyping: boolean, error?: string) => void;
 
-  // ── Streaming text (from agent_streaming WebSocket events) ──
-  // channelId → agentName → accumulated text so far
   streamingMessages: Map<string, Map<string, string>>;
   appendStreamingDelta: (channelId: string, agentName: string, delta: string) => void;
   clearStreamingMessage: (channelId: string, agentName: string) => void;
+  clearAgentPresence: (agentName: string) => void;
 
-  // ── Reply-to state ──
   replyToMessage: Message | null;
   setReplyToMessage: (msg: Message | null) => void;
 
-  // ── Invocation errors (transient, auto-clear) ──
   invocationError: { channelId: string; message: string } | null;
   clearInvocationError: () => void;
 
-  // ── Dark mode ──
+  notices: UiNotice[];
+  showNotice: (notice: Omit<UiNotice, "id"> & { id?: string }) => string;
+  dismissNotice: (noticeId: string) => void;
+
   darkMode: boolean;
   toggleDarkMode: () => void;
 
-  // ── Connection status ──
   wsConnected: boolean;
   setWsConnected: (v: boolean) => void;
 
-  // ── Workspace context ──
   activeWorkspaceId: string | null;
   setActiveWorkspaceId: (id: string | null) => void;
   workspaces: Workspace[];
@@ -90,20 +81,16 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  // Onboarding
   isOnboarded: false,
   setOnboarded: (v) => set({ isOnboarded: v }),
 
-  // Active channel
   activeChannelId: null,
   setActiveChannelId: (id) =>
     set({ activeChannelId: id, realtimeMessages: [], replyToMessage: null }),
 
-  // Sidebar
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
 
-  // Real-time messages (capped at 200 to prevent unbounded growth)
   realtimeMessages: [],
   addRealtimeMessage: (msg) =>
     set((s) => {
@@ -115,7 +102,6 @@ export const useAppStore = create<AppState>((set) => ({
       realtimeMessages: s.realtimeMessages.filter((m) => m.id !== msgId),
     })),
 
-  // Agent statuses
   agentStatuses: new Map(),
   setAgentStatus: (name, status) =>
     set((s) => {
@@ -124,7 +110,6 @@ export const useAppStore = create<AppState>((set) => ({
       return { agentStatuses: next };
     }),
 
-  // Typing indicators
   typingAgents: new Map(),
   setAgentTyping: (channelId, agentName, isTyping, error?) =>
     set((s) => {
@@ -146,7 +131,6 @@ export const useAppStore = create<AppState>((set) => ({
       };
     }),
 
-  // Streaming messages
   streamingMessages: new Map(),
   appendStreamingDelta: (channelId, agentName, delta) =>
     set((s) => {
@@ -172,15 +156,50 @@ export const useAppStore = create<AppState>((set) => ({
       }
       return { streamingMessages: next };
     }),
+  clearAgentPresence: (agentName) =>
+    set((s) => {
+      const typingAgents = new Map<string, Set<string>>();
+      for (const [channelId, agents] of s.typingAgents.entries()) {
+        const filtered = new Set(Array.from(agents).filter((name) => name !== agentName));
+        if (filtered.size > 0) {
+          typingAgents.set(channelId, filtered);
+        }
+      }
 
-  // Invocation errors
+      const streamingMessages = new Map<string, Map<string, string>>();
+      for (const [channelId, streams] of s.streamingMessages.entries()) {
+        const filtered = new Map(streams);
+        filtered.delete(agentName);
+        if (filtered.size > 0) {
+          streamingMessages.set(channelId, filtered);
+        }
+      }
+
+      return { typingAgents, streamingMessages };
+    }),
+
   invocationError: null,
   replyToMessage: null,
   setReplyToMessage: (msg) => set({ replyToMessage: msg }),
-
   clearInvocationError: () => set({ invocationError: null }),
 
-  // Dark mode — read initial value from localStorage
+  notices: [],
+  showNotice: (notice) => {
+    const noticeId = notice.id ?? crypto.randomUUID();
+    set((s) => {
+      const next = notice.key
+        ? s.notices.filter((entry) => entry.key !== notice.key)
+        : s.notices.filter((entry) => entry.id !== noticeId);
+      next.push({ ...notice, id: noticeId });
+      return { notices: next.slice(-6) };
+    });
+    return noticeId;
+  },
+  dismissNotice: (noticeId) =>
+    set((s) => ({
+      notices: s.notices.filter((notice) => notice.id !== noticeId),
+    })),
+
   darkMode: readDarkMode(),
   toggleDarkMode: () =>
     set((s) => {
@@ -190,11 +209,9 @@ export const useAppStore = create<AppState>((set) => ({
       return { darkMode: next };
     }),
 
-  // WebSocket
   wsConnected: false,
   setWsConnected: (v) => set({ wsConnected: v }),
 
-  // Workspace context
   activeWorkspaceId: null,
   setActiveWorkspaceId: (id) => set({ activeWorkspaceId: id }),
   workspaces: [],

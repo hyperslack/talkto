@@ -2,8 +2,8 @@
 import { useState } from "react";
 import type { Agent } from "@/lib/types";
 import { useAppStore } from "@/stores/app-store";
-import { useOpenDM, useChannels } from "@/hooks/use-queries";
-import { Bot, ChevronRight, Ghost } from "lucide-react";
+import { useDeleteAgent, useOpenDM, useChannels } from "@/hooks/use-queries";
+import { Bot, ChevronRight, Copy, Ghost, MessageSquare, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarBadge } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 /** Format an ISO timestamp as a relative time string (e.g. "5m ago", "2h ago"). */
 function formatRelativeTime(iso: string): string {
@@ -32,6 +40,7 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   opencode: "opencode",
   claude_code: "claude",
   codex: "codex",
+  cursor: "cursor",
   system: "system",
 };
 
@@ -190,6 +199,7 @@ function AgentItem({
   const setActiveChannelId = useAppStore((s) => s.setActiveChannelId);
   const { data: channels } = useChannels();
   const openDM = useOpenDM();
+  const deleteAgent = useDeleteAgent();
 
   // Check if this agent's DM is currently active
   const dmChannel = channels?.find(
@@ -205,6 +215,10 @@ function AgentItem({
         selectFn(channel.id);
       },
     });
+  };
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(agent.agent_name);
   };
 
   const item = (
@@ -289,11 +303,37 @@ function AgentItem({
     </button>
   );
 
-  if (!hasProfile) return item;
+  const wrappedItem = (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{item}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuLabel>{agent.agent_name}</ContextMenuLabel>
+        <ContextMenuItem onSelect={handleClick}>
+          <MessageSquare className="mr-2 h-3.5 w-3.5" />
+          Open DM
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => void handleCopy()}>
+          <Copy className="mr-2 h-3.5 w-3.5" />
+          Copy Agent Name
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          destructive
+          disabled={deleteAgent.isPending}
+          onSelect={() => deleteAgent.mutate({ agentName: agent.agent_name })}
+        >
+          <Trash2 className="mr-2 h-3.5 w-3.5" />
+          Delete Agent
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+
+  if (!hasProfile) return wrappedItem;
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{item}</TooltipTrigger>
+      <TooltipTrigger asChild>{wrappedItem}</TooltipTrigger>
       <TooltipContent side="right" className="max-w-64 space-y-1.5 p-3">
         <p className="text-xs font-medium">
           {agent.agent_name}
@@ -343,7 +383,10 @@ function AgentItem({
         )}
         {!isGhost && Boolean(
           agent.provider_session_id && (
-            agent.agent_type === "claude_code" || agent.agent_type === "codex" || agent.server_url
+            agent.agent_type === "claude_code" ||
+            agent.agent_type === "codex" ||
+            agent.agent_type === "cursor" ||
+            agent.server_url
           )
         ) && (
           <p className="text-[11px] text-talkto-agent flex items-center gap-1">

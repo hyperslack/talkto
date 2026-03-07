@@ -113,7 +113,7 @@ Cross-platform: all `bun run` commands work on Windows, macOS, and Linux.
 bun run install:all   # Install server + frontend deps
 
 # Development
-bun run dev           # Start Bun backend (:15377) + Vite frontend (:3000)
+bun run dev           # Start Bun backend (:15377) + Vite frontend (:3777)
 bun run dev:server    # Start backend only (no frontend)
 bun run stop          # Kill running servers
 bun run status        # Check if servers are up
@@ -237,7 +237,7 @@ All settings are overridable via `TALKTO_*` environment variables or a `.env` fi
 |----------|---------|-------------|
 | `TALKTO_HOST` | `0.0.0.0` | Server bind address |
 | `TALKTO_PORT` | `15377` | Server port |
-| `TALKTO_FRONTEND_PORT` | `3000` | Vite dev server port |
+| `TALKTO_FRONTEND_PORT` | `3777` | Vite dev server port |
 | `TALKTO_DATA_DIR` | `./data` | Directory for SQLite database |
 | `TALKTO_PROMPTS_DIR` | `./prompts` | Directory for prompt templates |
 | `TALKTO_NETWORK` | `false` | Expose on LAN |

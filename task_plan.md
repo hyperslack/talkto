@@ -1,281 +1,340 @@
-# Task Plan: TalkTo TS Backend — Feature Completion
+﻿# Task Plan: PR #50, #49, #48 Merge-Readiness (2026-03-02)
 
 ## Goal
-Complete the TypeScript backend by wiring up agent invocation via native OpenCode SDK integration, switching the frontend to the TS backend, and updating infrastructure — so TalkTo works end-to-end: human sends a message, agent receives it via SDK, TalkTo posts the agent's response back to the channel.
+Turn draft PRs `#50`, `#49`, and `#48` into a merge-ready, sequenced rollout that supports reliable public sharing and long-term Hub/Node product direction.
+
+## Locked Scope (from GitHub API)
+- PR #50: `feat: Public URL exposure via Cloudflare Tunnel for sharing`
+  - Base: `main`
+  - Head: `feat/cloudflare-tunnel-sharing`
+  - Files: `docker-compose.tunnel.yml`, `scripts/share.sh`
+- PR #49: `feat: Docker Compose setup for local development and testing`
+  - Base: `main`
+  - Head: `feat/docker-compose-setup`
+  - Files: `docker-compose.yml`, `docker/README.md`
+- PR #48: `RFC: Hub-and-Node Relay Architecture for Multi-Machine Agent Collaboration`
+  - Base: `main`
+  - Head: `rfc/hub-and-node-relay-architecture`
+  - Files: `docs/RFC-relay-architecture.md`
 
 ## Current Phase
-Phase 5
-
-## Communication Protocol
-
-**All replies (DMs + @mentions) use SDK-native responses.** TalkTo calls `session.prompt()`, gets the `AssistantMessage` back, and posts it to the channel as the agent. Agents never need `send_message` MCP tool for replies — only for proactive messages.
-
-- **DMs**: `session.prompt()` with the message. No context stuffing — OpenCode session has its own history.
-- **@mentions**: `session.prompt()` with last 5-10 channel messages as context + the triggering message.
-- **Invocation is fire-and-forget** from the HTTP handler's perspective — runs in a background task with typing state broadcasts.
-- **Future**: Active TUI sessions use `tui.appendPrompt()` + `tui.submitPrompt()` with `event.subscribe()` for real-time indicators.
+Phase 2 - dependency and hardening plan defined; implementation pending.
 
 ## Phases
 
-### Phase 1: Frontend Switch & End-to-End Verification
-**Type**: Infrastructure
-**Estimated**: 2-3 hours
-**Files**: `frontend/vite.config.ts`, `server/src/index.ts`
+### Phase 1: Scope verification and dependency mapping
+Status: complete
+- Validate exact PR metadata from GitHub API.
+- Pull patch content for each PR and verify file-level scope.
+- Identify inter-PR dependencies.
 
-Switch the frontend proxy from Python `:8000` to the TS backend. Verify the full UI works: channels, DMs, agent list, features, WebSocket events, MCP registration.
+Exit criteria:
+- Exact three-PR scope confirmed.
 
-- [ ] Update `frontend/vite.config.ts` proxy target to TS backend port
-- [ ] Start TS backend and frontend together
-- [ ] Verify user onboarding flow
-- [ ] Verify channel list loads (including existing channels from shared DB)
-- [ ] Verify agent list loads with correct status/ghost detection
-- [ ] Verify message sending (human -> channel, appears in real-time via WS)
-- [ ] Verify MCP endpoint works (agent register via curl/test)
-- [ ] Verify DM creation via `POST /api/agents/:name/dm`
-- [ ] Verify feature requests + voting
-- [x] Fix any integration bugs
-  - Fixed: MCP singleton -> factory (McpServer.connect() can only be called once per instance)
-- **Status:** complete
+### Phase 2: PR #48 (RFC) decision hardening
+Status: pending
+Files:
+- `docs/RFC-relay-architecture.md`
 
-**Verification Criteria:**
-- [ ] Frontend loads without errors, all panels populated
-- [ ] Sending a message shows it in the feed in real-time (via WebSocket)
-- [ ] Agent list shows online/offline/ghost status correctly
-- [ ] MCP `register` tool returns master_prompt and project_channel
+Tasks:
+- Keep this PR docs-only and decision-focused.
+- Add explicit assumptions/non-goals and rollout gates needed before coding starts.
+- Extract implementation roadmap into actionable backlog items (epics/issues) with owners.
 
-**Exit Criteria:** Frontend works identically against the TS backend as it does against Python, minus agent invocation (messages go in, agents just don't respond yet).
+Exit criteria:
+- RFC is clear, reviewable, and implementation-ready (without mixing code changes).
 
----
+### Phase 3: PR #49 (Docker foundation) hardening
+Status: pending
+Files:
+- `docker-compose.yml`
+- `docker/README.md`
 
-### Phase 2: OpenCode SDK — Client & Discovery
-**Type**: Integration
-**Estimated**: 3-4 hours
-**Files**: `server/package.json`, `server/src/sdk/opencode.ts` (new), `server/src/services/agent-discovery.ts` (new), `server/src/services/agent-registry.ts`
+Tasks:
+- Remove or justify hardcoded `container_name` values to avoid multi-project/container collisions.
+- Validate that tunnel profile remains optional and does not impact default `docker compose up` flow.
+- Ensure docs align with current root README/AGENTS conventions.
+- Add smoke-check commands to docs and (if feasible) CI notes.
 
-Install the OpenCode SDK and build the client management + discovery layer using SDK-native calls.
+Exit criteria:
+- Docker setup is portable, reproducible, and docs are aligned.
 
-- [ ] Install `@opencode-ai/sdk` in `server/`
-- [ ] Create `server/src/sdk/opencode.ts` — OpenCode client manager
-  - [ ] `getClient(serverUrl)` — create or reuse `createOpencodeClient({ baseUrl })` per server URL
-  - [ ] `listSessions(serverUrl)` — wraps `client.session.list()`, returns typed sessions
-  - [ ] `getSession(serverUrl, sessionId)` — wraps `client.session.get()` for liveness check
-  - [ ] `isSessionAlive(serverUrl, sessionId)` — boolean: does session exist in `session.list()`?
-  - [ ] `promptSession(serverUrl, sessionId, text)` — wraps `session.prompt()`, returns response text
-- [ ] Create `server/src/services/agent-discovery.ts` — simplified discovery
-  - [ ] `discoverOpenCodeServer()` — `lsof` to find server port (only when agent didn't provide `server_url`)
-  - [ ] `discoverSession(serverUrl, projectPath)` — `session.list()` + match by project path
-  - [ ] `getAgentInvocationInfo(agentName)` — DB lookup -> verify liveness via SDK -> auto-discover if stale
-  - [ ] `clearStaleCredentials(agentName)` — clear dead session info from DB
-- [ ] Update `agent-registry.ts` — use SDK for liveness checks during ghost detection
-- [ ] Write tests for client manager and discovery (mock SDK calls)
-- **Status:** pending
+### Phase 4: PR #50 (Tunnel sharing UX) hardening
+Status: pending
+Files:
+- `docker-compose.tunnel.yml`
+- `scripts/share.sh`
 
-**Verification Criteria:**
-- [ ] `listSessions()` returns sessions from a running OpenCode instance
-- [ ] `isSessionAlive()` correctly identifies live vs dead sessions
-- [ ] `getAgentInvocationInfo()` returns server_url + session_id for registered agents
-- [ ] Stale credentials are cleared when session is dead
+Tasks:
+- Resolve configuration strategy conflict: profile (`PR #49`) vs override file (`PR #50`) so there is one canonical path.
+- If keeping override file, ensure `talkto` and `cloudflared` are on the same network in override mode.
+- Remove implicit dependency on PR #49 or retarget PR #50 base branch to PR #49.
+- Add Windows-compatible sharing command path (`scripts/share.ps1` or equivalent) to match cross-platform repo expectations.
+- Improve robustness of URL extraction and failure messaging.
 
-**Exit Criteria:** TS backend can discover OpenCode servers, list sessions, verify liveness, and look up invocation info — all via SDK, not raw HTTP.
+Exit criteria:
+- Sharing flow works from a clean `main` checkout (or explicit stacked base) on supported platforms.
 
-**Gotchas:**
-- `createOpencodeClient` needs a `baseUrl` — still need `lsof` for port discovery when agent doesn't provide `server_url`
-- `session.list()` returns ALL sessions — need to filter by project path
-- Cache/reuse clients per `serverUrl` to avoid creating new connections per call
+### Phase 5: Security and rollout validation
+Status: pending
+Tasks:
+- Validate remote access behavior through tunnel (auth expectations, onboarding path, API key usage).
+- Add explicit safe-sharing warnings in docs and script output.
+- Run smoke tests for start/stop and URL retrieval.
+- Final merge sequencing recommendation.
 
----
+Exit criteria:
+- Operational and security behavior is explicit and tested for intended usage.
 
-### Phase 3: OpenCode SDK — Invocation Pipeline
-**Type**: Integration
-**Estimated**: 4-6 hours
-**Files**: `server/src/services/agent-invoker.ts` (new), `server/src/routes/messages.ts`, `server/src/services/message-router.ts`, `server/src/sdk/opencode.ts`
+## Merge Order Recommendation
+1. PR #48 (RFC/docs) first.
+2. PR #49 (Docker foundation).
+3. PR #50 (Tunnel UX), after resolving profile/override dependency.
 
-The core feature — when a message is sent, invoke the target agent via SDK and post the response back.
-
-- [ ] Create `server/src/services/agent-invoker.ts`
-  - [ ] `invokeForMessage(senderName, channelId, channelName, content, mentions)` — the orchestrator:
-    - DM channel (`#dm-{agent_name}`) -> invoke target agent directly
-    - @mentions -> invoke each mentioned agent
-    - Never invoke the sender (prevent self-invocation loops)
-    - Broadcast `agent_typing` events (start/stop/error)
-    - Run in background (fire-and-forget from HTTP handler)
-  - [ ] `invokeAgent(agentName, channelId, channelName, prompt)` — single agent invocation:
-    - Look up invocation info via `getAgentInvocationInfo()`
-    - Call `promptSession(serverUrl, sessionId, prompt)` from `sdk/opencode.ts`
-    - Extract text from `AssistantMessage` response parts
-    - Create message in the channel as the agent (via `message-router`)
-    - Broadcast `new_message` + `agent_typing` (stop)
-  - [ ] `formatChannelPrompt(senderName, channelName, content, recentMessages)` — for @mentions only:
-    - Include last 5-10 channel messages as context
-    - Include the triggering message
-    - Instruct about channel context (not needed for DMs)
-  - [ ] `fetchRecentContext(channelId, limit)` — get last N messages as formatted text
-- [ ] Wire into `routes/messages.ts` POST handler:
-    ```typescript
-    // Fire-and-forget — don't await
-    invokeForMessage(senderName, channelId, channel.name, content, mentions)
-      .catch(err => console.error("[INVOKE] Failed:", err))
-    ```
-- [ ] Wire into `message-router.ts` `sendAgentMessage()` — same pattern for agent-to-agent @mentions
-- [ ] Handle errors:
-  - Agent not reachable -> broadcast `agent_typing` with error message
-  - Session dead -> clear stale creds, attempt discovery, retry once
-  - Timeout -> log and broadcast error
-- [ ] Write tests (mock SDK calls, test DM vs @mention flows)
-- **Status:** pending
-
-**DM Flow (SDK-native reply):**
-```
-Human sends "fix the bug" to #dm-plucky-sparrow
-  -> TalkTo spawns background task
-  -> Broadcasts agent_typing (start)
-  -> session.prompt({ path: { id: sessionId }, body: { parts: [{ text: "fix the bug" }] } })
-  -> SDK blocks until agent responds (30-120s)
-  -> Extracts text from AssistantMessage
-  -> Creates message in #dm-plucky-sparrow as "plucky-sparrow"
-  -> Broadcasts new_message + agent_typing (stop)
-```
-
-**@mention Flow (SDK-native reply with context):**
-```
-Human sends "@plucky-sparrow fix the auth bug" in #project-talkto
-  -> TalkTo spawns background task
-  -> Broadcasts agent_typing (start)
-  -> Fetches last 5-10 messages from #project-talkto
-  -> Builds prompt with channel context + triggering message
-  -> session.prompt({ path: { id: sessionId }, body: { parts: [{ text: contextPrompt }] } })
-  -> Extracts response
-  -> Creates message in #project-talkto as "plucky-sparrow"
-  -> Broadcasts new_message + agent_typing (stop)
-```
-
-**Verification Criteria:**
-- [ ] DM to an agent -> agent receives prompt, TalkTo posts response in DM channel
-- [ ] @mention in channel -> agent receives prompt with context, TalkTo posts response in channel
-- [ ] `agent_typing` events fire correctly (start -> stop, or start -> error)
-- [ ] Self-invocation is prevented
-- [ ] Invocation doesn't block the HTTP response
-- [ ] Dead sessions detected and handled gracefully
-
-**Exit Criteria:** Human sends a message (DM or @mention) via frontend -> OpenCode agent processes it -> TalkTo posts the agent's response -> response appears in frontend. Full conversation loop.
-
-**Gotchas:**
-- `session.prompt()` blocks until the AI finishes (30-120s) — must run in background task
-- Response is `AssistantMessage` with `parts: Part[]` — need to extract text content from parts
-- Agent might produce tool calls, code execution, etc. in the response — we only want the text parts
-- For @mentions with multiple agents, invoke in parallel (each in its own background task)
-- Need a tracked background task pattern for Bun (prevent GC of promises)
-
----
-
-### Phase 4: TUI Integration & Event Subscription
-**Type**: Integration
-**Estimated**: 3-4 hours
-**Files**: `server/src/sdk/opencode.ts`, `server/src/services/agent-invoker.ts`, `server/src/services/broadcaster.ts`
-
-Enhance invocation for active TUI sessions with real-time event-driven indicators.
-
-- [ ] Add TUI detection to `sdk/opencode.ts`:
-  - Determine if a session has an active TUI (investigate SDK — session status? TUI-specific endpoint?)
-  - `isTuiActive(serverUrl, sessionId)` — boolean check
-- [ ] Add TUI invocation to `agent-invoker.ts`:
-  - For active TUI: `tui.appendPrompt({ body: { text } })` + `tui.submitPrompt()`
-  - Fall back to `session.prompt()` if TUI is not active
-  - TUI calls return `boolean` (no response) — need `event.subscribe()` to get the response
-- [ ] Add `event.subscribe()` integration to `sdk/opencode.ts`:
-  - `subscribeToEvents(serverUrl)` — returns async iterable of events
-  - Filter events by session_id to scope to specific agents
-  - Map OpenCode events to TalkTo events:
-    - Agent starts processing -> `agent_typing` (is_typing: true)
-    - Agent produces text -> capture for response extraction
-    - Agent finishes -> `agent_typing` (is_typing: false)
-    - Agent error -> `agent_typing` (is_typing: false, error: message)
-  - Handle SSE reconnection if stream drops
-  - Clean up subscriptions when agents disconnect
-- [ ] Update `agent-invoker.ts` to use event-driven typing indicators for TUI sessions
-- [ ] Write tests for TUI integration and event handling
-- **Status:** pending
-
-**Verification Criteria:**
-- [ ] Active TUI agents see the prompt appear in their terminal
-- [ ] Typing indicators reflect actual processing state (not just invocation start/stop)
-- [ ] SSE reconnection works
-- [ ] Events correctly scoped to the right agent/channel
-
-**Exit Criteria:** Active TUI agents receive prompts naturally in their terminal, and the frontend shows accurate real-time indicators driven by OpenCode events.
-
-**Gotchas:**
-- `tui.appendPrompt` + `tui.submitPrompt` are two calls — race condition if user types between them
-- SSE stream is server-wide — need to filter by session_id
-- Memory leak risk if event subscriptions aren't closed on agent disconnect
-- Need to investigate: what events does `event.subscribe()` actually emit? (types, payload structure)
-
----
-
-### Phase 5: Infrastructure & Documentation
-**Type**: Infrastructure
-**Estimated**: 2-3 hours
-**Files**: `AGENTS.md`, `Makefile`, `server/tests/*.test.ts`, `frontend/vite.config.ts`
-
-- [ ] Update `AGENTS.md`:
-  - Document TS backend architecture and SDK integration
-  - New project structure (server/ directory)
-  - How to start/test TS backend
-  - Communication protocol (SDK-native replies)
-- [ ] Update `Makefile`:
-  - `make dev-ts` — start TS backend + frontend
-  - `make test-ts` — run TS backend tests
-  - Consider switching `make dev` default to TS backend
-- [ ] Add comprehensive tests:
-  - MCP tool integration tests (register -> send_message -> get_messages flow)
-  - Agent discovery tests (mock SDK)
-  - Agent invoker tests (mock SDK, test DM vs @mention, error handling)
-  - WebSocket event tests
-- [ ] Finalize `frontend/vite.config.ts` proxy (permanent switch to TS backend)
-- **Status:** pending
-
-**Verification Criteria:**
-- [ ] `make dev-ts` starts TS backend + frontend
-- [ ] `make test-ts` passes all tests
-- [ ] AGENTS.md accurately describes current architecture
-- [ ] Test coverage: registration, messaging, invocation, discovery
-
-**Exit Criteria:** New developer can clone the repo, read AGENTS.md, run `make dev-ts`, and have a working TalkTo with agent invocation via OpenCode SDK.
-
----
-
-## Key Questions
-1. **TUI detection**: How does the SDK expose whether a session has an active TUI? Session status field? Separate endpoint?
-2. **Event types**: What events does `event.subscribe()` emit? Need to inspect the stream from a live server.
-3. **Multiple OpenCode servers**: Can there be multiple instances? If so, need multi-client management.
-4. **Background task pattern in Bun**: Best approach — plain Promise, tracked `Set<Promise>`, or `queueMicrotask`?
-5. **Response extraction**: How to extract clean text from `AssistantMessage.parts`? Parts can include text, tool calls, code blocks — we only want the text.
-6. **Agent-to-agent @mentions**: When an agent's response (posted by TalkTo) mentions another agent, should that trigger invocation? (Could cause chains)
-
-## Decisions Made
-| Decision | Rationale |
-|----------|-----------|
-| OpenCode SDK first, Codex + Claude later | All current agents are OpenCode. Ship working system first. |
-| SDK-native replies for all invocations | Simpler, more reliable. Agents don't need MCP send_message for replies. |
-| `session.prompt()` for initial implementation | Returns response directly. TUI integration added in Phase 4. |
-| `session.list()` replaces ps/lsof discovery | SDK-native, reliable, cross-platform. |
-| `session_id` required at registration | Eliminates most discovery complexity. Rejection message tells how to get it. |
-| Keep `lsof` for server port discovery only | SDK needs `baseUrl` — still need to find the port if agent didn't provide `server_url`. |
-| Fire-and-forget invocation | Don't block the HTTP response. Background task with typing state broadcasts. |
-| Last 5-10 messages for @mention context | Channel context for agents. DMs don't need it (OpenCode session has history). |
-| No context stuffing for DMs | OpenCode session maintains its own conversation history. |
-| Single TS backend process | REST + MCP + WS in one process. No cross-process HTTP relay needed. |
+## Acceptance Checklist
+- PR #48 remains docs-only and actionably scoped.
+- PR #49 avoids container-name collisions and keeps default flow stable.
+- PR #50 works independently against its base branch or is correctly rebased as a stacked PR.
+- Tunnel documentation includes clear security guidance and stop/cleanup steps.
+- Sharing flow is usable on both Unix-like systems and Windows.
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
-|       | 1       |            |
+| Initial review targeted wrong local branches instead of PR numbers | 1 | Re-scoped to exact PRs `#50/#49/#48` after user clarification. |
+| GitHub CLI unauthenticated (`gh` 401) | 1 | Used GitHub REST API + `.patch` endpoints via `curl` to gather exact metadata and diffs. |
+| Frontend tests in sandbox fail with `spawn EPERM` (unrelated to these PRs) | 1 | Kept as environment limitation; not a blocker for docs/docker planning updates. |
 
-## Notes
-- Update phase status as you progress: pending -> in_progress -> complete
-- Re-read this plan before major decisions
-- Log ALL errors
-- Python backend remains as reference (don't delete it)
-- TS backend shares SQLite database (`data/talkto.db`)
-- All agents currently are `agent_type: "opencode"` — multi-SDK support comes later
-- Total estimated: 14-20 hours across 5 phases
+---
+
+# Task Plan: Cursor Parity / Debug Pass (2026-03-06)
+
+## Goal
+Make the current Cursor integration behave like the other supported providers for registration, invocation, and documentation-driven setup, with special attention to Windows behavior and real Cursor CLI semantics.
+
+## Current Phase
+Phase 1 - implementation underway.
+
+## Phases
+
+### Phase 1: Inspect real Cursor assumptions
+Status: complete
+- Compare `server/src/sdk/cursor.ts` against Claude/Codex/OpenCode paths.
+- Validate local Cursor CLI help and install layout on this machine.
+- Identify mismatches between prompts/docs and real CLI behavior.
+
+Exit criteria:
+- Concrete integration bugs identified from code plus local CLI validation.
+
+### Phase 2: Patch Cursor backend and prompts
+Status: in_progress
+- Fix CLI discovery/override logic for Windows and explicit `CURSOR_CLI_PATH`.
+- Remove invalid hard requirement that `CURSOR_API_KEY` must be present before any prompt attempt.
+- Update Cursor registration guidance to use a resumable chat ID instead of `CURSOR_TRACE_ID`.
+- Add/adjust tests for Cursor-specific MCP and prompt behavior.
+
+Exit criteria:
+- Cursor registration/invocation path matches actual CLI semantics and passes targeted tests.
+
+### Phase 3: Verify and document
+Status: pending
+- Run targeted test suites and typecheck.
+- Update planning files with findings/results.
+- Share org-relevant Cursor integration learnings via TalkTo if feasible.
+
+Exit criteria:
+- Targeted validation passes and final findings are recorded.
+
+---
+
+# Task Plan: Workspace Sharing / Agent Lifecycle Stability (2026-03-07)
+
+## Goal
+Simplify workspace sharing and multi-machine collaboration, add missing deletion/profile-management operations, harden provider detection so agent type does not rely on self-reporting, and implement adjacent stability improvements that reduce operator friction.
+
+## Current Phase
+Phase 5 - validated and documented.
+
+## Phases
+
+### Phase 1: Audit current sharing and lifecycle flows
+Status: complete
+- Inspect current workspace creation/sharing, API key/auth, agent CRUD, and profile update flows.
+- Map user journey for:
+  - local human creating/sharing a workspace
+  - remote human joining a shared workspace
+  - remote/local agents collaborating across machines
+- Identify where current localhost-based links and MCP assumptions break down.
+
+Exit criteria:
+- Concrete architecture/product gaps identified with current implementation references.
+
+### Phase 2: Define target architecture and scope
+Status: complete
+- Decide which parts are product/architecture decisions vs direct code fixes.
+- Resolve immediate questions:
+  - public link model vs localhost-exposed join flow
+  - what should be HTTP/WebSocket vs MCP for cross-machine collaboration
+  - what changes if an agent is deployed remotely
+  - whether MCP notifications are useful or sufficient for agent-to-agent/live updates
+- Choose implementable subset for this pass.
+
+Exit criteria:
+- Clear implementation scope with documented assumptions and deferred questions.
+
+Chosen implementation scope for this pass:
+- Add a public-base-URL override so invite links and MCP URLs stop hardcoding localhost/LAN-only origins.
+- Add delete channel / delete agent APIs and frontend affordances.
+- Add operator-facing agent profile editing.
+- Change provider detection to prefer OpenCode evidence over self-reported `claude_code` when a real OpenCode session/server is discoverable.
+- Ship small adjacent stability/UI fixes discovered during audit.
+
+### Phase 3: Implement operator-facing lifecycle improvements
+Status: complete
+- Add delete-channel support.
+- Add delete-agent support.
+- Add operator editing for agent profiles.
+- Harden provider detection / registration so OpenCode+Claude wrapper cases do not depend on agent self-reporting.
+
+Exit criteria:
+- Core lifecycle/admin actions are available and tested.
+
+### Phase 4: Adjacent stability improvements
+Status: complete
+- Implement one or more high-leverage adjacent fixes discovered during audit.
+- Update docs/prompts/API responses as needed.
+
+Exit criteria:
+- Additional stability improvements are shipped, not just noted.
+
+### Phase 5: Validate and document
+Status: complete
+- Run targeted tests/typecheck.
+- Update planning docs with findings and results.
+- Post important cross-agent/product guidance on TalkTo if appropriate.
+
+Exit criteria:
+- Changes are validated and major decisions are documented.
+
+## Result
+- Added `TALKTO_PUBLIC_BASE_URL` support so generated invite links and advertised MCP URLs can point at a real public origin instead of localhost/LAN guesses.
+- Added admin REST operations for deleting channels and deleting agents, including cleanup of dependent DM channels and channel/message graph data.
+- Added admin agent-profile editing in the workspace settings UI, including manual correction of agent provider type metadata.
+- Hardened MCP registration so OpenCode evidence wins over bad `claude_code` self-reporting, while still respecting explicit Codex/Cursor registrations.
+- Added live invalidation events for `channel_deleted`, `agent_deleted`, and `agent_updated`, plus Cursor invocability/UI parity fixes.
+
+## Validation
+- `bun run typecheck` ✅
+- `bun test server/tests/mcp.test.ts` ✅
+- `bun test server/tests/api.test.ts` ✅
+- `cd frontend && bun run test` ✅
+- `cd frontend && bun run build` ✅
+
+---
+
+# Task Plan: Context Menus / Test DB Isolation / Messaging Gaps (2026-03-07)
+
+## Goal
+Add right-click operator actions for project channels and agents, ensure integration tests never write into the real product database, and assess nearby product gaps such as image paste/forward support.
+
+## Current Phase
+Phase 4 - implemented and validated.
+
+## Phases
+
+### Phase 1: Audit current UI and test boot path
+Status: complete
+- Inspect sidebar channel and agent rendering.
+- Inspect server integration tests and server bootstrap side effects.
+- Inspect current message schema and frontend rendering for attachment support.
+
+Exit criteria:
+- Clear map of where context-menu hooks, test DB leakage, and media limitations live.
+
+### Phase 2: Implement operator context menus
+Status: complete
+- Add shadcn/Radix context menu primitive to the frontend UI layer.
+- Add project-channel right-click actions.
+- Add agent right-click actions.
+
+Exit criteria:
+- Operators can right-click project channels and agents for destructive or quick actions.
+
+### Phase 3: Isolate integration tests from product state
+Status: complete
+- Force integration suites onto temp databases.
+- Stop `server/src/index.ts` from binding a real port during tests.
+- Fix tests that were implicitly relying on a pre-existing onboarded human user.
+
+Exit criteria:
+- Combined integration test runs do not touch the real product DB and do not require a live server socket.
+
+### Phase 4: Validate and document
+Status: complete
+- Run targeted server test suites together.
+- Run frontend tests and production build.
+- Record deferred product gaps discovered during the audit.
+
+Exit criteria:
+- All touched paths are validated and findings are documented.
+
+## Result
+- Added shared `ContextMenu` UI primitives and right-click actions for project channels and agents.
+- Added isolated temp-db bootstrap for integration tests and disabled live server binding during test imports.
+- Fixed API integration tests to onboard their own admin user instead of depending on ambient product data.
+- Assessed image paste/forward support and confirmed it is a separate attachment/storage feature, not a small UI-only change.
+
+## Validation
+- `bun run typecheck` ✅
+- `bun test server/tests/api.test.ts server/tests/auth.test.ts server/tests/mcp.test.ts server/tests/messages-write.test.ts server/tests/ownership.test.ts server/tests/where-chaining.test.ts` ✅
+- `cd frontend && bun run test` ✅
+- `cd frontend && bun run build` ✅
+## Task Plan: Claude Integration Assessment (2026-03-07)
+
+## Goal
+Determine why the Claude Code integration is failing in TalkTo by comparing the current server-side wrapper and invocation flow against the actual Claude CLI/SDK behavior on this machine, then identify the concrete breakpoints and any required fixes or setup changes.
+
+## Current Phase
+Phase 1 - code and environment audit underway.
+
+## Phases
+
+### Phase 1: Gather failure evidence
+Status: in_progress
+- Inspect Claude-related backend code paths.
+- Extract the provided `Log talkto.docx` contents.
+- Validate local Claude CLI presence and shape on this machine.
+
+Exit criteria:
+- Concrete failure symptoms and environment facts captured.
+
+### Phase 2: Compare implementation with real Claude behavior
+Status: pending
+- Inspect `server/src/sdk/claude.ts`, registration flow, and invoker usage.
+- Use the local Claude CLI and installed SDK package to validate expected invocation semantics.
+- Identify mismatches between TalkTo assumptions and the current Claude tooling.
+
+Exit criteria:
+- Root cause candidates narrowed to code bug, setup issue, or both.
+
+### Phase 3: Validate and summarize
+Status: pending
+- Run focused repro/verification commands where feasible.
+- Record findings and any required remediation.
+- Post org-relevant Claude integration guidance to TalkTo if feasible.
+
+Exit criteria:
+- Assessment is complete and actionable.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| PowerShell profile scripts are blocked in this environment and add noisy output to shell reads | 1 | Switched investigation commands to `login:false` / `-NoProfile` where useful. |
+| Claude CLI sandboxed health checks failed with `uv_spawn 'reg' EPERM` | 1 | Re-ran the relevant `claude` commands outside the sandbox for accurate environment validation. |
+
+## Result
+- Claude invocation code was patched to pass the SDK-required `allowDangerouslySkipPermissions: true` flag alongside `permissionMode: "bypassPermissions"`.
+- Claude prompt failures now mark the session dead locally instead of leaving stale "alive" state behind.
+- Claude registration guidance now forbids PID fallbacks and tells agents to use a real Claude session ID only.
+- MCP registration now rejects obviously invalid numeric Claude session IDs.
+- Validation passed for `server/tests/claude.test.ts`, `server/tests/mcp.test.ts`, and `bun run typecheck`.

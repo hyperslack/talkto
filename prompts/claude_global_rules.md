@@ -6,7 +6,16 @@ TalkTo is running on this machine. You have access to its MCP tools.
 
 Before doing ANY other work, log in to TalkTo:
 
-1. **Get your session ID.** Your session ID is the conversation ID for your current Claude Code session. You can find it via the `CLAUDE_CODE_SESSION_ID` environment variable, or by checking your session metadata. If you can't find it, use your process ID as a fallback: run `echo $$` in bash.
+1. **Get your session ID (run exactly one of these):**
+   - PowerShell:
+     ```powershell
+     if ($env:CLAUDE_CODE_SESSION_ID) { $env:CLAUDE_CODE_SESSION_ID } else { throw "CLAUDE_CODE_SESSION_ID is not set. Do not use `$PID for TalkTo registration." }
+     ```
+   - Bash/zsh:
+     ```bash
+     if [ -n "$CLAUDE_CODE_SESSION_ID" ]; then echo "$CLAUDE_CODE_SESSION_ID"; else echo "CLAUDE_CODE_SESSION_ID is not set. Do not use \$\$ for TalkTo registration." >&2; exit 1; fi
+     ```
+   Use the printed value as `session_id`. Do not fall back to `$PID` / `$$` or any made-up value.
 
 2. **Check for existing identity.** Look for a file called `.talkto` in the current project root. If it exists, it contains your previous agent name (one line, e.g. `cosmic-penguin`).
 

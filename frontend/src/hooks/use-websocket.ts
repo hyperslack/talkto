@@ -11,9 +11,12 @@ import { useAppStore } from "@/stores/app-store";
 import { queryKeys } from "@/hooks/use-queries";
 import type {
   WSEvent,
+  WSAgentDeletedData,
+  WSAgentErrorData,
   WSNewMessageData,
   WSMessageDeletedData,
   WSAgentStatusData,
+  WSChannelDeletedData,
   WSAgentTypingData,
   WSAgentStreamingData,
 } from "@/lib/types";
@@ -37,7 +40,10 @@ export function useWebSocket(enabled: boolean = true) {
   const setAgentTyping = useAppStore((s) => s.setAgentTyping);
   const appendStreamingDelta = useAppStore((s) => s.appendStreamingDelta);
   const clearStreamingMessage = useAppStore((s) => s.clearStreamingMessage);
+  const clearAgentPresence = useAppStore((s) => s.clearAgentPresence);
   const setWsConnected = useAppStore((s) => s.setWsConnected);
+  const activeChannelId = useAppStore((s) => s.activeChannelId);
+  const setActiveChannelId = useAppStore((s) => s.setActiveChannelId);
 
   // Keep a ref to the latest queryClient so the WS handlers always use
   // the current one without needing it in dependency arrays.
@@ -94,7 +100,46 @@ export function useWebSocket(enabled: boolean = true) {
         case "agent_status": {
           const data = event.data as WSAgentStatusData;
           setAgentStatus(data.agent_name, data.status);
+          if (data.status === "offline") {
+            clearAgentPresence(data.agent_name);
+          }
           queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+          break;
+        }
+
+        case "agent_error": {
+          const data = event.data as WSAgentErrorData;
+          clearAgentPresence(data.agent_name);
+          useAppStore.getState().showNotice({
+            key: `agent:${data.agent_name}:${data.error_code}`,
+            kind: data.fatal ? "error" : "warning",
+            title: `${data.agent_name} needs attention`,
+            message: data.message,
+            source: "agent",
+            channelId: data.channel_id,
+            agentName: data.agent_name,
+            dismissAfterMs: data.fatal ? 10000 : 8000,
+          });
+          break;
+        }
+
+        case "agent_updated": {
+          queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+          break;
+        }
+
+        case "agent_deleted": {
+          const data = event.data as WSAgentDeletedData;
+          clearAgentPresence(data.agent_name);
+          queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+          queryClient.invalidateQueries({ queryKey: queryKeys.channels });
+          if (activeChannelId) {
+            const dmQuery = queryClient.getQueryData<Array<{ id: string; name: string }>>(queryKeys.channels);
+            const activeChannel = dmQuery?.find((channel) => channel.id === activeChannelId);
+            if (activeChannel?.name === `#dm-${data.agent_name}`) {
+              setActiveChannelId(null);
+            }
+          }
           break;
         }
 
@@ -128,6 +173,15 @@ export function useWebSocket(enabled: boolean = true) {
           break;
         }
 
+        case "channel_deleted": {
+          const data = event.data as WSChannelDeletedData;
+          queryClient.invalidateQueries({ queryKey: queryKeys.channels });
+          if (activeChannelId === data.id) {
+            setActiveChannelId(null);
+          }
+          break;
+        }
+
         case "feature_update": {
           queryClient.invalidateQueries({ queryKey: ["features"] });
           break;
@@ -137,7 +191,17 @@ export function useWebSocket(enabled: boolean = true) {
           break;
       }
     },
-    [addRealtimeMessage, removeRealtimeMessage, setAgentStatus, setAgentTyping, appendStreamingDelta, clearStreamingMessage],
+    [
+      activeChannelId,
+      addRealtimeMessage,
+      appendStreamingDelta,
+      clearAgentPresence,
+      clearStreamingMessage,
+      removeRealtimeMessage,
+      setActiveChannelId,
+      setAgentStatus,
+      setAgentTyping,
+    ],
   );
 
   // Keep refs so the WS handlers always use the latest versions without
@@ -155,6 +219,7 @@ export function useWebSocket(enabled: boolean = true) {
 
     ws.onopen = () => {
       setWsConnected(true);
+      useAppStore.getState().dismissNotice("ws-disconnected");
 
       // Flush any subscriptions that were queued before the socket was open
       if (pendingSubscriptions.current.length > 0) {
@@ -182,10 +247,19 @@ export function useWebSocket(enabled: boolean = true) {
     ws.onclose = () => {
       setWsConnected(false);
       if (heartbeatTimer.current) clearInterval(heartbeatTimer.current);
-      // Auto-reconnect (only if still mounted)
-      if (mountedRef.current) {
-        reconnectTimer.current = setTimeout(() => connectRef.current?.(), RECONNECT_DELAY);
+      if (!mountedRef.current) {
+        return;
       }
+      useAppStore.getState().showNotice({
+        id: "ws-disconnected",
+        key: "ws-disconnected",
+        kind: "warning",
+        title: "Connection lost",
+        message: "Real-time updates are temporarily unavailable. TalkTo is reconnecting.",
+        source: "ws",
+      });
+      // Auto-reconnect (only if still mounted)
+      reconnectTimer.current = setTimeout(() => connectRef.current?.(), RECONNECT_DELAY);
     };
 
     ws.onerror = () => {

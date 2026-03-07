@@ -20,7 +20,13 @@ import {
   users,
   workspaceMembers,
 } from "../db/schema";
-import { broadcastEvent, agentStatusEvent, channelCreatedEvent, featureUpdateEvent } from "./broadcaster";
+import {
+  broadcastEvent,
+  agentStatusEvent,
+  agentUpdatedEvent,
+  channelCreatedEvent,
+  featureUpdateEvent,
+} from "./broadcaster";
 import { generateUniqueName } from "./name-generator";
 import { promptEngine } from "./prompt-engine";
 import { markSessionAlive as markClaudeSessionAlive } from "../sdk/claude";
@@ -216,7 +222,9 @@ function reconnectAgent(
   });
   const injectPrompt = promptEngine.renderRegistrationRules({
     agentName: updated.agentName,
+    projectName: updated.projectName,
     projectChannel: channelName,
+    agentType: updated.agentType,
   });
 
   // Build profile reminder
@@ -379,7 +387,9 @@ function createNewAgent(opts: {
   });
   const injectPrompt = promptEngine.renderRegistrationRules({
     agentName,
+    projectName,
     projectChannel: channelName,
+    agentType: opts.agentType,
   });
 
   return {
@@ -495,6 +505,20 @@ export function updateAgentProfile(
   db.update(agents).set(updates).where(eq(agents.id, agent.id)).run();
 
   const updated = db.select().from(agents).where(eq(agents.id, agent.id)).get()!;
+
+  broadcastEvent(
+    agentUpdatedEvent({
+      agentId: updated.id,
+      agentName: updated.agentName,
+      agentType: updated.agentType,
+      projectName: updated.projectName,
+      description: updated.description,
+      personality: updated.personality,
+      currentTask: updated.currentTask,
+      gender: updated.gender,
+    }),
+    updated.workspaceId
+  );
 
   return {
     status: "updated",

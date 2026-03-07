@@ -6,18 +6,112 @@ import type { Agent, ApiKey, ApiKeyCreated, AuthInfo, Channel, Feature, Invite, 
 
 const BASE = "/api";
 
+interface ApiErrorPayload {
+  error?: unknown;
+  code?: unknown;
+  hint?: unknown;
+  retryable?: unknown;
+}
+
+export class ApiError extends Error {
+  status: number;
+  code: string | null;
+  hint: string | null;
+  retryable: boolean;
+  body: string | null;
+
+  constructor(message: string, opts: {
+    status: number;
+    code?: string | null;
+    hint?: string | null;
+    retryable?: boolean;
+    body?: string | null;
+  }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = opts.status;
+    this.code = opts.code ?? null;
+    this.hint = opts.hint ?? null;
+    this.retryable = opts.retryable ?? opts.status >= 500;
+    this.body = opts.body ?? null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function extractMessage(payload: unknown, fallback: string): string {
+  if (typeof payload === "string" && payload.trim()) return payload;
+  if (isRecord(payload)) {
+    if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
+    if (typeof payload.error === "string" && payload.error.trim()) return payload.error;
+    try {
+      return JSON.stringify(payload);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+async function buildApiError(res: Response): Promise<ApiError> {
+  const contentType = res.headers.get("content-type") ?? "";
+  const rawBody = await res.text();
+  let payload: ApiErrorPayload | undefined;
+
+  if (contentType.includes("application/json") && rawBody) {
+    try {
+      payload = JSON.parse(rawBody) as ApiErrorPayload;
+    } catch {
+      payload = undefined;
+    }
+  }
+
+  const fallback = rawBody || `Request failed with status ${res.status}`;
+  return new ApiError(extractMessage(payload?.error ?? payload, fallback), {
+    status: res.status,
+    code: typeof payload?.code === "string" ? payload.code : null,
+    hint: typeof payload?.hint === "string" ? payload.hint : null,
+    retryable: typeof payload?.retryable === "boolean" ? payload.retryable : res.status >= 500,
+    body: rawBody || null,
+  });
+}
+
+export function normalizeError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  if (error instanceof Error) {
+    return new ApiError(error.message || "Request failed", {
+      status: 0,
+      code: "network_error",
+      hint: "Check that the TalkTo server is running and your connection is stable.",
+      retryable: true,
+    });
+  }
+  return new ApiError("Request failed", {
+    status: 0,
+    code: "unknown_error",
+    hint: "Try again. If the problem keeps happening, reload TalkTo.",
+    retryable: true,
+  });
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...init?.headers },
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...init?.headers },
+      ...init,
+    });
+  } catch (error) {
+    throw normalizeError(error);
+  }
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+    throw await buildApiError(res);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -57,6 +151,12 @@ export function createChannel(name: string) {
   return request<Channel>("/channels", {
     method: "POST",
     body: JSON.stringify({ name }),
+  });
+}
+
+export function deleteChannel(channelId: string) {
+  return request<{ deleted: boolean; id: string; name: string }>(`/channels/${channelId}`, {
+    method: "DELETE",
   });
 }
 
@@ -145,6 +245,36 @@ export function pinMessage(channelId: string, messageId: string) {
 
 export function listAgents() {
   return request<Agent[]>("/agents");
+}
+
+export function updateAgent(
+  agentName: string,
+  data: {
+    description?: string | null;
+    personality?: string | null;
+    current_task?: string | null;
+    gender?: "male" | "female" | "non-binary" | null;
+    agent_type?: "opencode" | "claude_code" | "codex" | "cursor" | "system";
+  },
+) {
+  return request<{
+    status: string;
+    agent_name: string;
+    agent_type: string;
+    description: string | null;
+    personality: string | null;
+    current_task: string | null;
+    gender: string | null;
+  }>(`/agents/${agentName}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteAgent(agentName: string) {
+  return request<{ deleted: boolean; id: string; agent_name: string }>(`/agents/${agentName}`, {
+    method: "DELETE",
+  });
 }
 
 export function getOrCreateDM(agentName: string) {

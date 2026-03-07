@@ -8,6 +8,8 @@ import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
+import { requireAdmin } from "../middleware/auth";
+import { deleteChannelGraph } from "../services/admin-manager";
 
 const app = new Hono<AppBindings>();
 
@@ -282,6 +284,20 @@ app.post("/:channelId/unarchive", (c) => {
 
   const updated = db.select().from(channels).where(eq(channels.id, channelId)).get()!;
   return c.json(channelToResponse(updated));
+});
+
+// DELETE /channels/:channelId — permanently delete a channel and its message graph
+app.delete("/:channelId", requireAdmin, (c) => {
+  const auth = c.get("auth");
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+  if (channel.type === "general") {
+    return c.json({ detail: "Cannot delete the #general channel" }, 400);
+  }
+
+  return c.json(deleteChannelGraph(channel));
 });
 
 // POST /channels/:channelId/read — mark channel as read for a user

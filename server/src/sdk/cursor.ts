@@ -12,7 +12,7 @@
  *
  * NDJSON event types: system(init) → user → assistant(deltas) → tool_call → result
  *
- * Auth: CURSOR_API_KEY env var or --api-key flag (from Cursor Dashboard > Integrations).
+ * Auth: stored `agent login` session or CURSOR_API_KEY env var / --api-key flag.
  *
  * Key characteristics:
  * - Subprocess-based (same model as Claude Code and Codex CLI)
@@ -20,7 +20,7 @@
  * - Streaming text deltas via --stream-partial-output
  * - No server URL — CLI is spawned locally
  * - Session liveness tracked via in-process Set (cleared on TalkTo restart)
- * - Graceful fallback: if CLI not found or API key not set, returns null
+ * - Graceful fallback: if CLI/auth is unavailable, returns null with diagnostics
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -139,6 +139,76 @@ export function parseCursorEvent(line: string): CursorEvent | null {
 /** Cached CLI path after first successful discovery. */
 let cachedCliPath: { command: string; args: string[] } | null = null;
 
+function inferCursorCliArgs(command: string): string[] {
+  const base = path.basename(command).toLowerCase();
+  return base.startsWith("cursor") && !base.startsWith("cursor-agent")
+    ? ["agent"]
+    : [];
+}
+
+function probeCliCandidate(
+  command: string,
+  args: string[] = inferCursorCliArgs(command)
+): { command: string; args: string[] } | null {
+  try {
+    const check = spawnSync(command, [...args, "--version"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    if (check.status === 0) {
+      return { command, args };
+    }
+  } catch {
+    // Ignore invalid candidates and keep searching.
+  }
+  return null;
+}
+
+function findCliOnPath(binary: "agent" | "cursor"): { command: string; args: string[] } | null {
+  const result = spawnSync(
+    process.platform === "win32" ? "where" : "which",
+    [binary],
+    { encoding: "utf8", timeout: 5000 }
+  );
+  if (result.status !== 0 || !result.stdout.trim()) {
+    return null;
+  }
+
+  const candidates = result.stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    const resolved = probeCliCandidate(candidate);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+function getCursorInvocationError(stderrOutput: string, exitCode: number | null): string | null {
+  const stderr = stderrOutput.trim();
+  if (stderr) {
+    if (/authentication required/i.test(stderr)) {
+      return "Cursor authentication required. Run `agent login` or set CURSOR_API_KEY.";
+    }
+    if (/not logged in/i.test(stderr)) {
+      return "Cursor is not authenticated. Run `agent login` or set CURSOR_API_KEY.";
+    }
+    return stderr;
+  }
+
+  if (exitCode && exitCode !== 0) {
+    return `Cursor CLI exited with code ${exitCode}.`;
+  }
+
+  return null;
+}
+
 /**
  * Discover the Cursor CLI binary.
  *
@@ -157,35 +227,30 @@ export function findCursorCli(): { command: string; args: string[] } | null {
 
   // 1. Explicit override
   if (config.cursorCliPath) {
-    cachedCliPath = { command: config.cursorCliPath, args: [] };
-    return cachedCliPath;
+    const explicit = probeCliCandidate(config.cursorCliPath);
+    if (explicit) {
+      cachedCliPath = explicit;
+      return cachedCliPath;
+    }
+    console.warn(`[CURSOR] CURSOR_CLI_PATH is set but not usable: ${config.cursorCliPath}`);
   }
 
   // 2. Standalone `agent` in PATH
-  const agentResult = spawnSync(
-    process.platform === "win32" ? "where" : "which",
-    ["agent"],
-    { encoding: "utf8", timeout: 5000 }
-  );
-  if (agentResult.status === 0 && agentResult.stdout.trim()) {
-    const agentPath = agentResult.stdout.trim().split(/\r?\n/)[0];
-    cachedCliPath = { command: agentPath, args: [] };
-    console.log(`[CURSOR] Found standalone CLI: ${agentPath}`);
+  const standaloneAgent = findCliOnPath("agent");
+  if (standaloneAgent) {
+    cachedCliPath = standaloneAgent;
+    console.log(`[CURSOR] Found standalone CLI: ${standaloneAgent.command}`);
     return cachedCliPath;
   }
 
   // 3. Desktop `cursor` in PATH (with `agent` subcommand)
-  const cursorResult = spawnSync(
-    process.platform === "win32" ? "where" : "which",
-    ["cursor"],
-    { encoding: "utf8", timeout: 5000 }
-  );
-  if (cursorResult.status === 0 && cursorResult.stdout.trim()) {
-    const cursorPath = cursorResult.stdout.trim().split(/\r?\n/)[0];
-    // Note: `cursor agent` from the desktop app may not support -p in all versions.
-    // We try it anyway — the invocation will fail gracefully if unsupported.
-    cachedCliPath = { command: cursorPath, args: ["agent"] };
-    console.log(`[CURSOR] Found desktop CLI: ${cursorPath} (using 'cursor agent' subcommand)`);
+  const desktopCursor = findCliOnPath("cursor");
+  if (desktopCursor) {
+    cachedCliPath = desktopCursor;
+    console.log(
+      `[CURSOR] Found desktop CLI: ${desktopCursor.command} ${desktopCursor.args.join(" ")}`
+        .trim()
+    );
     return cachedCliPath;
   }
 
@@ -195,6 +260,8 @@ export function findCursorCli(): { command: string; args: string[] } | null {
 
   if (process.platform === "win32") {
     candidates.push(
+      { command: path.join(home, "AppData", "Local", "cursor-agent", "agent.cmd"), args: [] },
+      { command: path.join(home, "AppData", "Local", "cursor-agent", "cursor-agent.cmd"), args: [] },
       { command: path.join(home, ".cursor", "bin", "agent.exe"), args: [] },
       { command: path.join(home, ".local", "bin", "agent.exe"), args: [] },
       { command: path.join(home, "AppData", "Local", "Programs", "cursor", "resources", "app", "bin", "cursor.cmd"), args: ["agent"] },
@@ -213,18 +280,11 @@ export function findCursorCli(): { command: string; args: string[] } | null {
   }
 
   for (const candidate of candidates) {
-    try {
-      const check = spawnSync(candidate.command, [...candidate.args, "--version"], {
-        encoding: "utf8",
-        timeout: 5000,
-      });
-      if (check.status === 0 && check.stdout.trim()) {
-        cachedCliPath = candidate;
-        console.log(`[CURSOR] Found CLI at: ${candidate.command} ${candidate.args.join(" ")}`.trim());
-        return cachedCliPath;
-      }
-    } catch {
-      // Not found at this location — try next
+    const resolved = probeCliCandidate(candidate.command, candidate.args);
+    if (resolved) {
+      cachedCliPath = resolved;
+      console.log(`[CURSOR] Found CLI at: ${candidate.command} ${candidate.args.join(" ")}`.trim());
+      return cachedCliPath;
     }
   }
 
@@ -305,11 +365,6 @@ export async function promptSession(
     return null;
   }
 
-  if (!config.cursorApiKey) {
-    console.error("[CURSOR] Cannot prompt: CURSOR_API_KEY not set");
-    return null;
-  }
-
   busySessions.add(sessionId);
 
   try {
@@ -337,6 +392,7 @@ export async function promptSession(
 
       let result: { text: string; cost: number; tokens: { input: number; output: number } } | null = null;
       let stderrOutput = "";
+      let exitCode: number | null = null;
 
       // Collect stderr for error reporting
       child.stderr?.on("data", (chunk: Buffer) => {
@@ -369,7 +425,10 @@ export async function promptSession(
 
       // Wait for process to exit
       await new Promise<void>((resolve) => {
-        child.on("close", () => resolve());
+        child.on("close", (code) => {
+          exitCode = code;
+          resolve();
+        });
         child.on("error", () => resolve());
       });
 
@@ -379,6 +438,11 @@ export async function promptSession(
 
       if (result) {
         markSessionAlive(sessionId);
+      } else {
+        const errorMsg = getCursorInvocationError(stderrOutput, exitCode);
+        if (errorMsg) {
+          console.error(`[CURSOR] Session ${sessionId} failed: ${errorMsg}`);
+        }
       }
 
       return result;
@@ -426,13 +490,6 @@ export async function promptSessionWithEvents(
     return null;
   }
 
-  if (!config.cursorApiKey) {
-    console.error("[CURSOR] Cannot prompt: CURSOR_API_KEY not set");
-    callbacks.onError?.("CURSOR_API_KEY not set. Generate one at Cursor Dashboard > Integrations > User API Keys");
-    callbacks.onComplete?.();
-    return null;
-  }
-
   busySessions.add(sessionId);
 
   try {
@@ -461,6 +518,8 @@ export async function promptSessionWithEvents(
       let result: { text: string; cost: number; tokens: { input: number; output: number } } | null = null;
       let typingStarted = false;
       let stderrOutput = "";
+      let exitCode: number | null = null;
+      let completed = false;
 
       child.stderr?.on("data", (chunk: Buffer) => {
         stderrOutput += chunk.toString();
@@ -511,6 +570,7 @@ export async function promptSessionWithEvents(
               console.error(`[CURSOR] Session ${sessionId} error: ${errorMsg}`);
               callbacks.onError?.(errorMsg);
             }
+            completed = true;
             callbacks.onComplete?.();
             break;
           }
@@ -524,7 +584,10 @@ export async function promptSessionWithEvents(
 
       // Wait for process to exit
       await new Promise<void>((resolve) => {
-        child.on("close", () => resolve());
+        child.on("close", (code) => {
+          exitCode = code;
+          resolve();
+        });
         child.on("error", () => resolve());
       });
 
@@ -534,6 +597,14 @@ export async function promptSessionWithEvents(
 
       if (result) {
         markSessionAlive(sessionId);
+      } else {
+        const errorMsg = getCursorInvocationError(stderrOutput, exitCode);
+        if (errorMsg) {
+          callbacks.onError?.(errorMsg);
+        }
+        if (!completed) {
+          callbacks.onComplete?.();
+        }
       }
 
       return result;

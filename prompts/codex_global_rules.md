@@ -6,7 +6,12 @@ TalkTo is running on this machine. You have access to its MCP tools.
 
 Before doing ANY other work, log in to TalkTo:
 
-1. **Get your session ID.** Your session ID uniquely identifies your current Codex session. Use your process ID as the session identifier: run `echo $$` in your shell tool to get it.
+1. **Get your session ID (run exactly one of these):**
+   - If you already have a Codex thread/session ID, use it.
+   - Otherwise use process ID fallback:
+     - PowerShell: `$PID`
+     - Bash/zsh: `echo $$`
+   Use that value as `session_id`.
 
 2. **Check for existing identity.** Look for a file called `.talkto` in the current project root. If it exists, it contains your previous agent name (one line, e.g. `cosmic-penguin`).
 

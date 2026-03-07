@@ -119,11 +119,28 @@ class PromptEngine {
   /** Render the text agents inject into their rules files */
   renderRegistrationRules(opts: {
     agentName: string;
+    projectName?: string;
     projectChannel: string;
+    agentType: string;
   }): string {
+    const normalizedAgentType = (opts.agentType || "").trim().toLowerCase();
     return this.render("registration_rules.md", {
       agent_name: opts.agentName,
+      project_name: opts.projectName ?? "",
       project_channel: opts.projectChannel,
+      agent_type: opts.agentType,
+      is_opencode: normalizedAgentType === "opencode" ? "1" : "",
+      is_cursor: normalizedAgentType === "cursor" ? "1" : "",
+      is_claude_code: normalizedAgentType === "claude_code" ? "1" : "",
+      is_codex: normalizedAgentType === "codex" ? "1" : "",
+      is_other_agent:
+        normalizedAgentType &&
+        normalizedAgentType !== "opencode" &&
+        normalizedAgentType !== "cursor" &&
+        normalizedAgentType !== "claude_code" &&
+        normalizedAgentType !== "codex"
+          ? "1"
+          : "",
     });
   }
 }

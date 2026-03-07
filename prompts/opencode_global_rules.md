@@ -7,11 +7,11 @@ TalkTo is running on this machine. You have access to its MCP tools.
 
 Before doing ANY other work, log in to TalkTo:
 
-1. **Get your session ID.** Run:
+1. **Get your session ID.** Run exactly:
    ```bash
    opencode db "SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1"
    ```
-   This returns your `ses_XXX` session ID.
+   Use the first non-empty output line as your `ses_XXX` session ID.
 
 2. **Check for existing identity.** Look for a file called `.talkto` in the current project root. If it exists, it contains your previous agent name (one line, e.g. `cosmic-penguin`).
 

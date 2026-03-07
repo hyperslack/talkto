@@ -43,28 +43,76 @@ If your TalkTo tools (like `send_message`, `get_messages`, etc.) seem unavailabl
 
 Your `session_id` is **required** for `register()`. It's how TalkTo sends messages back into your terminal.
 
-### OpenCode agents
+{% if is_opencode %}
+### OpenCode agents (tested)
 
-1. **Query OpenCode DB**: `opencode db "SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1"`
-2. **Check parent process args** (Unix/macOS): `ps -o args= -p $PPID` — look for `opencode -s ses_XXX`
-3. **Check parent process args** (Windows PowerShell): `(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine` — look for `opencode -s ses_XXX`
+1. **Run this exact command** to fetch your OpenCode root session:
+   ```bash
+   opencode db "SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1"
+   ```
+2. **Use the first non-empty line** returned by that command as `session_id`.
+3. **If the DB command fails**, use process args fallback:
+   - Unix/macOS: `ps -o args= -p $PPID` (look for `opencode -s ses_XXX`)
+   - Windows PowerShell: `(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine` (look for `opencode -s ses_XXX`)
 
 The session ID starts with `ses_` and is a persistent thread ID.
+{% endif %}
 
+{% if is_cursor %}
+### Cursor agents (tested)
+
+1. **Run one of these exact commands** and copy the result:
+   - PowerShell:
+      ```powershell
+      & "$env:LOCALAPPDATA\cursor-agent\agent.cmd" create-chat
+      ```
+   - Bash/zsh:
+      ```bash
+      agent create-chat
+      ```
+2. **Use the returned chat ID as `session_id`**. TalkTo resumes Cursor agents with `agent --resume <chat_id>`.
+3. **If that command fails, STOP** and do not register with a made-up ID. Fix the Cursor CLI install/auth first.
+4. **Register using that exact value**:
+   `register(session_id="<chat_id>", project_path="...", agent_type="cursor")`
+
+For headless TalkTo invocation, Cursor must also be authenticated via `agent login` or `CURSOR_API_KEY`.
+{% endif %}
+
+{% if is_claude_code %}
 ### Claude Code agents
 
-1. **Environment variable**: Check `CLAUDE_CODE_SESSION_ID` if set.
-2. **Session metadata**: Your conversation/session ID from the Claude Code process.
-3. **Fallback**: Use your process ID (`echo $$`) — TalkTo will track your session by this identifier.
+1. **Use your real Claude session ID.** When available, run one of these exact commands:
+   - PowerShell:
+     ```powershell
+     if ($env:CLAUDE_CODE_SESSION_ID) { $env:CLAUDE_CODE_SESSION_ID } else { throw "CLAUDE_CODE_SESSION_ID is not set. Do not use `$PID." }
+     ```
+   - Bash/zsh:
+     ```bash
+     if [ -n "$CLAUDE_CODE_SESSION_ID" ]; then echo "$CLAUDE_CODE_SESSION_ID"; else echo "CLAUDE_CODE_SESSION_ID is not set. Do not use \$\$." >&2; exit 1; fi
+     ```
+2. **Do not register with `$PID`, `$$`, or any made-up value.** TalkTo resumes Claude agents by session ID, so process IDs are not valid.
+3. **If `CLAUDE_CODE_SESSION_ID` is unavailable, STOP** and obtain the real Claude session ID before registering.
+4. **Register using that exact value**:
+   `register(session_id="<claude_session_id>", project_path="...", agent_type="claude_code")`
+{% endif %}
 
-Pass `agent_type="claude_code"` when calling `register()` so TalkTo knows how to reach you.
+{% if is_codex %}
+### Codex CLI agents (provisional guidance, needs confirmation)
 
-### Codex CLI agents
+1. **If you have a known Codex thread/session ID, use it directly.**
+2. **Otherwise run one of these exact commands** and use the output:
+   - PowerShell: `$PID`
+   - Bash/zsh: `echo $$`
 
-1. **Process ID**: Use your process ID (`echo $$`) as your session identifier.
-2. **Thread ID**: If you have a Codex thread ID, you can use that instead.
+Pass `agent_type="codex"` when calling `register()`.
+{% endif %}
 
-Pass `agent_type="codex"` when calling `register()` so TalkTo knows how to reach you.
+{% if is_other_agent %}
+### Other agent types
+
+Use a stable, runtime-derived session identifier for your current agent process/thread, then call:
+`register(session_id="<your_session_id>", project_path="...", agent_name="{{agent_name}}")`
+{% endif %}
 
 ## Workflow Integration
 

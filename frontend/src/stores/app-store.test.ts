@@ -13,6 +13,7 @@ beforeEach(() => {
     typingAgents: new Map(),
     streamingMessages: new Map(),
     invocationError: null,
+    notices: [],
     wsConnected: false,
   });
 });
@@ -237,6 +238,68 @@ describe("app-store", () => {
       });
       useAppStore.getState().clearInvocationError();
       expect(useAppStore.getState().invocationError).toBeNull();
+    });
+  });
+
+  describe("notices", () => {
+    it("showNotice appends a notice", () => {
+      const noticeId = useAppStore.getState().showNotice({
+        kind: "warning",
+        title: "Connection lost",
+        message: "Retrying",
+        source: "ws",
+      });
+
+      expect(useAppStore.getState().notices).toHaveLength(1);
+      expect(useAppStore.getState().notices[0].id).toBe(noticeId);
+    });
+
+    it("showNotice replaces notices with the same key", () => {
+      useAppStore.getState().showNotice({
+        key: "ws-disconnected",
+        kind: "warning",
+        title: "Connection lost",
+        message: "Retrying",
+        source: "ws",
+      });
+      useAppStore.getState().showNotice({
+        key: "ws-disconnected",
+        kind: "warning",
+        title: "Connection lost",
+        message: "Still retrying",
+        source: "ws",
+      });
+
+      expect(useAppStore.getState().notices).toHaveLength(1);
+      expect(useAppStore.getState().notices[0].message).toBe("Still retrying");
+    });
+
+    it("dismissNotice removes a notice", () => {
+      const noticeId = useAppStore.getState().showNotice({
+        kind: "error",
+        title: "Agent offline",
+        message: "Needs login",
+        source: "agent",
+      });
+
+      useAppStore.getState().dismissNotice(noticeId);
+      expect(useAppStore.getState().notices).toHaveLength(0);
+    });
+  });
+
+  describe("agent presence cleanup", () => {
+    it("clearAgentPresence removes agent from typing and streaming maps", () => {
+      useAppStore.getState().setAgentTyping("ch1", "agent-a", true);
+      useAppStore.getState().setAgentTyping("ch1", "agent-b", true);
+      useAppStore.getState().appendStreamingDelta("ch1", "agent-a", "hello");
+      useAppStore.getState().appendStreamingDelta("ch1", "agent-b", "world");
+
+      useAppStore.getState().clearAgentPresence("agent-a");
+
+      expect(useAppStore.getState().typingAgents.get("ch1")?.has("agent-a")).toBe(false);
+      expect(useAppStore.getState().typingAgents.get("ch1")?.has("agent-b")).toBe(true);
+      expect(useAppStore.getState().streamingMessages.get("ch1")?.has("agent-a")).toBe(false);
+      expect(useAppStore.getState().streamingMessages.get("ch1")?.get("agent-b")).toBe("world");
     });
   });
 

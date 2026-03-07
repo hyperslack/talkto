@@ -64,10 +64,11 @@ async function discoverOpenCodeServerUrl(sessionId: string): Promise<string | nu
  * Auto-detect the agent type from context.
  *
  * Strategy:
- * 1. If explicit agent_type is provided, use it
- * 2. If server_url is provided, it's OpenCode (REST model)
- * 3. Try OpenCode auto-discovery on the default port
- * 4. If OpenCode discovery fails, assume Claude Code (subprocess model)
+ * 1. If server_url is provided, it's OpenCode (REST model)
+ * 2. Try OpenCode auto-discovery on the default port
+ * 3. Respect explicit non-OpenCode subprocess types (codex/cursor)
+ * 4. If OpenCode evidence is absent, explicit claude_code wins
+ * 5. Otherwise assume Claude Code (subprocess model)
  *
  * Codex agents should always pass agent_type="codex" explicitly since
  * there's no way to auto-detect them from the session ID alone.
@@ -77,26 +78,26 @@ async function detectAgentType(
   explicitType?: string,
   serverUrl?: string | null
 ): Promise<{ agentType: string; resolvedServerUrl: string | null }> {
-  // Explicit type wins
-  if (explicitType && explicitType !== "auto") {
-    if (explicitType === "claude_code" || explicitType === "codex" || explicitType === "cursor") {
-      // Subprocess-based / MCP-only agents — no server URL needed
-      return { agentType: explicitType, resolvedServerUrl: null };
-    }
-    // OpenCode with optional server URL discovery
-    const url = serverUrl ?? await discoverOpenCodeServerUrl(sessionId);
-    return { agentType: "opencode", resolvedServerUrl: url };
+  if (explicitType === "codex" || explicitType === "cursor") {
+    return { agentType: explicitType, resolvedServerUrl: null };
   }
 
-  // Server URL provided → must be OpenCode
   if (serverUrl) {
     return { agentType: "opencode", resolvedServerUrl: serverUrl };
   }
 
-  // Try OpenCode auto-discovery first
   const discoveredUrl = await discoverOpenCodeServerUrl(sessionId);
   if (discoveredUrl) {
     return { agentType: "opencode", resolvedServerUrl: discoveredUrl };
+  }
+
+  if (explicitType && explicitType !== "auto") {
+    if (explicitType === "opencode") {
+      return { agentType: "opencode", resolvedServerUrl: null };
+    }
+    if (explicitType === "claude_code") {
+      return { agentType: "claude_code", resolvedServerUrl: null };
+    }
   }
 
   // No OpenCode server found — default to Claude Code
@@ -137,6 +138,50 @@ function setAgent(sessionId: string | undefined, name: string, workspaceId: stri
   }
 }
 
+function isObviouslyInvalidClaudeSessionId(sessionId: string): boolean {
+  return /^\d+$/.test(sessionId);
+}
+
+function textResponse(payload: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+  };
+}
+
+function mcpError(
+  message: string,
+  opts?: {
+    code?: string;
+    hint?: string;
+    retryable?: boolean;
+  }
+) {
+  return textResponse({
+    ok: false,
+    error: message,
+    code: opts?.code ?? "tool_error",
+    hint: opts?.hint,
+    retryable: opts?.retryable ?? false,
+  });
+}
+
+function requireRegisteredAgent(
+  sessionId: string | undefined
+): { agentName: string } | { response: ReturnType<typeof mcpError> } {
+  const agentName = getAgent(sessionId);
+  if (!agentName) {
+    return {
+      response: mcpError("Not registered with TalkTo.", {
+        code: "not_registered",
+        hint: "Call register first. Your session_id is your TalkTo login and how DMs/@mentions get delivered back to you.",
+        retryable: true,
+      }),
+    };
+  }
+
+  return { agentName };
+}
+
 // ---------------------------------------------------------------------------
 // MCP Server Factory — creates a new instance per session
 // ---------------------------------------------------------------------------
@@ -156,9 +201,9 @@ server.tool(
       .describe(
         "Your session ID (required). TalkTo uses this to deliver messages to you. " +
         "For OpenCode: opencode db \"SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1\" " +
-        "For Claude Code: your conversation/session ID " +
+        "For Claude Code: your real Claude session ID (for example CLAUDE_CODE_SESSION_ID when available, never a process ID) " +
         "For Codex CLI: your thread ID or process ID " +
-        "For Cursor: your chat/session ID (used for --resume)"
+        "For Cursor: a Cursor chat ID created with `agent create-chat` (used with --resume)"
       ),
     project_path: z
       .string()
@@ -178,20 +223,15 @@ server.tool(
   },
   async (args, extra) => {
     if (!args.session_id || !args.session_id.trim()) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error:
-                "session_id is required — it's your login to TalkTo. " +
-                "For OpenCode: opencode db \"SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1\" " +
-                "For Claude Code: pass your conversation/session ID. " +
-                "For Codex CLI: pass your thread ID or process ID.",
-            }),
-          },
-        ],
-      };
+      return mcpError("session_id is required — it's your login to TalkTo.", {
+        code: "missing_session_id",
+        hint:
+          "For OpenCode: opencode db \"SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1\". " +
+          "For Claude Code: pass your real Claude session ID, not a process ID. " +
+          "For Codex CLI: pass your thread ID or process ID. " +
+          "For Cursor: create a resumable chat first with `agent create-chat`, then pass that chat ID.",
+        retryable: true,
+      });
     }
 
     const trimmedSessionId = args.session_id.trim();
@@ -202,6 +242,17 @@ server.tool(
       args.agent_type,
       args.server_url
     );
+
+    if (agentType === "claude_code" && isObviouslyInvalidClaudeSessionId(trimmedSessionId)) {
+      return mcpError(
+        "Claude Code requires a real Claude session ID. Numeric process IDs like $PID/$$ cannot be resumed by TalkTo.",
+        {
+          code: "invalid_claude_session_id",
+          hint: "Use CLAUDE_CODE_SESSION_ID when available, or obtain the actual Claude session ID before registering.",
+          retryable: true,
+        }
+      );
+    }
 
     // Workspace comes from the MCP auth context (API key → workspace) or default
     const wsId = serverWorkspaceId;
@@ -220,9 +271,7 @@ server.tool(
       setAgent(extra.sessionId, agentName, wsId);
     }
 
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -238,16 +287,11 @@ server.tool(
   async (args, extra) => {
     const name = args.agent_name || getAgent(extra.sessionId);
     if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "No agent name provided and no active session.",
-            }),
-          },
-        ],
-      };
+      return mcpError("No agent name provided and no active session.", {
+        code: "missing_agent_identity",
+        hint: "Pass agent_name explicitly or call register first so this MCP session is associated with your TalkTo identity.",
+        retryable: true,
+      });
     }
     const result = disconnectAgent(name);
 
@@ -256,9 +300,7 @@ server.tool(
       sessionAgents.delete(extra.sessionId);
     }
 
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -282,29 +324,16 @@ server.tool(
       .describe("Message ID to reply to — includes that message as context in the reply"),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
     const result = sendAgentMessage(
-      name,
+      registration.agentName,
       args.channel,
       args.content,
       args.mentions,
       args.reply_to
     );
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -327,27 +356,14 @@ server.tool(
       .describe("Max messages to return (default 10, max 10)"),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
     const result = getAgentMessages(
-      name,
+      registration.agentName,
       args.channel,
       Math.min(args.limit ?? MAX_MESSAGES, MAX_MESSAGES)
     );
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -363,9 +379,7 @@ server.tool(
     const creator = getAgent(extra.sessionId) ?? "unknown";
     const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
     const result = createNewChannel(args.name, creator, wsId);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -376,24 +390,11 @@ server.tool(
     channel: z.string().describe("Channel name to join"),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
     const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
-    const result = joinAgentToChannel(name, args.channel, wsId);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const result = joinAgentToChannel(registration.agentName, args.channel, wsId);
+    return textResponse(result);
   }
 );
 
@@ -406,9 +407,7 @@ server.tool(
   },
   async (args) => {
     const result = setChannelTopic(args.channel, args.topic);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -419,9 +418,7 @@ server.tool(
   async (_args, extra) => {
     const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
     const result = listAllChannels(wsId);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -432,9 +429,7 @@ server.tool(
   async (_args, extra) => {
     const wsId = getWorkspaceId(extra.sessionId, serverWorkspaceId);
     const result = listAllAgents(wsId);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -460,28 +455,15 @@ server.tool(
       .describe('Your gender — "male", "female", or "non-binary"'),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
-    const result = updateAgentProfile(name, {
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = updateAgentProfile(registration.agentName, {
       description: args.description,
       personality: args.personality,
       currentTask: args.current_task,
       gender: args.gender,
     });
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -492,26 +474,12 @@ server.tool(
   async () => {
     const features = listAllFeatures();
     if (!features.length) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              features: [],
-              hint: "No features yet. Use create_feature_request to propose one.",
-            }),
-          },
-        ],
-      };
+      return textResponse({
+        features: [],
+        hint: "No features yet. Use create_feature_request to propose one.",
+      });
     }
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ features }),
-        },
-      ],
-    };
+    return textResponse({ features });
   }
 );
 
@@ -525,23 +493,10 @@ server.tool(
       .describe("What the feature does and why it would help"),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
-    const result = agentCreateFeature(name, args.title, args.description);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = agentCreateFeature(registration.agentName, args.title, args.description);
+    return textResponse(result);
   }
 );
 
@@ -554,32 +509,16 @@ server.tool(
   },
   async (args, extra) => {
     if (args.vote !== 1 && args.vote !== -1) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ error: "Vote must be +1 or -1" }),
-          },
-        ],
-      };
+      return mcpError("Vote must be +1 or -1", {
+        code: "invalid_vote",
+        hint: "Use vote=1 for an upvote or vote=-1 for a downvote.",
+        retryable: true,
+      });
     }
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
-    const result = agentVoteFeature(name, args.feature_id, args.vote);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = agentVoteFeature(registration.agentName, args.feature_id, args.vote);
+    return textResponse(result);
   }
 );
 
@@ -592,16 +531,15 @@ server.tool(
     reason: z.string().max(500).optional().describe("Reason for the status change (optional, useful for closed/wontfix)"),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "Not registered. Call register first." }) }],
-      };
-    }
-    const result = agentUpdateFeatureStatus(name, args.feature_id, args.status, args.reason);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = agentUpdateFeatureStatus(
+      registration.agentName,
+      args.feature_id,
+      args.status,
+      args.reason
+    );
+    return textResponse(result);
   }
 );
 
@@ -612,16 +550,10 @@ server.tool(
     feature_id: z.string().describe("ID of the feature request to delete"),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "Not registered. Call register first." }) }],
-      };
-    }
-    const result = agentDeleteFeature(name, args.feature_id);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = agentDeleteFeature(registration.agentName, args.feature_id);
+    return textResponse(result);
   }
 );
 
@@ -630,23 +562,10 @@ server.tool(
   "Send a keep-alive signal so others see you as online. Call periodically during long sessions.",
   {},
   async (_args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
-    const result = heartbeatAgent(name);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = heartbeatAgent(registration.agentName);
+    return textResponse(result);
   }
 );
 
@@ -660,9 +579,7 @@ server.tool(
   },
   async (args) => {
     const result = searchMessages(args.query, args.channel, args.limit, serverWorkspaceId);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    return textResponse(result);
   }
 );
 
@@ -675,16 +592,15 @@ server.tool(
     content: z.string().describe("New message content"),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: "Not registered." }) }],
-      };
-    }
-    const result = agentEditMessage(name, args.channel, args.message_id, args.content);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = agentEditMessage(
+      registration.agentName,
+      args.channel,
+      args.message_id,
+      args.content
+    );
+    return textResponse(result);
   }
 );
 
@@ -698,23 +614,15 @@ server.tool(
     emoji: z.string().describe('Emoji to react with (e.g., "👍", "🔥", "✅")'),
   },
   async (args, extra) => {
-    const name = getAgent(extra.sessionId);
-    if (!name) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Not registered. Call register first.",
-            }),
-          },
-        ],
-      };
-    }
-    const result = agentReactMessage(name, args.channel, args.message_id, args.emoji);
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    };
+    const registration = requireRegisteredAgent(extra.sessionId);
+    if ("response" in registration) return registration.response;
+    const result = agentReactMessage(
+      registration.agentName,
+      args.channel,
+      args.message_id,
+      args.emoji
+    );
+    return textResponse(result);
   }
 );
 
