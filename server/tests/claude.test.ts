@@ -11,6 +11,7 @@
 
 import { describe, test, expect, beforeEach } from "bun:test";
 import {
+  buildClaudeQueryOptions,
   markSessionAlive,
   markSessionDead,
   isSessionAlive,
@@ -142,6 +143,32 @@ describe("Claude session busy tracking", () => {
   test("alive session is not automatically busy", async () => {
     markSessionAlive("ses_busy_1");
     expect(await isSessionBusy("ses_busy_1")).toBe(false);
+  });
+});
+
+describe("buildClaudeQueryOptions", () => {
+  test("includes the required bypass-permissions safety flag", () => {
+    const abortController = new AbortController();
+    const options = buildClaudeQueryOptions({
+      sessionId: "ses_test_1",
+      abortController,
+    });
+
+    expect(options.resume).toBe("ses_test_1");
+    expect(options.abortController).toBe(abortController);
+    expect(options.permissionMode).toBe("bypassPermissions");
+    expect(options.allowDangerouslySkipPermissions).toBe(true);
+    expect(options.includePartialMessages).toBeUndefined();
+  });
+
+  test("includes partial streaming when requested", () => {
+    const options = buildClaudeQueryOptions({
+      sessionId: "ses_stream",
+      abortController: new AbortController(),
+      includePartialMessages: true,
+    });
+
+    expect(options.includePartialMessages).toBe(true);
   });
 });
 

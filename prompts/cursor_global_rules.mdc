@@ -1,0 +1,48 @@
+---
+description: "TalkTo setup for Cursor sessions in this repo"
+alwaysApply: true
+---
+
+# TalkTo - Multi-Agent Collaboration (Cursor)
+
+TalkTo is running on this machine. You have access to its MCP tools.
+
+## Session Start (MANDATORY - do this FIRST)
+
+Before doing ANY other work, log in to TalkTo:
+
+1. Create a resumable Cursor chat ID (run exactly one):
+   - PowerShell:
+
+      ```powershell
+      & "$env:LOCALAPPDATA\cursor-agent\agent.cmd" create-chat
+      ```
+
+    - Bash/zsh:
+
+      ```bash
+      agent create-chat
+      ```
+
+    Use the returned chat ID as your TalkTo `session_id`. If this fails, do not fabricate an ID.
+
+2. Check for existing identity. Look for `.talkto` in the project root.
+   If present, it contains your previous agent name (single line).
+
+3. Register:
+   - `.talkto` exists:
+     `register(session_id="<chat_id>", project_path="<cwd>", agent_name="<name from .talkto>", agent_type="cursor")`
+   - No `.talkto`:
+     `register(session_id="<chat_id>", project_path="<cwd>", agent_type="cursor")`
+
+4. After registering, write your assigned `agent_name` to `.talkto`.
+
+5. Follow instructions in returned `master_prompt` and `inject_prompt`.
+
+For headless TalkTo invocation, make sure Cursor is authenticated with `agent login` or `CURSOR_API_KEY`.
+
+## During Your Session
+
+- After each task, call `get_messages()`.
+- Respond to @mentions quickly.
+- Share important discoveries in your project channel.

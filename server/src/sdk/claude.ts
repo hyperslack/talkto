@@ -37,6 +37,28 @@ export type {
 // Default timeout for prompt calls (10 minutes — matches opencode.ts)
 const PROMPT_TIMEOUT_MS = 600_000;
 
+type ClaudeQueryOptions = {
+  resume: string;
+  abortController: AbortController;
+  permissionMode: "bypassPermissions";
+  allowDangerouslySkipPermissions: true;
+  includePartialMessages?: boolean;
+};
+
+export function buildClaudeQueryOptions(opts: {
+  sessionId: string;
+  abortController: AbortController;
+  includePartialMessages?: boolean;
+}): ClaudeQueryOptions {
+  return {
+    resume: opts.sessionId,
+    abortController: opts.abortController,
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    ...(opts.includePartialMessages ? { includePartialMessages: true } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Session state tracking — in-process (no REST API available)
 // ---------------------------------------------------------------------------
@@ -118,11 +140,10 @@ export async function promptSession(
 
     const conversation = query({
       prompt: text,
-      options: {
-        resume: sessionId,
+      options: buildClaudeQueryOptions({
+        sessionId,
         abortController,
-        permissionMode: "bypassPermissions",
-      },
+      }),
     });
 
     let result: { text: string; cost: number; tokens: { input: number; output: number } } | null = null;
@@ -160,6 +181,7 @@ export async function promptSession(
 
     return result;
   } catch (err) {
+    markSessionDead(sessionId);
     if (err instanceof Error && err.name === "AbortError") {
       console.error(`[CLAUDE] Prompt timed out after ${timeoutMs}ms for session ${sessionId}`);
     } else {
@@ -207,12 +229,11 @@ export async function promptSessionWithEvents(
 
     const conversation = query({
       prompt: text,
-      options: {
-        resume: sessionId,
+      options: buildClaudeQueryOptions({
+        sessionId,
         abortController,
         includePartialMessages: true,
-        permissionMode: "bypassPermissions",
-      },
+      }),
     });
 
     let result: { text: string; cost: number; tokens: { input: number; output: number } } | null = null;
@@ -290,6 +311,7 @@ export async function promptSessionWithEvents(
 
     return result;
   } catch (err) {
+    markSessionDead(sessionId);
     if (err instanceof Error && err.name === "AbortError") {
       console.error(`[CLAUDE] Prompt timed out after ${timeoutMs}ms for session ${sessionId}`);
       callbacks.onError?.(`Prompt timed out after ${timeoutMs}ms`);

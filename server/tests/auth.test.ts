@@ -9,6 +9,7 @@
 
 import { describe, expect, it, beforeAll } from "bun:test";
 import { Hono } from "hono";
+import "./test-env";
 import { hashToken, generateToken, API_KEY_PREFIX } from "../src/services/auth-service";
 import { getDb } from "../src/db";
 import {

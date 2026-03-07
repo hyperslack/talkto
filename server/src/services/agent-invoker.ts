@@ -2,7 +2,7 @@
  * Agent invocation — send messages to agents and post their responses.
  *
  * Communication protocol:
- * - All replies use the appropriate SDK (OpenCode, Claude Code, or Codex CLI)
+ * - All replies use the appropriate SDK (OpenCode, Claude Code, Codex CLI, or Cursor)
  * - TalkTo extracts the response text and posts it to the channel as the agent
  * - Agents never need the send_message MCP tool for replies (only for proactive messages)
  * - Text deltas stream to the frontend via agent_streaming WebSocket events
@@ -26,8 +26,9 @@ import {
   newMessageEvent,
   agentTypingEvent,
   agentStreamingEvent,
+  agentErrorEvent,
 } from "./broadcaster";
-import { getAgentInvocationInfo } from "./agent-discovery";
+import { clearStaleCredentials, getAgentInvocationInfo } from "./agent-discovery";
 import type { InvocationInfo } from "./agent-discovery";
 import {
   promptSessionWithEvents as openCodePromptWithEvents,
@@ -41,10 +42,66 @@ import {
   promptSessionWithEvents as codexPromptWithEvents,
   isSessionBusy as isCodexSessionBusy,
 } from "../sdk/codex";
+import {
+  promptSessionWithEvents as cursorPromptWithEvents,
+  isSessionBusy as isCursorSessionBusy,
+} from "../sdk/cursor";
 
 // Maximum depth for agent-to-agent invocation chains.
 // Prevents infinite loops when agents keep @mentioning each other.
 const MAX_CHAIN_DEPTH = 5;
+
+interface InvocationFailure {
+  message: string;
+  errorCode: string;
+  recovery: string;
+  fatal: boolean;
+}
+
+function buildInvocationFailure(
+  agentName: string,
+  info: InvocationInfo,
+  providerError?: string
+): InvocationFailure {
+  if (info.agentType === "claude_code") {
+    const normalized = providerError?.toLowerCase() ?? "";
+    if (
+      normalized.includes("401") ||
+      normalized.includes("expired") ||
+      normalized.includes("auth") ||
+      normalized.includes("login")
+    ) {
+      return {
+        message: `${agentName} went offline: Claude needs login again. Ask the agent to re-authenticate and re-register.`,
+        errorCode: "auth_required",
+        recovery: "relogin_and_reregister",
+        fatal: true,
+      };
+    }
+    return {
+      message: `${agentName} went offline: Claude session is no longer valid. Ask the agent to sign in again and re-register.`,
+      errorCode: "session_invalid",
+      recovery: "reregister",
+      fatal: true,
+    };
+  }
+
+  if (providerError) {
+    return {
+      message: `${agentName} error: ${providerError}`,
+      errorCode: "provider_error",
+      recovery: "retry",
+      fatal: false,
+    };
+  }
+
+  return {
+    message: `${agentName} did not respond`,
+    errorCode: "no_response",
+    recovery: "retry",
+    fatal: false,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // @mention extraction from raw text
@@ -151,7 +208,10 @@ function expandAtAll(channelName: string, excludeSender: string, workspaceId?: s
     const codexAgents = candidates.filter(
       (a) => a.agentType === "codex" && a.providerSessionId
     );
-    const allInvocable = [...openCodeAgents, ...claudeAgents, ...codexAgents];
+    const cursorAgents = candidates.filter(
+      (a) => a.agentType === "cursor" && a.providerSessionId
+    );
+    const allInvocable = [...openCodeAgents, ...claudeAgents, ...codexAgents, ...cursorAgents];
 
     // Project channels — filter to matching project
     if (channelName.startsWith("#project-")) {
@@ -341,6 +401,18 @@ async function invokeAgent(
       console.warn(`[INVOKE] '${agentName}' is not invocable — skipping`);
       if (!silent) {
         broadcastEvent(
+          agentErrorEvent({
+            agentName,
+            channelId,
+            message: `${agentName} is not reachable. Ask the agent to re-register before trying again.`,
+            errorCode: "agent_unreachable",
+            provider: "talkto",
+            recovery: "reregister",
+            fatal: true,
+          }),
+          workspaceId
+        );
+        broadcastEvent(
           agentTypingEvent(agentName, channelId, false, `${agentName} is not reachable`),
           workspaceId
         );
@@ -359,6 +431,8 @@ async function invokeAgent(
       busy = await isClaudeSessionBusy(info.sessionId);
     } else if (info.agentType === "codex") {
       busy = await isCodexSessionBusy(info.sessionId);
+    } else if (info.agentType === "cursor") {
+      busy = await isCursorSessionBusy(info.sessionId);
     } else {
       busy = await isOpenCodeSessionBusy(info.serverUrl!, info.sessionId);
     }
@@ -367,6 +441,7 @@ async function invokeAgent(
     }
 
     // Streaming callbacks — stream real-time events to the frontend (scoped to workspace)
+    let lastProviderError: string | undefined;
     const callbacks = {
       onTypingStart: () => {
         // Re-broadcast typing to confirm agent is actively processing
@@ -377,6 +452,7 @@ async function invokeAgent(
         broadcastEvent(agentStreamingEvent(agentName, channelId, delta), workspaceId);
       },
       onError: (error: string) => {
+        lastProviderError = error;
         console.error(`[INVOKE] Streaming error for '${agentName}':`, error);
       },
     };
@@ -390,8 +466,25 @@ async function invokeAgent(
 
     if (!result || !result.text) {
       console.warn(`[INVOKE] No response from '${agentName}'`);
+      const failure = buildInvocationFailure(agentName, info, lastProviderError);
+      if (info.agentType === "claude_code") {
+        clearStaleCredentials(agentName);
+      }
       broadcastEvent(
-        agentTypingEvent(agentName, channelId, false, `${agentName} did not respond`),
+        agentErrorEvent({
+          agentName,
+          channelId,
+          message: failure.message,
+          agentType: info.agentType,
+          errorCode: failure.errorCode,
+          provider: info.agentType,
+          recovery: failure.recovery,
+          fatal: failure.fatal,
+        }),
+        workspaceId
+      );
+      broadcastEvent(
+        agentTypingEvent(agentName, channelId, false, failure.message),
         workspaceId
       );
       return;
@@ -409,8 +502,29 @@ async function invokeAgent(
     broadcastEvent(agentTypingEvent(agentName, channelId, false), workspaceId);
   } catch (err) {
     console.error(`[INVOKE] Error invoking '${agentName}':`, err);
+    const providerError = err instanceof Error ? err.message : undefined;
+    const fallbackInfo =
+      (await getAgentInvocationInfo(agentName)) ??
+      { agentType: "claude_code", sessionId: "", serverUrl: null, projectPath: "" };
+    const failure = buildInvocationFailure(agentName, fallbackInfo, providerError);
+    if (fallbackInfo.agentType === "claude_code") {
+      clearStaleCredentials(agentName);
+    }
     broadcastEvent(
-      agentTypingEvent(agentName, channelId, false, `${agentName} encountered an error`),
+      agentErrorEvent({
+        agentName,
+        channelId,
+        message: failure.message,
+        agentType: fallbackInfo.agentType,
+        errorCode: failure.errorCode,
+        provider: fallbackInfo.agentType,
+        recovery: failure.recovery,
+        fatal: failure.fatal,
+      }),
+      workspaceId
+    );
+    broadcastEvent(
+      agentTypingEvent(agentName, channelId, false, failure.message),
       workspaceId
     );
   }
@@ -429,6 +543,9 @@ async function promptByProvider(
     onError?: (error: string) => void;
   }
 ): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
+  if (info.agentType === "cursor") {
+    return cursorPromptWithEvents(info.sessionId, prompt, callbacks);
+  }
   if (info.agentType === "claude_code") {
     return claudePromptWithEvents(info.sessionId, prompt, callbacks);
   }

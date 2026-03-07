@@ -3,7 +3,7 @@
  *
  * Single entry point: registerOrConnectAgent() handles both new registrations
  * and reconnections. Agent type is determined by the caller (MCP register tool)
- * and can be "opencode", "claude_code", "codex", or "system".
+ * and can be "opencode", "claude_code", "codex", "cursor", or "system".
  */
 
 import { eq, and, sql } from "drizzle-orm";
@@ -20,11 +20,18 @@ import {
   users,
   workspaceMembers,
 } from "../db/schema";
-import { broadcastEvent, agentStatusEvent, channelCreatedEvent, featureUpdateEvent } from "./broadcaster";
+import {
+  broadcastEvent,
+  agentStatusEvent,
+  agentUpdatedEvent,
+  channelCreatedEvent,
+  featureUpdateEvent,
+} from "./broadcaster";
 import { generateUniqueName } from "./name-generator";
 import { promptEngine } from "./prompt-engine";
 import { markSessionAlive as markClaudeSessionAlive } from "../sdk/claude";
 import { markSessionAlive as markCodexSessionAlive } from "../sdk/codex";
+import { markSessionAlive as markCursorSessionAlive, setCursorSessionMeta } from "../sdk/cursor";
 
 /** Derive project name from path (git repo name or folder basename).
  *  Uses spawnSync to avoid shell-quoting issues across platforms. */
@@ -121,11 +128,14 @@ export function registerOrConnectAgent(opts: {
   const agentType = opts.agentType ?? "opencode";
   const workspaceId = opts.workspaceId ?? DEFAULT_WORKSPACE_ID;
 
-  // For subprocess-based agents, mark the session as alive on registration
+  // For subprocess-based / MCP-only agents, mark the session as alive on registration
   if (agentType === "claude_code") {
     markClaudeSessionAlive(sessionId);
   } else if (agentType === "codex") {
     markCodexSessionAlive(sessionId);
+  } else if (agentType === "cursor") {
+    markCursorSessionAlive(sessionId);
+    setCursorSessionMeta(sessionId, { projectPath });
   }
 
   // --- Reconnect path: agent_name provided and exists ---
@@ -171,7 +181,7 @@ function reconnectAgent(
   };
   if (serverUrl) updates.serverUrl = serverUrl;
   // Subprocess-based agents don't have a server URL — clear it if switching providers
-  if ((agentType === "claude_code" || agentType === "codex") && !serverUrl) updates.serverUrl = null;
+  if ((agentType === "claude_code" || agentType === "codex" || agentType === "cursor") && !serverUrl) updates.serverUrl = null;
   if (projectPath) {
     updates.projectPath = projectPath;
     updates.projectName = deriveProjectName(projectPath);
@@ -212,7 +222,9 @@ function reconnectAgent(
   });
   const injectPrompt = promptEngine.renderRegistrationRules({
     agentName: updated.agentName,
+    projectName: updated.projectName,
     projectChannel: channelName,
+    agentType: updated.agentType,
   });
 
   // Build profile reminder
@@ -375,7 +387,9 @@ function createNewAgent(opts: {
   });
   const injectPrompt = promptEngine.renderRegistrationRules({
     agentName,
+    projectName,
     projectChannel: channelName,
+    agentType: opts.agentType,
   });
 
   return {
@@ -491,6 +505,20 @@ export function updateAgentProfile(
   db.update(agents).set(updates).where(eq(agents.id, agent.id)).run();
 
   const updated = db.select().from(agents).where(eq(agents.id, agent.id)).get()!;
+
+  broadcastEvent(
+    agentUpdatedEvent({
+      agentId: updated.id,
+      agentName: updated.agentName,
+      agentType: updated.agentType,
+      projectName: updated.projectName,
+      description: updated.description,
+      personality: updated.personality,
+      currentTask: updated.currentTask,
+      gender: updated.gender,
+    }),
+    updated.workspaceId
+  );
 
   return {
     status: "updated",

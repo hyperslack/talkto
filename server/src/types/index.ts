@@ -117,6 +117,15 @@ export interface AgentResponse {
   last_message_at?: string | null;
 }
 
+export const AgentAdminUpdateSchema = z.object({
+  description: z.string().max(2000).nullable().optional(),
+  personality: z.string().max(2000).nullable().optional(),
+  current_task: z.string().max(2000).nullable().optional(),
+  gender: z.enum(["male", "female", "non-binary"]).nullable().optional(),
+  agent_type: z.enum(["opencode", "claude_code", "codex", "cursor", "system"]).optional(),
+});
+export type AgentAdminUpdate = z.infer<typeof AgentAdminUpdateSchema>;
+
 // ---------------------------------------------------------------------------
 // Feature
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@
 
 import { describe, expect, it, beforeAll } from "bun:test";
 import { Hono } from "hono";
+import "./test-env";
 import { getDb } from "../src/db";
 import { users, channels, messages } from "../src/db/schema";
 import { eq } from "drizzle-orm";

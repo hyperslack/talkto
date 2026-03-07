@@ -1,182 +1,191 @@
-# Progress Log
+﻿# Progress Log
 
-## Session: 2026-02-18
+## Session: 2026-03-02 - Re-scoped planning for PR #50, #49, #48
 
-### Phase 0: Planning
-- **Status:** complete
-- **Started:** 2026-02-18
-- Actions taken:
-  - Explored full codebase state (TS backend, Python backend, frontend, DB schema)
-  - Researched OpenCode SDK, Codex SDK, Claude Agent SDK APIs and types
-  - Designed TalkTo communication protocol (SDK-native replies for all invocations)
-  - Discussed and resolved key architectural decisions with user
-  - Committed TS backend foundation (735fca2 — 26 files, 4,398 lines)
-  - Created planning files: task_plan.md, findings.md, progress.md
-- Files created/modified:
-  - task_plan.md (created)
-  - findings.md (created)
-  - progress.md (created)
-- Key decisions:
-  - All replies via `session.prompt()` — TalkTo posts response, agents don't need MCP send_message
-  - OpenCode SDK first, Codex + Claude later
-  - `session.list()` replaces ps/lsof/process-tree discovery
-  - DMs: no context stuffing. @mentions: last 5-10 channel messages
-  - TUI integration (`tui.appendPrompt` + `event.subscribe`) planned as Phase 4
+### Status
+- Exact PR review complete.
+- Planning files updated to correct scope.
+- No code implementation performed yet.
 
-### Phase 1: Frontend Switch & E2E Verification
-- **Status:** complete
-- **Started:** 2026-02-18
-- Actions taken:
-  - Stopped Python backend on :8000, started TS backend on :8000
-  - Verified all 14 API routes return correct data from shared SQLite DB
-  - Verified WebSocket: connect, ping/pong, subscribe, message broadcast
-  - Found and fixed MCP bug: singleton McpServer -> factory pattern (createMcpServer())
-  - Verified MCP: init, tools/list (13 tools), multi-session support
-  - Started frontend on :3000, verified proxy works
-  - All 22 tests still pass after MCP refactor
-  - Committed as 67083ef
-- Files created/modified:
-  - server/src/mcp/server.ts (refactored: export singleton -> export factory)
-  - server/src/index.ts (use createMcpServer() per session)
+### Actions Completed
+1. Replaced initial branch-based assumption after user clarified target PRs (`50, 49, 48`).
+2. Fetched and reviewed:
+   - PR metadata (draft/open/base/head/additions/files)
+   - Changed file lists
+   - Patch content for all three PRs
+3. Compared PR scope against current local `main` to confirm changes are not yet merged.
+4. Identified cross-PR dependency and merge-order risks (especially PR #50 depending on PR #49 behavior).
+5. Rewrote `task_plan.md` and `findings.md` for exact PR scope.
 
-### Phase 2: OpenCode SDK — Client & Discovery
-- **Status:** complete
-- **Committed:** 9fec25c
-- Actions taken:
-  - Installed `@opencode-ai/sdk@1.2.6`
-  - Created `server/src/sdk/opencode.ts` — cached client manager with getClient(), listSessions(), getSession(), isSessionAlive(), isServerHealthy(), promptSession(), extractTextFromParts(), matchSessionByProject(), discoverSession(), tuiPrompt()
-  - Created `server/src/services/agent-discovery.ts` — simplified discovery: discoverOpenCodeServer() (lsof), getAgentInvocationInfo() (DB → liveness → auto-discover), clearStaleCredentials(), isAgentGhost()
-  - 15 new tests for matchSessionByProject and extractTextFromParts
-  - 37 total tests passing (298 assertions)
-- Files created/modified:
-  - server/src/sdk/opencode.ts (created)
-  - server/src/services/agent-discovery.ts (created)
-  - server/tests/opencode.test.ts (created)
-  - server/package.json (added @opencode-ai/sdk)
+### Key Outcomes
+- PR #50 is not self-contained against `main` in its current form.
+- PR #49 and PR #50 currently define overlapping tunnel strategies.
+- PR #48 is suitable as a docs-first strategic artifact, pending issue/owner extraction.
 
-### Phase 3: OpenCode SDK — Invocation Pipeline
-- **Status:** complete
-- Actions taken:
-  - Created `server/src/services/agent-invoker.ts` — invocation engine: invokeForMessage(), invokeAgent(), postAgentResponse(), fetchRecentContext(), formatChannelPrompt(), spawnBackgroundTask()
-  - Wired invokeForMessage() into routes/messages.ts POST handler and message-router.ts sendAgentMessage()
-  - **Key discovery:** session.prompt() hangs on busy sessions (e.g., agent's active TUI session). Fixed by creating dedicated invocation sessions per agent via session.create()
-  - Added to SDK: createSession(), getOrCreateInvocationSession(), clearInvocationSession(), prompt timeout (2 min)
-  - Fixed isServerHealthy() — client.global.health doesn't exist, use session.list() instead
-  - Live-tested DM invocation: Bossu→plucky-sparrow, response in ~2.5s
-  - Live-tested conversation history: session reuse works, agent recalls prior messages
-  - Live-tested @mention in #general: "what is 2+2?" → "4"
-  - 37 tests pass (298 assertions)
-- Files created/modified:
-  - server/src/services/agent-invoker.ts (created)
-  - server/src/sdk/opencode.ts (updated: createSession, getOrCreateInvocationSession, prompt timeout, health fix)
-  - server/src/routes/messages.ts (modified: wired invokeForMessage)
-  - server/src/services/message-router.ts (modified: wired invokeForMessage)
-- Key discovery:
-  - session.prompt() hangs indefinitely on busy sessions (no status field exposed by OpenCode API)
-  - Fix: always create dedicated invocation sessions per agent, cache and reuse them
-  - session.create() works, new sessions are idle and respond to prompt() in 2-3s
-  - Invocation sessions maintain conversation history across prompts
+### Next Actions (Execution)
+1. Decide canonical tunnel approach (profile vs override) and enforce in PR #49/#50.
+2. Resolve PR #50 base/dependency issue (self-contained or stacked rebase).
+3. Add Windows-compatible sharing path for tunnel helper tooling.
+4. Finalize merge sequencing and acceptance checks.
 
-### Phase 4: TUI Integration & Event Subscription
-- **Status:** complete
-- **Committed:** 923e3b1, ebaab42 (TUI removal from invoker: 030adaf)
-- Actions taken:
-  - Researched OpenCode SDK internals: discovered `event.subscribe()` returns `AsyncGenerator<Event>`, `session.status()` returns `{sessionID: SessionStatus}` map, 30+ event types with typed payloads
-  - Added `getSessionStatuses()`, `getSessionStatus()`, `isSessionBusy()` — wraps `session.status()` for busy/idle detection
-  - Added `subscribeToEvents()` — wraps `event.subscribe()`, returns typed async generator
-  - Added `filterEventsBySession()` — filters SSE stream for events matching a specific sessionID
-  - Added `promptSessionWithEvents()` — prompts session while consuming SSE events for real-time callbacks (onTypingStart, onTextDelta, onComplete, onError)
-  - Added `isTuiActive()` — heuristic TUI detection via `tui.clearPrompt()` success
-  - Enhanced `tuiPrompt()` — clears prompt before appending to prevent text concatenation
-  - Added `tuiToast()` — show toast notifications in agent's TUI
-  - Updated `agent-invoker.ts` — now checks session busy status, detects TUI, uses event-driven prompting with real-time typing broadcasts
-  - Added 11 new tests: filterEventsBySession (8 tests), SessionStatus types (3 tests)
-  - Live tested: DM to spicy-bat with TUI active, response "PHASE4_LIVE_TEST_OK" received correctly
-- Files created/modified:
-  - server/src/sdk/opencode.ts (major update: +8 new functions, type imports expanded)
-  - server/src/services/agent-invoker.ts (updated: TUI detection, busy check, event-driven prompting)
-  - server/tests/opencode.test.ts (updated: +11 tests for filterEventsBySession and SessionStatus)
-- Key discoveries:
-  - `session.status()` only returns entries for busy/retry sessions — absent means idle
-  - `event.subscribe()` returns `{ stream: AsyncGenerator }` at top level (not nested in `data`)
-  - First SSE event is always `server.connected` (like a handshake)
-  - `tui.clearPrompt()` succeeds when TUI is connected, fails when not — works as detection heuristic
-  - SSE events include `message.part.updated` with `delta` field for streaming text
+### Files Updated This Session
+- `task_plan.md`
+- `findings.md`
+- `progress.md`
 
-### Phase 5: Infrastructure & Documentation
-- **Status:** complete
-- Actions taken:
-  - Removed entire Python backend: `backend/`, `cli/`, `tests/` (Python), `bin/talkto.mjs`
-  - Removed Python config: `pyproject.toml`, `uv.lock`, `alembic.ini`, `migrations/`, root `package.json`
-  - Updated CI: replaced Python/pytest job with Bun/bun:test job
-  - Rewrote Dockerfile for `oven/bun:1` multi-stage build (Node builds frontend, Bun runs server)
-  - Updated docker-compose.yml healthcheck for Bun
-  - Cleaned `.gitignore` of Python-specific entries
-  - Rewrote `AGENTS.md` for TS-only architecture
-  - Updated `docs/AGENT_USER_GUIDE.md` — removed `connect()`, `agent_type`, clarified auto-reply flow
-  - Updated `README.md` — new quickstart, architecture diagram, tech stack, commands
-  - Updated `prompts/master_prompt.md` — removed Python/FastAPI example references
-  - Updated `prompts/blocks/tools.md` — clarified `send_message` is proactive only, added `create_feature_request`
-  - Updated `prompts/blocks/messaging.md` — documented DM channels, automatic reply flow
-  - Updated `prompts/registration_rules.md` — fixed incorrect `send_message` for replies instructions
-  - Updated MCP tool descriptions in `server/src/mcp/server.ts`
-  - Removed TUI invocation path from `agent-invoker.ts` (TUI SDK kept for future use)
-  - Rewrote `CONTRIBUTING.md` for TS-only architecture
-  - All 48 tests passing (336 assertions) after all changes
-- Files created/modified:
-  - AGENTS.md (rewritten)
-  - README.md (updated)
-  - CONTRIBUTING.md (rewritten)
-  - docs/AGENT_USER_GUIDE.md (updated)
-  - prompts/master_prompt.md (updated)
-  - prompts/blocks/tools.md (updated)
-  - prompts/blocks/messaging.md (updated)
-  - prompts/registration_rules.md (updated)
-  - server/src/mcp/server.ts (updated descriptions)
-  - server/src/services/agent-invoker.ts (removed TUI path)
-  - Dockerfile (rewritten)
-  - docker-compose.yml (updated)
-  - .github/workflows/ci.yml (updated)
-  - .gitignore (cleaned)
-- Commits:
-  - eca1168 Remove Python backend, CLI, and test suite
-  - b85a69a Remove Python config files, Alembic migrations, and npm wrapper
-  - b129d5d Update CI: replace Python backend job with Bun server tests
-  - 0916f59 Rewrite Dockerfile and docker-compose for Bun runtime
-  - 458ca91 Clean up .gitignore: remove Python-specific entries
-  - 030adaf Update MCP tool descriptions and onboarding prompts for clarity
-  - ebaab42 Remove TUI invocation path from agent-invoker
-  - 3f7dd77 Rewrite AGENTS.md for TS-only architecture
-  - d5c0a69 Update AGENT_USER_GUIDE for TS backend conventions
-  - ed9367d Update master prompt examples to remove Python/FastAPI references
-  - 3cae24c Update README for TS-only architecture
-  - 95a8dea Rewrite CONTRIBUTING.md for TS-only architecture
-
-## Test Results
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| TS backend tests | `bun test` in server/ | 48 pass | 48 pass (336 assertions, 124ms) | PASS |
-| Live DM invocation | DM "Reply with exactly: LIVE_TEST_OK" to plucky-sparrow | Agent response in channel | "LIVE_TEST_OK" posted in 2.5s | PASS |
-| Live conversation memory | DM "What was the last thing I asked you?" | Recalls prior message | Correctly recalled LIVE_TEST_OK request | PASS |
-| Live @mention | @plucky-sparrow in #general "what is 2+2?" | Agent responds in channel | "4" posted | PASS |
-| Phase 4 DM + TUI | DM "Reply with exactly: PHASE4_LIVE_TEST_OK" to spicy-bat | Agent responds via TUI path | "PHASE4_LIVE_TEST_OK" posted, TUI detected, event-driven prompt | PASS |
-
-## Error Log
-| Timestamp | Error | Attempt | Resolution |
-|-----------|-------|---------|------------|
-| 2026-02-18 | Permission denied writing task_plan.md | 1 | Waited for build mode (was in plan/read-only mode) |
-| 2026-02-18 | MCP: "Already connected to a transport" on 2nd session | 1 | Refactored mcpServer singleton to createMcpServer() factory |
-| 2026-02-18 | session.prompt() hangs on busy session (plucky-sparrow's TUI) | 2 | Create dedicated invocation sessions per agent via session.create() |
-| 2026-02-18 | client.global.health is not a function | 1 | Use session.list() as health check instead |
-
-## 5-Question Reboot Check
-| Question | Answer |
-|----------|--------|
-| Where am I? | All 5 phases complete. Python backend fully removed. TS-only architecture. |
-| Where am I going? | All planned work is done. Ready for new features or bug fixes. |
-| What's the goal? | Complete TS backend with OpenCode SDK agent invocation — ACHIEVED |
-| What have I learned? | session.status() is separate API, SSE stream is AsyncGenerator, TUI detection via clearPrompt heuristic, session.list() is project-scoped |
-| What have I done? | Phases 0-5 complete. Full invocation pipeline, event-driven typing, Python removal, docs rewrite, 48 tests passing |
+### Environment Notes
+- `gh` CLI unauthenticated in this environment; GitHub API and patch endpoints used instead.
 
 ---
-*Update after completing each phase or encountering errors*
+
+## Session: 2026-03-06 - Cursor parity debugging
+
+### Status
+- Cursor code path inspected.
+- Local Cursor CLI validated on this Windows machine.
+- Implementation bugs identified; patching started.
+
+### Actions Completed
+1. Compared Cursor registration/invocation code against Claude/Codex/OpenCode.
+2. Ran existing `server/tests/cursor.test.ts`, `server/tests/mcp.test.ts`, and `bun run typecheck` to establish baseline.
+3. Validated local Cursor install:
+   - `cursor.cmd` present
+   - standalone `agent.cmd` present
+   - `agent.ps1` is blocked by PowerShell execution policy
+4. Confirmed via `agent.cmd --help` that TalkTo should be using a resumable chat ID for `--resume`.
+5. Confirmed current prompt/docs guidance around `CURSOR_TRACE_ID` is inconsistent with actual CLI semantics.
+
+### Next Actions
+1. Patch `server/src/sdk/cursor.ts` discovery/auth handling.
+2. Update Cursor registration guidance in prompts and MCP tool descriptions.
+3. Add targeted tests for Cursor registration semantics.
+
+### Completed
+1. Patched `server/src/sdk/cursor.ts` for robust CLI discovery, Windows fallbacks, and auth/error handling.
+2. Updated Cursor registration guidance in README, MCP tool descriptions, and prompt templates.
+3. Added MCP test coverage for Cursor registration guidance.
+4. Posted the integration finding to TalkTo channel `#project-talkto`.
+
+### Validation
+- `bun test server/tests/cursor.test.ts` ✅
+- `bun test server/tests/mcp.test.ts` ✅
+- `bun test server/tests/prompt-engine.test.ts` ✅
+- `bun run typecheck` ✅
+
+### Environment Notes
+- Running `bun test server/tests/cursor.test.ts server/tests/mcp.test.ts` in one combined command hit `EADDRINUSE` because the server test boot path expects isolation. Running the suites separately passed.
+
+---
+
+## Session: 2026-03-07 - Workspace sharing / lifecycle stability
+
+### Status
+- New multi-feature pass started.
+- Planning refreshed from prior work and current dirty tree.
+- Architecture/lifecycle audit underway.
+
+### Requested Scope
+1. Simplify workspace sharing and critique the current cross-machine collaboration architecture.
+2. Add delete operations for channels and agents.
+3. Allow editing agent profiles and stop relying solely on agents to self-report provider type.
+4. Ship adjacent stability improvements where justified.
+
+### Next Actions
+1. Inspect workspace creation/share/join/auth code paths and current UI/API shape.
+2. Inspect channel/agent lifecycle routes, services, and frontend affordances.
+3. Inspect current provider detection logic across MCP registration and setup flows.
+
+### Completed
+1. Added `TALKTO_PUBLIC_BASE_URL` support in server config so share links and advertised MCP URLs can target a real public origin.
+2. Added admin `PATCH /api/agents/:agentName`, `DELETE /api/agents/:agentName`, and `DELETE /api/channels/:channelId`.
+3. Implemented agent/channel admin management inside the workspace settings sheet.
+4. Hardened provider detection so OpenCode evidence overrides a bad `claude_code` self-report, while explicit Codex/Cursor still short-circuit correctly.
+5. Added live invalidation events for agent/channel lifecycle changes and fixed Cursor invocability labeling in the sidebar.
+6. Added targeted API + MCP coverage and revalidated frontend build/tests.
+
+### Validation
+- `bun run typecheck` ✅
+- `bun test server/tests/mcp.test.ts` ✅
+- `bun test server/tests/api.test.ts` ✅
+- `cd frontend && bun run test` ✅
+- `cd frontend && bun run build` ✅
+
+### Environment Notes
+- Frontend `vite`/`vitest` commands hit `spawn EPERM` inside the sandbox because esbuild could not start worker processes there. Re-running those commands outside the sandbox passed without code changes.
+
+---
+
+## Session: 2026-03-07 - Context menus and test DB isolation
+
+### Status
+- Right-click operator menus shipped for project channels and agents.
+- Integration tests now use temp databases and skip live server binding.
+- Validation complete.
+
+### Requested Scope
+1. Add shadcn context menus for projects and agents so delete and related actions are available on right click.
+2. Ensure tests use a separate database so they do not populate the real product.
+3. Investigate adjacent product improvements such as image paste/forward support.
+
+### Completed
+1. Added a shared Radix/shadcn-style context-menu primitive at `frontend/src/components/ui/context-menu.tsx`.
+2. Added project-channel context menus with open/copy/delete actions in `frontend/src/components/workspace/channel-list.tsx`.
+3. Added agent context menus with DM/copy/delete actions in `frontend/src/components/workspace/agent-list.tsx`.
+4. Added frontend API coverage for channel deletion and agent update/delete requests.
+5. Added `server/tests/test-env.ts` so integration suites always use a temp `TALKTO_DATA_DIR`.
+6. Added `TALKTO_DISABLE_SERVER=1` test bootstrap handling in `server/src/index.ts` so test imports do not bind a real port.
+7. Fixed `server/tests/api.test.ts` to create its own onboarded admin user inside the isolated test DB.
+
+### Validation
+- `bun run typecheck` ✅
+- `bun test server/tests/api.test.ts server/tests/auth.test.ts server/tests/mcp.test.ts server/tests/messages-write.test.ts server/tests/ownership.test.ts server/tests/where-chaining.test.ts` ✅
+- `cd frontend && bun run test` ✅
+- `cd frontend && bun run build` ✅
+
+### Environment Notes
+- Frontend `bun run test` and `bun run build` still require execution outside the sandbox because Vite/esbuild worker spawning fails with `spawn EPERM` inside the sandbox.
+- The prior `EADDRINUSE` issue on combined server integration runs was eliminated by disabling live server bootstrap under tests.
+## Session: 2026-03-07 - Claude integration assessment
+
+### Status
+- Investigation started.
+- Failure evidence captured from the provided log artifact.
+- Local Claude executable presence confirmed.
+
+### Actions Completed
+1. Loaded current project state and prior investigation notes.
+2. Extracted `Log talkto.docx` by unpacking the `.docx` archive and reading `word/document.xml`.
+3. Confirmed the key failure in the supplied log is `Claude Code process exited with code 1` from `@anthropic-ai/claude-agent-sdk/sdk.mjs`.
+4. Confirmed local Claude CLI presence via `where.exe claude` and PowerShell command resolution.
+5. Compared TalkTo's wrapper with the installed SDK surface and found a likely contract mismatch: `permissionMode: \"bypassPermissions\"` is used without the required `allowDangerouslySkipPermissions: true`.
+6. Confirmed that `claude auth status` cannot be trusted inside the sandbox because the CLI hits `uv_spawn 'reg' EPERM` before reporting auth state.
+7. Re-ran `claude auth status` outside the sandbox and confirmed the local install reports as logged in.
+8. Ran a minimal unrestricted `claude -p` command and found a separate environment issue: the stored OAuth token is expired and headless calls currently fail with `401 authentication_error`.
+
+### Next Actions
+1. Validate the suspected permission-flag mismatch against the current SDK typings and CLI behavior.
+2. Inspect the installed SDK/CLI source to confirm whether TalkTo's missing `allowDangerouslySkipPermissions` flag is a hard validation requirement.
+3. Determine whether the break is code-level, environment/setup-level, or both.
+
+### Completed
+1. Patched `server/src/sdk/claude.ts` to include the required `allowDangerouslySkipPermissions: true` flag and to clear Claude liveness on prompt failure.
+2. Updated `prompts/claude_global_rules.md`, `prompts/registration_rules.md`, and `server/src/mcp/server.ts` to stop advertising PID fallback for Claude session registration.
+3. Added MCP-side rejection for numeric Claude session IDs.
+4. Added regression coverage in `server/tests/claude.test.ts` and `server/tests/mcp.test.ts`.
+
+### Validation
+- `bun test server/tests/claude.test.ts` ✅
+- `bun test server/tests/mcp.test.ts` ✅
+- `bun run typecheck` ✅
+
+### Follow-up Completed
+1. Patched `server/src/services/agent-invoker.ts` so Claude failures surface a clearer operator message and immediately ghost the failed agent.
+2. Patched `server/src/services/agent-discovery.ts` so stale-credential cleanup also ends active sessions and broadcasts `agent_status=offline`.
+3. Added `server/tests/agent-discovery.test.ts` for the offline/credential-clearing path.
+4. Re-validated Claude CLI after re-login; a direct `claude -p` call now succeeds.
+
+### Follow-up Validation
+- `bun test server/tests/agent-discovery.test.ts` ✅
+- `bun test server/tests/claude.test.ts` ✅
+- `bun test server/tests/mcp.test.ts` ✅
+- `bun run typecheck` ✅

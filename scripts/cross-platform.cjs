@@ -2,7 +2,7 @@
  * Cross-platform helper scripts for TalkTo.
  *
  * Usage: node scripts/cross-platform.js <command>
- *   stop    — Kill processes on ports 15377 and 3000
+ *   stop    — Kill processes on ports 15377 and 3777
  *   status  — Check if servers are listening
  *   clean   — Remove database and build artifacts
  *   nuke    — Remove node_modules (run after 'clean')
@@ -15,8 +15,8 @@ const path = require("path");
 const isWin = process.platform === "win32";
 const command = process.argv[2];
 
-const PORTS = [15377, 3000];
-const PORT_NAMES = { 15377: "Backend", 3000: "Frontend" };
+const PORTS = [15377, 3777];
+const PORT_NAMES = { 15377: "Backend", 3777: "Frontend" };
 
 function killPort(port) {
   try {
@@ -95,7 +95,7 @@ function nuke() {
 switch (command) {
   case "stop":
     for (const port of PORTS) killPort(port);
-    console.log("Killed processes on :15377 and :3000");
+    console.log("Killed processes on :15377 and :3777");
     break;
   case "status":
     for (const port of PORTS) {

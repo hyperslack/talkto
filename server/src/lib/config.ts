@@ -32,6 +32,11 @@ function envInt(key: string, fallback: number): number {
   return isNaN(parsed) ? fallback : parsed;
 }
 
+function envOptional(key: string): string | null {
+  const val = process.env[`TALKTO_${key}`]?.trim();
+  return val ? val : null;
+}
+
 function getLanIp(): string {
   try {
     const sock = createSocket("udp4");
@@ -47,8 +52,9 @@ function getLanIp(): string {
 export const config = {
   host: env("HOST", "0.0.0.0"),
   port: envInt("PORT", 15377),
-  frontendPort: envInt("FRONTEND_PORT", 3000),
+  frontendPort: envInt("FRONTEND_PORT", 3777),
   network: envBool("NETWORK", false),
+  publicBaseUrl: envOptional("PUBLIC_BASE_URL"),
   dataDir: resolve(env("DATA_DIR", resolve(BASE_DIR, "data"))),
   promptsDir: resolve(env("PROMPTS_DIR", resolve(BASE_DIR, "prompts"))),
   logLevel: env("LOG_LEVEL", "INFO"),
@@ -62,14 +68,21 @@ export const config = {
   },
 
   get baseUrl() {
+    if (this.publicBaseUrl) {
+      return this.publicBaseUrl.replace(/\/+$/, "");
+    }
     return `http://${this.advertiseHost}:${this.port}`;
   },
 
   get mcpUrl() {
-    return `${this.baseUrl}/mcp`;
+    return new URL("mcp", `${this.baseUrl}/`).toString();
   },
 
   get frontendUrl() {
     return `http://${this.advertiseHost}:${this.frontendPort}`;
   },
+
+  // Cursor CLI agent configuration
+  cursorApiKey: process.env.CURSOR_API_KEY ?? null,
+  cursorCliPath: process.env.CURSOR_CLI_PATH ?? null,
 } as const;

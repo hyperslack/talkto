@@ -1,9 +1,19 @@
 /** Sidebar channel list. */
 import type { Channel } from "@/lib/types";
-import { Hash, FolderGit2 } from "lucide-react";
+import { FolderGit2, Hash, Trash2, Copy, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useDeleteChannel } from "@/hooks/use-queries";
+import { useAppStore } from "@/stores/app-store";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 interface ChannelListProps {
   channels: Channel[];
@@ -93,8 +103,15 @@ function ChannelItem({
 }) {
   const isProjectish = channel.type === "project" || channel.name.startsWith("#project-");
   const Icon = isProjectish ? FolderGit2 : Hash;
+  const deleteChannel = useDeleteChannel();
+  const activeChannelId = useAppStore((s) => s.activeChannelId);
+  const setActiveChannelId = useAppStore((s) => s.setActiveChannelId);
 
-  return (
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(channel.name);
+  };
+
+  const button = (
     <Button
       variant="ghost"
       onClick={onClick}
@@ -117,5 +134,46 @@ function ChannelItem({
         {channel.name.replace(/^#/, "")}
       </span>
     </Button>
+  );
+
+  if (!isProjectish) {
+    return button;
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuLabel>{channel.name}</ContextMenuLabel>
+        <ContextMenuItem onSelect={onClick}>
+          <Eye className="mr-2 h-3.5 w-3.5" />
+          Open Project
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => void handleCopy()}>
+          <Copy className="mr-2 h-3.5 w-3.5" />
+          Copy Channel Name
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          destructive
+          disabled={deleteChannel.isPending}
+          onSelect={() =>
+            deleteChannel.mutate(
+              { channelId: channel.id },
+              {
+                onSuccess: () => {
+                  if (activeChannelId === channel.id) {
+                    setActiveChannelId(null);
+                  }
+                },
+              },
+            )
+          }
+        >
+          <Trash2 className="mr-2 h-3.5 w-3.5" />
+          Delete Project
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

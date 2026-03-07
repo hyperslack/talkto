@@ -6,9 +6,13 @@ import { Hono } from "hono";
 import { eq, asc, desc, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { agents, channels, channelMembers, messages, sessions, users } from "../db/schema";
+import { AgentAdminUpdateSchema } from "../types";
 import type { AgentResponse, AppBindings, ChannelResponse } from "../types";
 import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
 import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
+import { isSessionAlive as isCursorSessionAlive } from "../sdk/cursor";
+import { requireAdmin } from "../middleware/auth";
+import { deleteAgentFromWorkspace, updateAgentAdminProfile } from "../services/admin-manager";
 
 const app = new Hono<AppBindings>();
 
@@ -75,6 +79,11 @@ async function computeGhost(
   // Codex CLI agents — subprocess model, no server URL
   if (agent.agentType === "codex" && agent.providerSessionId) {
     return !(await isCodexSessionAlive(agent.providerSessionId));
+  }
+
+  // Cursor agents — MCP-only model, no server URL
+  if (agent.agentType === "cursor" && agent.providerSessionId) {
+    return !(await isCursorSessionAlive(agent.providerSessionId));
   }
 
   // OpenCode agents — REST client-server model
@@ -274,6 +283,59 @@ app.get("/:agentName", (c) => {
     return c.json({ detail: "Agent not found" }, 404);
   }
   return c.json(agentToResponse(agent, ghostCache.get(agent.id) ?? false));
+});
+
+// PATCH /agents/:agentName — admin update for agent profile/provider metadata
+app.patch("/:agentName", requireAdmin, async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = AgentAdminUpdateSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const db = getDb();
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, c.req.param("agentName")), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) {
+    return c.json({ detail: "Agent not found" }, 404);
+  }
+
+  const result = updateAgentAdminProfile(agent, {
+    description: parsed.data.description,
+    personality: parsed.data.personality,
+    currentTask: parsed.data.current_task,
+    gender: parsed.data.gender,
+    agentType: parsed.data.agent_type,
+  });
+  if (result.error) {
+    return c.json({ detail: result.error }, 400);
+  }
+  return c.json(result);
+});
+
+// DELETE /agents/:agentName — admin removal of an agent identity
+app.delete("/:agentName", requireAdmin, (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, c.req.param("agentName")), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) {
+    return c.json({ detail: "Agent not found" }, 404);
+  }
+
+  const result = deleteAgentFromWorkspace(agent);
+  if (result.error) {
+    return c.json({ detail: result.error }, 400);
+  }
+  ghostCache.delete(agent.id);
+  return c.json(result);
 });
 
 // POST /agents/:agentName/dm — get or create DM channel

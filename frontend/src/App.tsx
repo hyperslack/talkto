@@ -1,20 +1,46 @@
 import { useEffect, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Onboarding } from "@/components/onboarding";
 import { JoinWorkspace } from "@/components/join-workspace";
+import { ErrorNoticeStack } from "@/components/workspace/error-notice-stack";
 import { WorkspaceLayout } from "@/components/workspace/workspace-layout";
 import { MessageFeed } from "@/components/workspace/message-feed";
 import { useAppStore } from "@/stores/app-store";
 import { useMe, useAuthMe } from "@/hooks/use-queries";
+import { normalizeError } from "@/lib/api";
 
 // Apply dark mode class on initial load (before first paint)
 if (localStorage.getItem("talkto-dark-mode") === "true") {
   document.documentElement.classList.add("dark");
 }
 
+function pushGlobalApiNotice(error: unknown): void {
+  const normalized = normalizeError(error);
+  useAppStore.getState().showNotice({
+    key: `api:${normalized.code ?? normalized.status}:${normalized.message}`,
+    kind: normalized.retryable ? "warning" : "error",
+    title: normalized.status === 0 ? "Connection issue" : `Request failed (${normalized.status})`,
+    message: normalized.hint ? `${normalized.message} ${normalized.hint}` : normalized.message,
+    source: "api",
+    dismissAfterMs: normalized.retryable ? 7000 : 10000,
+  });
+}
+
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error, query) => {
+      if (query.meta?.["suppressGlobalError"] === true) return;
+      pushGlobalApiNotice(error);
+    },
+  }),
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) => {
+      if (mutation.meta?.["suppressGlobalError"] === true) return;
+      pushGlobalApiNotice(error);
+    },
+  }),
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
@@ -146,6 +172,7 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <AppContent />
+          <ErrorNoticeStack />
         </TooltipProvider>
       </QueryClientProvider>
     </ErrorBoundary>

@@ -2,7 +2,7 @@
  * TalkTo Setup — User-scoped provider configuration.
  *
  * Configures MCP servers and agent rules globally for each detected
- * AI coding agent provider (Claude Code, OpenCode, Codex CLI).
+ * AI coding agent provider (Claude Code, OpenCode, Codex CLI, Cursor).
  *
  * Run: bun run setup (from server/)
  */
@@ -306,6 +306,55 @@ async function configureCodex(): Promise<Provider> {
   };
 }
 
+// ── Cursor ──────────────────────────────────────────────────────
+
+async function configureCursor(): Promise<Provider> {
+  const cli = "cursor";
+  const path = await commandExists(cli);
+  const version = path ? await detectVersion(cli) : null;
+
+  const projectRulesPath = resolve(BASE_DIR, ".cursor", "rules", "talkto.mdc");
+
+  return {
+    id: "cursor",
+    name: "Cursor",
+    cli,
+    detected: !!path,
+    version,
+
+    async configMcp(): Promise<boolean> {
+      try {
+        const payload = JSON.stringify({
+          name: "talkto",
+          url: config.mcpUrl,
+        });
+        const result = await exec(cli, ["--add-mcp", payload]);
+        if (result.ok) {
+          ok(`MCP server added → ${c.dim}~/.cursor/mcp.json${c.reset}`);
+          return true;
+        }
+        fail(`MCP config failed: ${result.stderr}`);
+        return false;
+      } catch (e) {
+        fail(`MCP config failed: ${(e as Error).message}`);
+        return false;
+      }
+    },
+
+    async installRules(): Promise<boolean> {
+      try {
+        const rules = readPromptTemplate("cursor_global_rules.mdc");
+        writeFileSafe(projectRulesPath, rules);
+        ok(`Rules installed → ${c.dim}.cursor/rules/talkto.mdc${c.reset}`);
+        return true;
+      } catch (e) {
+        fail(`Rules install failed: ${(e as Error).message}`);
+        return false;
+      }
+    },
+  };
+}
+
 // ── Main ────────────────────────────────────────────────────────
 
 async function main() {
@@ -329,6 +378,7 @@ async function main() {
     configureClaude(),
     configureOpenCode(),
     configureCodex(),
+    configureCursor(),
   ]);
 
   const detected = providers.filter((p) => p.detected);
@@ -347,7 +397,7 @@ async function main() {
       `\n${c.yellow}No supported providers found.${c.reset}`
     );
     console.log(
-      `Install one of: ${c.bold}claude${c.reset}, ${c.bold}opencode${c.reset}, or ${c.bold}codex${c.reset}`
+      `Install one of: ${c.bold}claude${c.reset}, ${c.bold}opencode${c.reset}, ${c.bold}codex${c.reset}, or ${c.bold}cursor${c.reset}`
     );
     process.exit(1);
   }

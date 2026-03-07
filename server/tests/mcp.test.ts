@@ -9,6 +9,7 @@
 
 import { describe, expect, it, beforeAll } from "bun:test";
 import { Hono } from "hono";
+import "./test-env";
 
 let app: Hono;
 
@@ -150,6 +151,13 @@ async function callTool(
   return { result: response.result };
 }
 
+function apiRequest(path: string): Request {
+  return new Request(`http://localhost${path}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // MCP Session Initialization
 // ---------------------------------------------------------------------------
@@ -203,6 +211,46 @@ describe("MCP — register", () => {
     expect(typeof data.agent_name).toBe("string");
     // New registrations return master_prompt + project_channel (no status field)
     expect(data.master_prompt).toBeDefined();
+    expect(typeof data.inject_prompt).toBe("string");
+    expect(data.inject_prompt).toContain("CLAUDE_CODE_SESSION_ID");
+    expect(data.inject_prompt).not.toContain("else { $PID }");
+    expect(data.inject_prompt).not.toContain("else echo \"$$\"");
+  });
+
+  it("returns Cursor-specific registration guidance for resumable chat IDs", async () => {
+    const sessionId = await initMcpSession();
+    const { result } = await callTool(sessionId, "register", {
+      session_id: "74da3578-a43a-4453-83d3-57a60cfd8451",
+      project_path: "/tmp/test-project",
+      agent_type: "cursor",
+    });
+
+    const data = result as Record<string, unknown>;
+    expect(data.agent_name).toBeDefined();
+    expect(typeof data.inject_prompt).toBe("string");
+    expect(data.inject_prompt).toContain("create-chat");
+    expect(data.inject_prompt).toContain("agent --resume <chat_id>");
+    expect(data.inject_prompt).not.toContain("CURSOR_TRACE_ID");
+  });
+
+  it("treats OpenCode server evidence as authoritative over claude_code self-reporting", async () => {
+    const sessionId = await initMcpSession();
+    const { result } = await callTool(sessionId, "register", {
+      session_id: "test-opencode-misreport",
+      project_path: "/tmp/test-project",
+      agent_type: "claude_code",
+      server_url: "http://127.0.0.1:19877",
+    });
+
+    const data = result as Record<string, unknown>;
+    const agentName = data.agent_name as string;
+    expect(agentName).toBeDefined();
+
+    const res = await app.fetch(apiRequest(`/api/agents/${agentName}`));
+    expect(res.status).toBe(200);
+    const stored = await res.json();
+    expect(stored.agent_type).toBe("opencode");
+    expect(stored.server_url).toBe("http://127.0.0.1:19877");
   });
 
   it("reconnects with an existing agent name", async () => {
@@ -237,8 +285,26 @@ describe("MCP — register", () => {
     });
 
     const data = result as Record<string, unknown>;
-    expect(data.error).toBeDefined();
-    expect(typeof data.error).toBe("string");
+    expect(data.error).toBe("session_id is required — it's your login to TalkTo.");
+    expect(data.code).toBe("missing_session_id");
+    expect(typeof data.hint).toBe("string");
+    expect(data.retryable).toBe(true);
+  });
+
+  it("rejects numeric Claude session IDs", async () => {
+    const sessionId = await initMcpSession();
+    const { result } = await callTool(sessionId, "register", {
+      session_id: "12345",
+      project_path: "/tmp/test-project",
+      agent_type: "claude_code",
+    });
+
+    const data = result as Record<string, unknown>;
+    expect(data.error).toBe(
+      "Claude Code requires a real Claude session ID. Numeric process IDs like $PID/$$ cannot be resumed by TalkTo."
+    );
+    expect(data.code).toBe("invalid_claude_session_id");
+    expect(typeof data.hint).toBe("string");
   });
 });
 
@@ -255,7 +321,9 @@ describe("MCP — Tools Require Registration", () => {
     });
 
     const data = result as Record<string, unknown>;
-    expect(data.error).toBe("Not registered. Call register first.");
+    expect(data.error).toBe("Not registered with TalkTo.");
+    expect(data.code).toBe("not_registered");
+    expect(typeof data.hint).toBe("string");
   });
 
   it("get_messages fails without registration", async () => {
@@ -263,7 +331,8 @@ describe("MCP — Tools Require Registration", () => {
     const { result } = await callTool(sessionId, "get_messages", {});
 
     const data = result as Record<string, unknown>;
-    expect(data.error).toBe("Not registered. Call register first.");
+    expect(data.error).toBe("Not registered with TalkTo.");
+    expect(data.code).toBe("not_registered");
   });
 
   it("heartbeat fails without registration", async () => {
@@ -271,7 +340,8 @@ describe("MCP — Tools Require Registration", () => {
     const { result } = await callTool(sessionId, "heartbeat", {});
 
     const data = result as Record<string, unknown>;
-    expect(data.error).toBe("Not registered. Call register first.");
+    expect(data.error).toBe("Not registered with TalkTo.");
+    expect(data.code).toBe("not_registered");
   });
 });
 

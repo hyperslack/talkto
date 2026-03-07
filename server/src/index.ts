@@ -268,7 +268,11 @@ app.get("*", serveStatic({ path: resolve(frontendDist, "index.html") }));
 // Start liveness background task
 // ---------------------------------------------------------------------------
 
-startLivenessTask();
+const disableServerBootstrap = process.env.TALKTO_DISABLE_SERVER === "1";
+
+if (!disableServerBootstrap) {
+  startLivenessTask();
+}
 
 // ---------------------------------------------------------------------------
 // Reconnect OpenCode MCP clients after server restart
@@ -335,7 +339,9 @@ async function reconnectOpenCodeMcpClients() {
 }
 
 // Run after a short delay so the HTTP server is fully ready to accept MCP connections
-setTimeout(reconnectOpenCodeMcpClients, 2000);
+if (!disableServerBootstrap) {
+  setTimeout(reconnectOpenCodeMcpClients, 2000);
+}
 
 // ---------------------------------------------------------------------------
 // WebSocket auth — resolve workspace + user before upgrading
@@ -385,7 +391,10 @@ async function resolveWsAuth(
 // Bun server with WebSocket support
 // ---------------------------------------------------------------------------
 
-const server = Bun.serve({
+let server: ReturnType<typeof Bun.serve> | null = null;
+
+if (!disableServerBootstrap) {
+server = Bun.serve({
   port: config.port,
   hostname: config.host,
   async fetch(req, server) {
@@ -500,13 +509,16 @@ console.log(
 );
 console.log(`[SERVER] WebSocket at ws://${config.advertiseHost}:${config.port}/ws`);
 console.log(`[SERVER] MCP at ${config.mcpUrl} (placeholder)`);
+} else {
+  console.log("[SERVER] Bootstrap disabled via TALKTO_DISABLE_SERVER=1");
+}
 
 // Graceful shutdown — shared cleanup logic
 function gracefulShutdown(signal: string) {
   console.log(`\n[SERVER] Shutting down (${signal})...`);
   stopLivenessTask();
   closeDb();
-  server.stop();
+  server?.stop();
   process.exit(0);
 }
 
@@ -525,7 +537,7 @@ process.on("SIGHUP", () => gracefulShutdown("SIGHUP"));
 process.on("beforeExit", () => {
   stopLivenessTask();
   closeDb();
-  server.stop();
+  server?.stop();
 });
 
 export { app, server };

@@ -230,7 +230,7 @@ export const agents = sqliteTable(
       .primaryKey()
       .references(() => users.id),
     agentName: text("agent_name").notNull().unique(),
-    agentType: text("agent_type").notNull(), // "opencode" | "claude_code" | "codex" | "system"
+    agentType: text("agent_type").notNull(), // "opencode" | "claude_code" | "codex" | "cursor" | "system"
     projectPath: text("project_path").notNull(),
     projectName: text("project_name").notNull(),
     status: text("status").notNull().default("offline"),
