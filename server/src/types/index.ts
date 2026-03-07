@@ -46,6 +46,15 @@ export const ChannelCreateSchema = z.object({
 });
 export type ChannelCreate = z.infer<typeof ChannelCreateSchema>;
 
+export const ChannelRenameSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(80)
+    .regex(/^#?[a-z0-9][a-z0-9_-]*$/),
+});
+export type ChannelRename = z.infer<typeof ChannelRenameSchema>;
+
 export const ChannelTopicSchema = z.object({
   topic: z.string().max(500),
 });

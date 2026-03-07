@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { eq, asc, and, gt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
-import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
+import { ChannelCreateSchema, ChannelRenameSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
@@ -156,6 +156,47 @@ app.post("/", async (c) => {
 
   const channel = db.select().from(channels).where(eq(channels.id, id)).get()!;
   return c.json(channelToResponse(channel), 201);
+});
+
+// PATCH /channels/:channelId/name — rename a channel
+app.patch("/:channelId/name", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelRenameSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+  if (channel.type === "general") {
+    return c.json({ detail: "Cannot rename the #general channel" }, 400);
+  }
+
+  const newName = parsed.data.name.startsWith("#")
+    ? parsed.data.name
+    : `#${parsed.data.name}`;
+
+  // Check uniqueness within workspace
+  const db = getDb();
+  const existing = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.name, newName), eq(channels.workspaceId, auth.workspaceId)))
+    .get();
+  if (existing && existing.id !== channel.id) {
+    return c.json({ detail: `Channel ${newName} already exists` }, 409);
+  }
+
+  db.update(channels)
+    .set({ name: newName })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
 });
 
 // PATCH /channels/:channelId/topic — set channel topic
