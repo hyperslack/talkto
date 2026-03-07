@@ -1,12 +1,15 @@
 /**
  * API route tests — test Hono routes via app.fetch().
  *
- * Uses the actual database (same SQLite file as dev) for integration testing.
- * Note: These tests read from the existing database — they're read-heavy.
+ * Uses an isolated temp database for integration testing.
  */
 
 import { describe, expect, it, beforeAll } from "bun:test";
 import { Hono } from "hono";
+import "./test-env";
+import { eq } from "drizzle-orm";
+import { DEFAULT_WORKSPACE_ID, getDb } from "../src/db";
+import { agents, channels, users } from "../src/db/schema";
 
 // We test against the actual app
 let app: Hono;
@@ -16,6 +19,12 @@ beforeAll(async () => {
   process.env.TALKTO_PORT = "8099";
   const mod = await import("../src/index");
   app = mod.app;
+
+  const onboardRes = await app.fetch(req("POST", "/api/users/onboard", {
+    name: "api-test-boss",
+    display_name: "the Boss",
+  }));
+  expect(onboardRes.status).toBe(201);
 });
 
 function req(method: string, path: string, body?: unknown) {
@@ -78,6 +87,22 @@ describe("Channels API", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("DELETE /api/channels/:id removes a custom channel", async () => {
+    const createRes = await app.fetch(req("POST", "/api/channels", {
+      name: `delete-me-${Date.now()}`,
+    }));
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+
+    const deleteRes = await app.fetch(req("DELETE", `/api/channels/${created.id}`));
+    expect(deleteRes.status).toBe(200);
+    const deleted = await deleteRes.json();
+    expect(deleted.deleted).toBe(true);
+
+    const getRes = await app.fetch(req("GET", `/api/channels/${created.id}`));
+    expect(getRes.status).toBe(404);
+  });
 });
 
 describe("Agents API", () => {
@@ -117,6 +142,91 @@ describe("Agents API", () => {
   it("GET /api/agents/:name returns 404 for unknown", async () => {
     const res = await app.fetch(req("GET", "/api/agents/nonexistent-agent"));
     expect(res.status).toBe(404);
+  });
+
+  it("PATCH /api/agents/:name updates an agent profile", async () => {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const userId = crypto.randomUUID();
+    const agentName = `api-update-agent-${Date.now()}`;
+
+    db.insert(users)
+      .values({ id: userId, name: agentName, type: "agent", createdAt: now })
+      .run();
+    db.insert(agents)
+      .values({
+        id: userId,
+        agentName,
+        agentType: "claude_code",
+        projectPath: "/tmp/api-update-agent",
+        projectName: "api-update-agent",
+        status: "online",
+        providerSessionId: "api-update-session",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      })
+      .run();
+
+    const res = await app.fetch(req("PATCH", `/api/agents/${agentName}`, {
+      description: "updated from api test",
+      current_task: "route verification",
+      agent_type: "cursor",
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.agent_name).toBe(agentName);
+    expect(data.agent_type).toBe("cursor");
+    expect(data.current_task).toBe("route verification");
+
+    const stored = db.select().from(agents).where(eq(agents.agentName, agentName)).get();
+    expect(stored?.description).toBe("updated from api test");
+    expect(stored?.agentType).toBe("cursor");
+    expect(stored?.providerSessionId).toBeNull();
+    expect(stored?.serverUrl).toBeNull();
+    expect(stored?.status).toBe("offline");
+  });
+
+  it("DELETE /api/agents/:name removes a non-system agent", async () => {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const userId = crypto.randomUUID();
+    const agentName = `api-delete-agent-${Date.now()}`;
+    const dmChannelId = crypto.randomUUID();
+
+    db.insert(users)
+      .values({ id: userId, name: agentName, type: "agent", createdAt: now })
+      .run();
+    db.insert(agents)
+      .values({
+        id: userId,
+        agentName,
+        agentType: "claude_code",
+        projectPath: "/tmp/api-delete-agent",
+        projectName: "api-delete-agent",
+        status: "online",
+        providerSessionId: "delete-session",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      })
+      .run();
+    db.insert(channels)
+      .values({
+        id: dmChannelId,
+        name: `#dm-${agentName}`,
+        type: "dm",
+        createdBy: userId,
+        createdAt: now,
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      })
+      .run();
+
+    const res = await app.fetch(req("DELETE", `/api/agents/${agentName}`));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.deleted).toBe(true);
+
+    const storedAgent = db.select().from(agents).where(eq(agents.agentName, agentName)).get();
+    expect(storedAgent).toBeUndefined();
+    const storedDm = db.select().from(channels).where(eq(channels.id, dmChannelId)).get();
+    expect(storedDm).toBeUndefined();
   });
 });
 

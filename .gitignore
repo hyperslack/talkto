@@ -28,3 +28,10 @@ progress.md
 
 # OS
 .DS_Store
+
+# Local agent/editor state
+.serena/
+.mcp.json
+debug.log
+tmp_logtalkto/
+Log talkto.docx
