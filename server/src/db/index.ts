@@ -300,6 +300,20 @@ function createTables(sqlite: Database) {
     );
   `);
 
+  // user_preferences table
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      theme TEXT DEFAULT 'system',
+      notify_mentions INTEGER NOT NULL DEFAULT 1,
+      notify_dms INTEGER NOT NULL DEFAULT 1,
+      notify_all INTEGER NOT NULL DEFAULT 0,
+      compact_mode INTEGER NOT NULL DEFAULT 0,
+      timezone TEXT,
+      updated_at TEXT
+    );
+  `);
+
   // message_reactions table
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS message_reactions (

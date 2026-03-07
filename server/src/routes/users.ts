@@ -16,6 +16,7 @@ import {
   featureRequests,
   featureVotes,
   userSessions,
+  userPreferences,
 } from "../db/schema";
 import { UserOnboardSchema } from "../types";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
@@ -277,6 +278,86 @@ app.delete("/me", (c) => {
     db.delete(users).where(eq(users.id, user.id)).run();
   }
   return c.body(null, 204);
+});
+
+// GET /users/me/preferences — get user preferences
+app.get("/me/preferences", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  const prefs = db.select().from(userPreferences).where(eq(userPreferences.userId, user.id)).get();
+  if (!prefs) {
+    return c.json({
+      theme: "system",
+      notify_mentions: true,
+      notify_dms: true,
+      notify_all: false,
+      compact_mode: false,
+      timezone: null,
+    });
+  }
+
+  return c.json({
+    theme: prefs.theme,
+    notify_mentions: Boolean(prefs.notifyMentions),
+    notify_dms: Boolean(prefs.notifyDMs),
+    notify_all: Boolean(prefs.notifyAll),
+    compact_mode: Boolean(prefs.compactMode),
+    timezone: prefs.timezone,
+  });
+});
+
+// PATCH /users/me/preferences — update user preferences
+app.patch("/me/preferences", async (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  const body = await c.req.json();
+  const now = new Date().toISOString();
+
+  const existing = db.select().from(userPreferences).where(eq(userPreferences.userId, user.id)).get();
+
+  const updates: Record<string, unknown> = { updatedAt: now };
+  if (body.theme !== undefined) updates.theme = body.theme;
+  if (body.notify_mentions !== undefined) updates.notifyMentions = body.notify_mentions ? 1 : 0;
+  if (body.notify_dms !== undefined) updates.notifyDMs = body.notify_dms ? 1 : 0;
+  if (body.notify_all !== undefined) updates.notifyAll = body.notify_all ? 1 : 0;
+  if (body.compact_mode !== undefined) updates.compactMode = body.compact_mode ? 1 : 0;
+  if (body.timezone !== undefined) updates.timezone = body.timezone;
+
+  if (existing) {
+    db.update(userPreferences).set(updates).where(eq(userPreferences.userId, user.id)).run();
+  } else {
+    db.insert(userPreferences).values({
+      userId: user.id,
+      theme: (updates.theme as string) ?? "system",
+      notifyMentions: (updates.notifyMentions as number) ?? 1,
+      notifyDMs: (updates.notifyDMs as number) ?? 1,
+      notifyAll: (updates.notifyAll as number) ?? 0,
+      compactMode: (updates.compactMode as number) ?? 0,
+      timezone: (updates.timezone as string) ?? null,
+      updatedAt: now,
+    }).run();
+  }
+
+  // Return updated prefs
+  const prefs = db.select().from(userPreferences).where(eq(userPreferences.userId, user.id)).get()!;
+  return c.json({
+    theme: prefs.theme,
+    notify_mentions: Boolean(prefs.notifyMentions),
+    notify_dms: Boolean(prefs.notifyDMs),
+    notify_all: Boolean(prefs.notifyAll),
+    compact_mode: Boolean(prefs.compactMode),
+    timezone: prefs.timezone,
+  });
 });
 
 export default app;
