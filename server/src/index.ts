@@ -165,6 +165,82 @@ app.get("/api/search", (c) => {
   return c.json({ query, results, count: results.length });
 });
 
+// GET /api/activity — workspace activity summary
+app.get("/api/activity", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const workspaceId = auth.workspaceId;
+
+  const period = c.req.query("period") ?? "24h";
+  let cutoff: string;
+  const now = new Date();
+  switch (period) {
+    case "1h":
+      cutoff = new Date(now.getTime() - 3600_000).toISOString();
+      break;
+    case "7d":
+      cutoff = new Date(now.getTime() - 7 * 86400_000).toISOString();
+      break;
+    case "30d":
+      cutoff = new Date(now.getTime() - 30 * 86400_000).toISOString();
+      break;
+    default: // 24h
+      cutoff = new Date(now.getTime() - 86400_000).toISOString();
+  }
+
+  // Total messages in period
+  const msgCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(eq(channels.workspaceId, workspaceId), sql`${messages.createdAt} > ${cutoff}`))
+    .get();
+
+  // Active channels (channels with messages in period)
+  const activeChannels = db
+    .select({ count: sql<number>`count(DISTINCT ${messages.channelId})` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(eq(channels.workspaceId, workspaceId), sql`${messages.createdAt} > ${cutoff}`))
+    .get();
+
+  // Active senders
+  const activeSenders = db
+    .select({ count: sql<number>`count(DISTINCT ${messages.senderId})` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(eq(channels.workspaceId, workspaceId), sql`${messages.createdAt} > ${cutoff}`))
+    .get();
+
+  // Top channels by message count
+  const topChannels = db
+    .select({
+      channelId: messages.channelId,
+      channelName: channels.name,
+      count: sql<number>`count(*)`,
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(eq(channels.workspaceId, workspaceId), sql`${messages.createdAt} > ${cutoff}`))
+    .groupBy(messages.channelId)
+    .orderBy(desc(sql`count(*)`))
+    .limit(5)
+    .all();
+
+  return c.json({
+    period,
+    since: cutoff,
+    message_count: msgCount?.count ?? 0,
+    active_channels: activeChannels?.count ?? 0,
+    active_senders: activeSenders?.count ?? 0,
+    top_channels: topChannels.map((ch) => ({
+      channel_id: ch.channelId,
+      channel_name: ch.channelName,
+      message_count: ch.count,
+    })),
+  });
+});
+
 // ---------------------------------------------------------------------------
 // MCP Server — streamable HTTP transport at /mcp
 // ---------------------------------------------------------------------------

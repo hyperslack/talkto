@@ -243,6 +243,22 @@ export function pinMessage(channelId: string, messageId: string) {
   );
 }
 
+// ── Activity ───────────────────────────────────────────
+
+export interface ActivitySummary {
+  period: string;
+  since: string;
+  message_count: number;
+  active_channels: number;
+  active_senders: number;
+  top_channels: { channel_id: string; channel_name: string; message_count: number }[];
+}
+
+export function getActivity(period?: "1h" | "24h" | "7d" | "30d") {
+  const qs = period ? `?period=${period}` : "";
+  return request<ActivitySummary>(`/activity${qs}`);
+}
+
 // ── Agents ─────────────────────────────────────────────
 
 export function listAgents() {
