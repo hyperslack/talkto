@@ -279,6 +279,37 @@ app.post("/:messageId/pin", (c) => {
   });
 });
 
+// GET /channels/:channelId/messages/reactions/summary — emoji usage stats for a channel
+app.get("/reactions/summary", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const rows = db
+    .select({
+      emoji: messageReactions.emoji,
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messageReactions)
+    .innerJoin(messages, eq(messageReactions.messageId, messages.id))
+    .where(eq(messages.channelId, channelId))
+    .groupBy(messageReactions.emoji)
+    .orderBy(sql`count(*) DESC`)
+    .limit(20)
+    .all();
+
+  return c.json({
+    channel_id: channelId,
+    emojis: rows.map((r) => ({ emoji: r.emoji, count: r.count })),
+    total: rows.reduce((sum, r) => sum + r.count, 0),
+  });
+});
+
 // GET /channels/:channelId/messages/pinned — get pinned messages
 app.get("/pinned", (c) => {
   const auth = c.get("auth");
