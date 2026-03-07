@@ -35,6 +35,29 @@ describe("api error handling", () => {
     });
   });
 
+  it("uses detail payloads as the user-facing message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: "Cannot delete the #general channel",
+          }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ),
+    );
+
+    await expect(listChannels()).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Cannot delete the #general channel",
+      status: 400,
+    });
+  });
+
   it("normalizes network failures", () => {
     const error = normalizeError(new Error("socket hang up"));
     expect(error).toBeInstanceOf(ApiError);

@@ -8,6 +8,7 @@ const BASE = "/api";
 
 interface ApiErrorPayload {
   error?: unknown;
+  detail?: unknown;
   code?: unknown;
   hint?: unknown;
   retryable?: unknown;
@@ -45,6 +46,7 @@ function extractMessage(payload: unknown, fallback: string): string {
   if (typeof payload === "string" && payload.trim()) return payload;
   if (isRecord(payload)) {
     if (typeof payload.message === "string" && payload.message.trim()) return payload.message;
+    if (typeof payload.detail === "string" && payload.detail.trim()) return payload.detail;
     if (typeof payload.error === "string" && payload.error.trim()) return payload.error;
     try {
       return JSON.stringify(payload);
