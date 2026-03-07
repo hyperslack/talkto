@@ -1,6 +1,6 @@
 /** Individual message bubble — lazy-loads markdown renderer for rich content. */
 import type { Message } from "@/lib/types";
-import { Bot, User, Trash2, Pin, Pencil, Check, X, Reply, SmilePlus } from "lucide-react";
+import { Bot, User, Trash2, Pin, Pencil, Check, X, Reply, SmilePlus, Link } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isPlainText, formatTime, formatFullTimestamp } from "@/lib/message-utils";
 import { highlightMentions } from "@/lib/highlight-mentions";
@@ -76,6 +76,16 @@ export function MessageBubble({
       {/* Action buttons — appear on hover */}
       {!editing && (
         <div className="absolute right-2 top-1 z-10 flex items-center gap-0.5">
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/?channel=${message.channel_id}&message=${message.id}`;
+              navigator.clipboard.writeText(url);
+            }}
+            className="rounded p-1 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground/50 hover:!text-primary"
+            title="Copy link to message"
+          >
+            <Link className="h-3.5 w-3.5" />
+          </button>
           {onReply && (
             <button
               onClick={() => onReply(message)}
