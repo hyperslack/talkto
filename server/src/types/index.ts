@@ -56,12 +56,18 @@ export interface ChannelResponse {
   name: string;
   type: string;
   topic?: string | null;
+  slow_mode_seconds?: number;
   project_path?: string | null;
   created_by: string;
   created_at: string;
   is_archived?: boolean;
   archived_at?: string | null;
 }
+
+export const ChannelSlowModeSchema = z.object({
+  seconds: z.number().int().min(0).max(86400), // 0 to 24h
+});
+export type ChannelSlowMode = z.infer<typeof ChannelSlowModeSchema>;
 
 // ---------------------------------------------------------------------------
 // Message

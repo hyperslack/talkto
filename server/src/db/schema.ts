@@ -298,6 +298,7 @@ export const channels = sqliteTable(
     projectPath: text("project_path"),
     createdBy: text("created_by").notNull(), // user UUID or "system" — NOT a FK
     createdAt: text("created_at").notNull(),
+    slowModeSeconds: integer("slow_mode_seconds").default(0), // 0 = disabled
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),
     workspaceId: text("workspace_id")

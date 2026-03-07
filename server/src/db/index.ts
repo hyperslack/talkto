@@ -230,6 +230,7 @@ function createTables(sqlite: Database) {
       project_path TEXT,
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      slow_mode_seconds INTEGER DEFAULT 0,
       is_archived INTEGER NOT NULL DEFAULT 0,
       archived_at TEXT,
       workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -348,6 +349,11 @@ function migrateUp(sqlite: Database) {
   // Migration: add topic column to channels
   if (!hasColumn("channels", "topic")) {
     sqlite.exec("ALTER TABLE channels ADD COLUMN topic TEXT");
+  }
+
+  // Migration: add slow_mode_seconds to channels
+  if (!hasColumn("channels", "slow_mode_seconds")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN slow_mode_seconds INTEGER DEFAULT 0");
   }
 }
 
