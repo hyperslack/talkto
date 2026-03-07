@@ -7,6 +7,23 @@
 import { create } from "zustand";
 import type { AuthInfo, Message, UiNotice, Workspace } from "@/lib/types";
 
+function readStarredChannels(): Set<string> {
+  try {
+    const raw = localStorage.getItem("talkto-starred-channels");
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function writeStarredChannels(ids: Set<string>): void {
+  try {
+    localStorage.setItem("talkto-starred-channels", JSON.stringify([...ids]));
+  } catch {
+    // Storage unavailable
+  }
+}
+
 function readDarkMode(): boolean {
   try {
     return localStorage.getItem("talkto-dark-mode") === "true";
@@ -19,7 +36,7 @@ function writeDarkMode(value: boolean): void {
   try {
     localStorage.setItem("talkto-dark-mode", String(value));
   } catch {
-    // Storage unavailable (test env, etc.)
+    // Storage unavailable
   }
 }
 
@@ -27,7 +44,7 @@ function applyDarkClass(dark: boolean): void {
   try {
     document.documentElement.classList.toggle("dark", dark);
   } catch {
-    // DOM unavailable (test env, etc.)
+    // DOM unavailable
   }
 }
 
@@ -49,7 +66,12 @@ interface AppState {
   setAgentStatus: (name: string, status: "online" | "offline") => void;
 
   typingAgents: Map<string, Set<string>>;
-  setAgentTyping: (channelId: string, agentName: string, isTyping: boolean, error?: string) => void;
+  setAgentTyping: (
+    channelId: string,
+    agentName: string,
+    isTyping: boolean,
+    error?: string,
+  ) => void;
 
   streamingMessages: Map<string, Map<string, string>>;
   appendStreamingDelta: (channelId: string, agentName: string, delta: string) => void;
@@ -65,6 +87,9 @@ interface AppState {
   notices: UiNotice[];
   showNotice: (notice: Omit<UiNotice, "id"> & { id?: string }) => string;
   dismissNotice: (noticeId: string) => void;
+
+  starredChannels: Set<string>;
+  toggleStarredChannel: (channelId: string) => void;
 
   darkMode: boolean;
   toggleDarkMode: () => void;
@@ -199,6 +224,19 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({
       notices: s.notices.filter((notice) => notice.id !== noticeId),
     })),
+
+  starredChannels: readStarredChannels(),
+  toggleStarredChannel: (channelId) =>
+    set((s) => {
+      const next = new Set(s.starredChannels);
+      if (next.has(channelId)) {
+        next.delete(channelId);
+      } else {
+        next.add(channelId);
+      }
+      writeStarredChannels(next);
+      return { starredChannels: next };
+    }),
 
   darkMode: readDarkMode(),
   toggleDarkMode: () =>

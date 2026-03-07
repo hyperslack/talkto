@@ -1,6 +1,6 @@
 /** Sidebar channel list. */
 import type { Channel } from "@/lib/types";
-import { FolderGit2, Hash, Trash2, Copy, Eye } from "lucide-react";
+import { Copy, Eye, FolderGit2, Hash, Star, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,10 +28,15 @@ export function ChannelList({
   onSelectChannel,
   isLoading,
 }: ChannelListProps) {
-  // Filter out DM channels — those are accessed via agent list
+  const starredChannels = useAppStore((s) => s.starredChannels);
+  const toggleStarredChannel = useAppStore((s) => s.toggleStarredChannel);
+
+  // Filter out DM channels, which are accessed from the agent list.
   const visibleChannels = channels.filter((c) => c.type !== "dm");
-  const generalChannels = visibleChannels.filter((c) => c.type === "general");
-  const projectChannels = visibleChannels.filter((c) => c.type !== "general");
+  const starred = visibleChannels.filter((c) => starredChannels.has(c.id));
+  const unstarred = visibleChannels.filter((c) => !starredChannels.has(c.id));
+  const generalChannels = unstarred.filter((c) => c.type === "general");
+  const projectChannels = unstarred.filter((c) => c.type !== "general");
 
   if (isLoading) {
     return (
@@ -53,7 +58,26 @@ export function ChannelList({
 
   return (
     <div className="space-y-1">
-      {/* Section: Channels */}
+      {starred.length > 0 && (
+        <>
+          <div className="px-3 py-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+              Starred
+            </span>
+          </div>
+          {starred.map((channel) => (
+            <ChannelItem
+              key={channel.id}
+              channel={channel}
+              isActive={channel.id === activeChannelId}
+              isStarred
+              onToggleStar={() => toggleStarredChannel(channel.id)}
+              onClick={() => onSelectChannel(channel.id)}
+            />
+          ))}
+        </>
+      )}
+
       <div className="px-3 py-1.5">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
           Channels
@@ -65,11 +89,12 @@ export function ChannelList({
           key={channel.id}
           channel={channel}
           isActive={channel.id === activeChannelId}
+          isStarred={false}
+          onToggleStar={() => toggleStarredChannel(channel.id)}
           onClick={() => onSelectChannel(channel.id)}
         />
       ))}
 
-      {/* Section: Projects */}
       {projectChannels.length > 0 && (
         <>
           <div className="px-3 pb-1 pt-3">
@@ -83,6 +108,8 @@ export function ChannelList({
               key={channel.id}
               channel={channel}
               isActive={channel.id === activeChannelId}
+              isStarred={false}
+              onToggleStar={() => toggleStarredChannel(channel.id)}
               onClick={() => onSelectChannel(channel.id)}
             />
           ))}
@@ -95,10 +122,14 @@ export function ChannelList({
 function ChannelItem({
   channel,
   isActive,
+  isStarred,
+  onToggleStar,
   onClick,
 }: {
   channel: Channel;
   isActive: boolean;
+  isStarred?: boolean;
+  onToggleStar?: () => void;
   onClick: () => void;
 }) {
   const isProjectish = channel.type === "project" || channel.name.startsWith("#project-");
@@ -122,27 +153,49 @@ function ChannelItem({
           : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50",
       )}
     >
-      {/* Active indicator — left border accent */}
       {isActive && (
-        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-full bg-primary" />
+        <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
       )}
-      <Icon className={cn(
-        "h-3.5 w-3.5 shrink-0",
-        isActive ? "opacity-80" : "opacity-50",
-      )} />
-      <span className="truncate">
-        {channel.name.replace(/^#/, "")}
-      </span>
+      <Icon
+        className={cn(
+          "h-3.5 w-3.5 shrink-0",
+          isActive ? "opacity-80" : "opacity-50",
+        )}
+      />
+      <span className="truncate">{channel.name.replace(/^#/, "")}</span>
     </Button>
   );
 
+  const item = (
+    <div className="group/item relative flex items-center">
+      {button}
+      {onToggleStar && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleStar();
+          }}
+          className={cn(
+            "absolute right-2 rounded p-0.5 transition-colors",
+            isStarred
+              ? "text-yellow-500 hover:text-yellow-600"
+              : "text-transparent group-hover/item:text-sidebar-foreground/30 hover:!text-yellow-500",
+          )}
+          title={isStarred ? "Unstar channel" : "Star channel"}
+        >
+          <Star className={cn("h-3 w-3", isStarred && "fill-current")} />
+        </button>
+      )}
+    </div>
+  );
+
   if (!isProjectish) {
-    return button;
+    return item;
   }
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>{button}</ContextMenuTrigger>
+      <ContextMenuTrigger asChild>{item}</ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuLabel>{channel.name}</ContextMenuLabel>
         <ContextMenuItem onSelect={onClick}>
