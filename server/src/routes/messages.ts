@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { eq, desc, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, messages, users, messageReactions } from "../db/schema";
+import { z } from "zod";
 import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema } from "../types";
 import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEvent, reactionEvent } from "../services/broadcaster";
 import { invokeForMessage } from "../services/agent-invoker";
@@ -504,6 +505,86 @@ app.get("/:messageId/reactions", (c) => {
   }));
 
   return c.json(result);
+});
+
+// POST /channels/:channelId/messages/:messageId/forward — forward message to another channel
+app.post("/:messageId/forward", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const body = await safeJsonBody(c);
+  if (body === null) return c.json({ detail: "Invalid JSON body" }, 400);
+
+  const parsed = z.object({ target_channel_id: z.string().min(1) }).safeParse(body);
+  if (!parsed.success) return c.json({ detail: parsed.error.message }, 400);
+
+  const db = getDb();
+
+  // Verify source channel
+  const sourceChannel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!sourceChannel) return c.json({ detail: "Source channel not found" }, 404);
+
+  // Verify target channel
+  const targetChannel = getChannelInWorkspace(parsed.data.target_channel_id, auth.workspaceId);
+  if (!targetChannel) return c.json({ detail: "Target channel not found" }, 404);
+
+  // Verify message exists in source channel
+  const msg = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!msg) return c.json({ detail: "Message not found" }, 404);
+  if (msg.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  // Cannot forward to same channel
+  if (channelId === parsed.data.target_channel_id) {
+    return c.json({ detail: "Cannot forward to the same channel" }, 400);
+  }
+
+  // Get original sender name
+  const sender = db.select().from(users).where(eq(users.id, msg.senderId)).get();
+  const senderName = sender?.displayName ?? sender?.name ?? "Unknown";
+
+  // Get forwarding user
+  const forwarder = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : null;
+  if (!forwarder) return c.json({ detail: "No user onboarded" }, 400);
+
+  // Create forwarded message with attribution
+  const forwardedContent = `📨 *Forwarded from ${sourceChannel.name}*\n> **${senderName}**: ${msg.content}`;
+  const newMsgId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  db.insert(messages)
+    .values({
+      id: newMsgId,
+      channelId: parsed.data.target_channel_id,
+      senderId: forwarder.id,
+      content: forwardedContent,
+      createdAt: now,
+    })
+    .run();
+
+  // Broadcast
+  broadcastEvent(
+    newMessageEvent({
+      messageId: newMsgId,
+      channelId: parsed.data.target_channel_id,
+      senderId: forwarder.id,
+      senderName: forwarder.displayName ?? forwarder.name,
+      content: forwardedContent,
+      createdAt: now,
+      senderType: "human",
+    }),
+    auth.workspaceId
+  );
+
+  return c.json({
+    id: newMsgId,
+    original_message_id: messageId,
+    source_channel_id: channelId,
+    target_channel_id: parsed.data.target_channel_id,
+    content: forwardedContent,
+    created_at: now,
+  }, 201);
 });
 
 export default app;
