@@ -21,5 +21,8 @@ export default {
     ],
     // Keep subject concise
     "header-max-length": [2, "always", 100],
+    // Cursor/Codex often generate detailed wrapped bodies. We only enforce the conventional header.
+    "body-max-line-length": [0, "always"],
+    "footer-max-line-length": [0, "always"],
   },
 };
