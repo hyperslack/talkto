@@ -510,3 +510,34 @@ export const messageReactionsRelations = relations(messageReactions, ({ one }) =
     references: [users.id],
   }),
 }));
+
+// ---------------------------------------------------------------------------
+// muted_channels — per-user channel mute preferences
+// ---------------------------------------------------------------------------
+
+export const mutedChannels = sqliteTable(
+  "muted_channels",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    mutedAt: text("muted_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.channelId] }),
+  ]
+);
+
+export const mutedChannelsRelations = relations(mutedChannels, ({ one }) => ({
+  user: one(users, {
+    fields: [mutedChannels.userId],
+    references: [users.id],
+  }),
+  channel: one(channels, {
+    fields: [mutedChannels.channelId],
+    references: [channels.id],
+  }),
+}));
