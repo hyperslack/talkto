@@ -159,6 +159,12 @@ export function createChannel(name: string) {
 export function deleteChannel(channelId: string) {
   return request<{ deleted: boolean; id: string; name: string }>(`/channels/${channelId}`, {
     method: "DELETE",
+});
+
+export function setChannelDescription(channelId: string, description: string) {
+  return request<Channel>(`/channels/${channelId}/description`, {
+    method: "PATCH",
+    body: JSON.stringify({ description }),
   });
 }
 

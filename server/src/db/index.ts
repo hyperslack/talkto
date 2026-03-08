@@ -431,6 +431,14 @@ function runMigrations(sqlite: Database) {
   // Uses a sentinel pragma to avoid re-running on subsequent boots.
   // ---------------------------------------------------------------
   migrateCascadeFks(sqlite);
+  fixMessagesSelfRefFk(sqlite);
+
+  // ---------------------------------------------------------------
+  // Migration 7: Add description column to channels
+  // ---------------------------------------------------------------
+  if (!hasColumn("channels", "description")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN description TEXT");
+  }
 }
 
 /**
@@ -734,6 +742,55 @@ function migrateCascadeFks(sqlite: Database) {
     sqlite.exec("ROLLBACK");
     sqlite.exec("PRAGMA foreign_keys = ON");
     console.error("[DB] Migration 5 failed:", err);
+    throw err;
+  }
+}
+
+function fixMessagesSelfRefFk(sqlite: Database) {
+  const version = (sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+  if (version >= 2) return; // Already fixed
+
+  // Check if the bug is present: parent_id references messages_new
+  const tableInfo = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'").get() as { sql: string } | undefined;
+  if (!tableInfo || !tableInfo.sql.includes("messages_new")) {
+    // Not affected, just bump version
+    sqlite.exec("PRAGMA user_version = 2");
+    return;
+  }
+
+  sqlite.exec("PRAGMA foreign_keys = OFF");
+  sqlite.exec("BEGIN TRANSACTION");
+  try {
+    sqlite.exec(`CREATE TABLE messages_v2 (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      mentions TEXT,
+      parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
+      pinned_at TEXT,
+      pinned_by TEXT,
+      edited_at TEXT,
+      created_at TEXT NOT NULL
+    )`);
+    sqlite.exec(
+      "INSERT INTO messages_v2 (id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at) " +
+      "SELECT id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at FROM messages"
+    );
+    sqlite.exec("DROP TABLE messages");
+    sqlite.exec("ALTER TABLE messages_v2 RENAME TO messages");
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)");
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
+
+    sqlite.exec("PRAGMA user_version = 2");
+    sqlite.exec("COMMIT");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    console.log("[DB] Migration 6: Fixed messages self-referencing FK (messages_new → messages)");
+  } catch (err) {
+    sqlite.exec("ROLLBACK");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    console.error("[DB] Migration 6 failed:", err);
     throw err;
   }
 }
