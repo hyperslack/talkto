@@ -111,7 +111,9 @@ function createTables(sqlite: Database) {
       about TEXT,
       agent_instructions TEXT,
       email TEXT,
-      avatar_url TEXT
+      avatar_url TEXT,
+      status_emoji TEXT,
+      status_text TEXT
     );
 
     -- -----------------------------------------------------------------
@@ -422,6 +424,14 @@ function runMigrations(sqlite: Database) {
   }
   if (!hasColumn("users", "avatar_url")) {
     sqlite.exec(`ALTER TABLE users ADD COLUMN avatar_url TEXT`);
+  }
+
+  // Migration: add custom status columns to users
+  if (!hasColumn("users", "status_emoji")) {
+    sqlite.exec(`ALTER TABLE users ADD COLUMN status_emoji TEXT`);
+  }
+  if (!hasColumn("users", "status_text")) {
+    sqlite.exec(`ALTER TABLE users ADD COLUMN status_text TEXT`);
   }
 
   // ---------------------------------------------------------------
