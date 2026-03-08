@@ -300,6 +300,23 @@ function createTables(sqlite: Database) {
     );
   `);
 
+  // audit_log table
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      actor_id TEXT,
+      action TEXT NOT NULL,
+      target_type TEXT,
+      target_id TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_log_workspace ON audit_log(workspace_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+  `);
+
   // message_reactions table
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS message_reactions (

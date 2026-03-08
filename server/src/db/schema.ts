@@ -510,3 +510,28 @@ export const messageReactionsRelations = relations(messageReactions, ({ one }) =
     references: [users.id],
   }),
 }));
+
+// ---------------------------------------------------------------------------
+// audit_log — workspace activity tracking
+// ---------------------------------------------------------------------------
+
+export const auditLog = sqliteTable(
+  "audit_log",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id),
+    actorId: text("actor_id"), // user/agent who performed the action (nullable for system)
+    action: text("action").notNull(), // e.g. "channel.create", "agent.join", "message.delete"
+    targetType: text("target_type"), // e.g. "channel", "agent", "message"
+    targetId: text("target_id"), // ID of the target entity
+    metadata: text("metadata"), // JSON string with extra context
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_audit_log_workspace").on(table.workspaceId),
+    index("idx_audit_log_action").on(table.action),
+    index("idx_audit_log_created").on(table.createdAt),
+  ]
+);
