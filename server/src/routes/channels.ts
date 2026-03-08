@@ -20,6 +20,7 @@ import { ChannelCreateSchema, ChannelTopicSchema, ChannelSlowModeSchema } from "
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
+import { logTopicChange, getTopicHistory } from "../services/topic-history";
 
 const app = new Hono<AppBindings>();
 
@@ -297,10 +298,18 @@ app.patch("/:channelId/topic", async (c) => {
 
   const db = getDb();
 
+  const oldTopic = channel.topic;
+  const newTopic = parsed.data.topic || null;
+
   db.update(channels)
-    .set({ topic: parsed.data.topic || null })
+    .set({ topic: newTopic })
     .where(eq(channels.id, channel.id))
     .run();
+
+  // Log topic change
+  if (oldTopic !== newTopic) {
+    logTopicChange(channel.id, oldTopic, newTopic, auth.userId ?? "system");
+  }
 
   const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
   return c.json(channelToResponse(updated));
@@ -729,6 +738,22 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// ---------------------------------------------------------------------------
+// GET /channels/:channelId/topic-history — topic change log
+// ---------------------------------------------------------------------------
+
+app.get("/:channelId/topic-history", (c) => {
+  const auth = c.get("auth");
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+  const history = getTopicHistory(channel.id, limit);
+  return c.json({ channel_id: channel.id, history });
 });
 
 export default app;
