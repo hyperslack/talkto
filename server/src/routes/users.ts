@@ -279,4 +279,44 @@ app.delete("/me", (c) => {
   return c.body(null, 204);
 });
 
+// ---------------------------------------------------------------------------
+// GET /users/check-name — check if a display name is already taken
+// ---------------------------------------------------------------------------
+
+app.get("/check-name", (c) => {
+  const auth = c.get("auth");
+  const name = c.req.query("name");
+
+  if (!name || name.trim().length === 0) {
+    return c.json({ error: "Query parameter 'name' is required" }, 400);
+  }
+
+  const trimmed = name.trim();
+
+  if (trimmed.length > 100) {
+    return c.json({ error: "Name must be 100 characters or fewer" }, 400);
+  }
+
+  const db = getDb();
+
+  // Check both name and display_name columns (case-insensitive)
+  const existing = db
+    .select({ id: users.id, name: users.name, displayName: users.displayName })
+    .from(users)
+    .innerJoin(workspaceMembers, eq(users.id, workspaceMembers.userId))
+    .where(eq(workspaceMembers.workspaceId, auth.workspaceId))
+    .all()
+    .find(
+      (u) =>
+        u.name.toLowerCase() === trimmed.toLowerCase() ||
+        (u.displayName && u.displayName.toLowerCase() === trimmed.toLowerCase())
+    );
+
+  return c.json({
+    name: trimmed,
+    available: !existing,
+    taken_by: existing ? { id: existing.id, name: existing.name } : null,
+  });
+});
+
 export default app;
