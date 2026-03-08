@@ -10,6 +10,7 @@ import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
+import { getChannelMessageCount } from "../services/channel-message-count";
 
 const app = new Hono<AppBindings>();
 
@@ -349,6 +350,23 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// ---------------------------------------------------------------------------
+// GET /channels/:channelId/message-count — message count with optional date filters
+// ---------------------------------------------------------------------------
+
+app.get("/:channelId/message-count", (c) => {
+  const auth = c.get("auth");
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const after = c.req.query("after");
+  const before = c.req.query("before");
+  const result = getChannelMessageCount(channel.id, after, before);
+  return c.json(result);
 });
 
 export default app;
