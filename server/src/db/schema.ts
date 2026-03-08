@@ -513,3 +513,23 @@ export const messageReactionsRelations = relations(messageReactions, ({ one }) =
     references: [users.id],
   }),
 }));
+
+// ---------------------------------------------------------------------------
+// user_preferences — per-user settings
+// ---------------------------------------------------------------------------
+
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    theme: text("theme").default("system"), // "light" | "dark" | "system"
+    notifyMentions: integer("notify_mentions").notNull().default(1), // notify on @mentions
+    notifyDMs: integer("notify_dms").notNull().default(1), // notify on DMs
+    notifyAll: integer("notify_all").notNull().default(0), // notify on all messages
+    compactMode: integer("compact_mode").notNull().default(0), // compact message display
+    timezone: text("timezone"), // e.g. "America/New_York"
+    updatedAt: text("updated_at"),
+  }
+);
