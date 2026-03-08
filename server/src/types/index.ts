@@ -56,6 +56,7 @@ export interface ChannelResponse {
   name: string;
   type: string;
   topic?: string | null;
+  position?: number;
   project_path?: string | null;
   created_by: string;
   created_by_name?: string | null;
