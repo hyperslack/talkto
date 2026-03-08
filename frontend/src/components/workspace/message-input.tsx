@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { SendHorizonal, Loader2, X, Reply } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getDraft, saveDraft, clearDraft } from "@/lib/drafts";
 import { useAppStore } from "@/stores/app-store";
 
 interface MessageInputProps {
@@ -14,8 +15,18 @@ interface MessageInputProps {
 }
 
 export function MessageInput({ channelId }: MessageInputProps) {
-  const [content, setContent] = useState("");
+  const [content, setContent] = useState(() => getDraft(channelId));
   const sendMessage = useSendMessage();
+
+  // Load draft when channel changes
+  useEffect(() => {
+    setContent(getDraft(channelId));
+  }, [channelId]);
+
+  // Save draft on content change (debounced by React batching)
+  useEffect(() => {
+    saveDraft(channelId, content);
+  }, [channelId, content]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const replyToMessage = useAppStore((s) => s.replyToMessage);
   const setReplyToMessage = useAppStore((s) => s.setReplyToMessage);
@@ -146,6 +157,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
         parentId: replyToMessage?.id,
       });
       setContent("");
+      clearDraft(channelId);
       setMentionOpen(false);
       setReplyToMessage(null);
       textareaRef.current?.focus();
