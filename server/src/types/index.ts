@@ -94,6 +94,7 @@ export interface MessageResponse {
   pinned_at?: string | null;
   pinned_by?: string | null;
   edited_at?: string | null;
+  reply_count?: number;
   created_at: string;
 }
 

@@ -286,6 +286,20 @@ export function MessageBubble({
         </div>
       )}
 
+      {/* Thread reply count */}
+      {(message.reply_count ?? 0) > 0 && (
+        <div className="pl-10 mt-1">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs text-primary/70 hover:text-primary hover:underline transition-colors"
+            onClick={() => onReply?.(message)}
+          >
+            <Reply className="h-3 w-3" />
+            <span className="font-medium">{message.reply_count} {message.reply_count === 1 ? "reply" : "replies"}</span>
+          </button>
+        </div>
+      )}
+
       {/* Hover timestamp (when sender line is hidden) */}
       {!showSender && (
         <span
