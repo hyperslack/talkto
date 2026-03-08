@@ -209,7 +209,24 @@ app.get("/:channelId", (c) => {
   if (!channel) {
     return c.json({ detail: "Channel not found" }, 404);
   }
-  return c.json(channelToResponse(channel));
+
+  // Resolve creator name
+  let createdByName: string | null = null;
+  if (channel.createdBy && channel.createdBy !== "system" && channel.createdBy !== "human") {
+    const db = getDb();
+    const creator = db
+      .select({ name: users.name, displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, channel.createdBy))
+      .get();
+    createdByName = creator ? (creator.displayName ?? creator.name) : null;
+  } else {
+    createdByName = channel.createdBy; // "system" or "human"
+  }
+
+  const response = channelToResponse(channel);
+  response.created_by_name = createdByName;
+  return c.json(response);
 });
 
 // GET /channels/:channelId/members — list all members in a channel
