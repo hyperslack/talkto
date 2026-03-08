@@ -83,6 +83,24 @@ app.get("/", (c) => {
     .select({
       channelId: messages.channelId,
       lastActiveAt: sql<string>`MAX(${messages.createdAt})`.as("last_active_at"),
+});
+
+  // Batch-fetch member counts for all channels
+  const memberCountRows = db
+    .select({
+      channelId: channelMembers.channelId,
+      memberCount: sql<number>`count(*)`.as("member_count"),
+    })
+    .from(channelMembers)
+    .groupBy(channelMembers.channelId)
+    .all();
+  const memberCountMap = new Map(memberCountRows.map((r) => [r.channelId, r.memberCount]));
+
+  // Batch-fetch message counts for all channels
+  const messageCountRows = db
+    .select({
+      channelId: messages.channelId,
+      messageCount: sql<number>`count(*)`.as("message_count"),
     })
     .from(messages)
     .groupBy(messages.channelId)
@@ -92,6 +110,14 @@ app.get("/", (c) => {
   return c.json(result.map((ch) => ({
     ...channelToResponse(ch),
     last_active_at: lastActiveMap.get(ch.id) ?? null,
+});
+
+  const messageCountMap = new Map(messageCountRows.map((r) => [r.channelId, r.messageCount]));
+
+  return c.json(result.map((ch) => ({
+    ...channelToResponse(ch),
+    member_count: memberCountMap.get(ch.id) ?? 0,
+    message_count: messageCountMap.get(ch.id) ?? 0,
   })));
 });
 
