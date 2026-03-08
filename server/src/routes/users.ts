@@ -294,6 +294,11 @@ app.patch("/me/status", async (c) => {
       statusEmoji: parsed.data.status_emoji ?? null,
       statusText: parsed.data.status_text ?? null,
     })
+    .where(eq(users.id, user.id))
+    .run();
+
+  const updated = db.select().from(users).where(eq(users.id, user.id)).get()!;
+  return c.json(userToResponse(updated));
 });
 
 // PATCH /users/me/avatar — set or clear avatar URL
@@ -323,13 +328,6 @@ app.patch("/me/avatar", async (c) => {
 
   const updated = db.select().from(users).where(eq(users.id, user.id)).get()!;
   return c.json(userToResponse(updated));
-});
-
-  return c.json({
-    id: updated.id,
-    name: updated.name,
-    avatar_url: updated.avatarUrl,
-  });
 });
 
 // DELETE /users/me

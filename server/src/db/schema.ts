@@ -297,18 +297,12 @@ export const channels = sqliteTable(
     name: text("name").notNull(),
     type: text("type").notNull(), // "general" | "project" | "custom" | "dm"
     topic: text("topic"), // channel topic/description shown in header
+    category: text("category"), // grouping label, e.g. "Projects", "DMs", "General"
     projectPath: text("project_path"),
     createdBy: text("created_by").notNull(), // user UUID or "system" — NOT a FK
     createdAt: text("created_at").notNull(),
     position: integer("position").default(0), // custom sort order (lower = higher)
-});
-
-    category: text("category"), // grouping label, e.g. "Projects", "DMs", "General"
-});
-
     slowModeSeconds: integer("slow_mode_seconds").default(0), // 0 = disabled
-});
-
     isReadOnly: integer("is_read_only").notNull().default(0),
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),

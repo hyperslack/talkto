@@ -3,27 +3,31 @@
  */
 
 import { Hono } from "hono";
-import { eq, asc, and, gt, sql, desc } from "drizzle-orm";
+import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
-import { ChannelCreateSchema, ChannelRenameSchema, ChannelTopicSchema } from "../types";
-});
-
-import { channels, channelMembers, users, agents, messages, readReceipts, workspaceMembers } from "../db/schema";
-import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
-});
-
-import { ChannelCreateSchema, ChannelTopicSchema, ChannelCategorySchema } from "../types";
-});
-
-import { ChannelCreateSchema, ChannelTopicSchema, ChannelSlowModeSchema } from "../types";
-import type { AppBindings, ChannelResponse } from "../types";
+import {
+  agents,
+  channelMembers,
+  channels,
+  messages,
+  readReceipts,
+  users,
+  workspaceMembers,
+} from "../db/schema";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
+import {
+  ChannelCategorySchema,
+  ChannelCreateSchema,
+  ChannelRenameSchema,
+  ChannelSlowModeSchema,
+  ChannelTopicSchema,
+} from "../types";
+import type { AppBindings, ChannelResponse } from "../types";
 
 const app = new Hono<AppBindings>();
 
-/** Look up a channel by ID scoped to a workspace. Returns null if not found or wrong workspace. */
+/** Look up a channel by ID scoped to a workspace. */
 function getChannelInWorkspace(channelId: string, workspaceId: string) {
   const db = getDb();
   return db
@@ -33,27 +37,24 @@ function getChannelInWorkspace(channelId: string, workspaceId: string) {
     .get() ?? null;
 }
 
-function channelToResponse(ch: typeof channels.$inferSelect, extras?: { pinned_count?: number }): ChannelResponse {
+function channelToResponse(
+  channel: typeof channels.$inferSelect,
+  extras?: { pinned_count?: number }
+): ChannelResponse {
   return {
-    id: ch.id,
-    name: ch.name,
-    type: ch.type,
-    topic: ch.topic,
-    position: ch.position ?? 0,
-});
-
-    category: ch.category ?? null,
-});
-
-    slow_mode_seconds: ch.slowModeSeconds ?? 0,
-});
-
-    is_read_only: ch.isReadOnly === 1,
-    project_path: ch.projectPath,
-    created_by: ch.createdBy,
-    created_at: ch.createdAt,
-    is_archived: ch.isArchived === 1,
-    archived_at: ch.archivedAt,
+    id: channel.id,
+    name: channel.name,
+    type: channel.type,
+    topic: channel.topic,
+    position: channel.position ?? 0,
+    category: channel.category ?? null,
+    slow_mode_seconds: channel.slowModeSeconds ?? 0,
+    project_path: channel.projectPath,
+    created_by: channel.createdBy,
+    created_at: channel.createdAt,
+    is_read_only: channel.isReadOnly === 1,
+    is_archived: channel.isArchived === 1,
+    archived_at: channel.archivedAt,
     pinned_count: extras?.pinned_count,
   };
 }
@@ -63,17 +64,18 @@ app.get("/", (c) => {
   const auth = c.get("auth");
   const db = getDb();
   const includeArchived = c.req.query("include_archived") === "true";
+
   let result = db
     .select()
     .from(channels)
     .where(eq(channels.workspaceId, auth.workspaceId))
     .orderBy(asc(channels.position), asc(channels.name))
     .all();
+
   if (!includeArchived) {
-    result = result.filter((ch) => ch.isArchived !== 1);
+    result = result.filter((channel) => channel.isArchived !== 1);
   }
 
-  // Batch-fetch pinned counts for all channels
   const pinnedCounts = new Map<string, number>();
   if (result.length > 0) {
     const rows = db
@@ -85,22 +87,22 @@ app.get("/", (c) => {
       .where(eq(messages.isPinned, 1))
       .groupBy(messages.channelId)
       .all();
+
     for (const row of rows) {
       pinnedCounts.set(row.channelId, row.count);
     }
   }
 
-  return c.json(result.map((ch) => channelToResponse(ch, { pinned_count: pinnedCounts.get(ch.id) ?? 0 })));
-});
-
-  // Batch-fetch last_active_at for all channels
   const lastActiveRows = db
     .select({
       channelId: messages.channelId,
       lastActiveAt: sql<string>`MAX(${messages.createdAt})`.as("last_active_at"),
-});
+    })
+    .from(messages)
+    .groupBy(messages.channelId)
+    .all();
+  const lastActiveMap = new Map(lastActiveRows.map((row) => [row.channelId, row.lastActiveAt]));
 
-  // Batch-fetch member counts for all channels
   const memberCountRows = db
     .select({
       channelId: channelMembers.channelId,
@@ -109,9 +111,8 @@ app.get("/", (c) => {
     .from(channelMembers)
     .groupBy(channelMembers.channelId)
     .all();
-  const memberCountMap = new Map(memberCountRows.map((r) => [r.channelId, r.memberCount]));
+  const memberCountMap = new Map(memberCountRows.map((row) => [row.channelId, row.memberCount]));
 
-  // Batch-fetch message counts for all channels
   const messageCountRows = db
     .select({
       channelId: messages.channelId,
@@ -120,82 +121,76 @@ app.get("/", (c) => {
     .from(messages)
     .groupBy(messages.channelId)
     .all();
-  const lastActiveMap = new Map(lastActiveRows.map((r) => [r.channelId, r.lastActiveAt]));
+  const messageCountMap = new Map(messageCountRows.map((row) => [row.channelId, row.messageCount]));
 
-  return c.json(result.map((ch) => ({
-    ...channelToResponse(ch),
-    last_active_at: lastActiveMap.get(ch.id) ?? null,
+  return c.json(
+    result.map((channel) => ({
+      ...channelToResponse(channel, { pinned_count: pinnedCounts.get(channel.id) ?? 0 }),
+      last_active_at: lastActiveMap.get(channel.id) ?? null,
+      member_count: memberCountMap.get(channel.id) ?? 0,
+      message_count: messageCountMap.get(channel.id) ?? 0,
+    }))
+  );
 });
 
-  const messageCountMap = new Map(messageCountRows.map((r) => [r.channelId, r.messageCount]));
-
-  return c.json(result.map((ch) => ({
-    ...channelToResponse(ch),
-    member_count: memberCountMap.get(ch.id) ?? 0,
-    message_count: messageCountMap.get(ch.id) ?? 0,
-  })));
-});
-
-// GET /channels/unread/counts — get unread counts for all channels for a user
-// NOTE: Must be before /:channelId to avoid route conflict
+// GET /channels/unread/counts
+// NOTE: Must stay before /:channelId to avoid route conflicts.
 app.get("/unread/counts", (c) => {
   const auth = c.get("auth");
   const db = getDb();
   const userId = c.req.query("user_id");
 
-  // Use auth.userId, fall back to query param, then to type-based lookup
   let resolvedUserId = auth.userId ?? userId;
   if (!resolvedUserId) {
     const human = db.select().from(users).where(eq(users.type, "human")).get();
-    if (!human) return c.json({ detail: "No user found" }, 400);
+    if (!human) {
+      return c.json({ detail: "No user found" }, 400);
+    }
     resolvedUserId = human.id;
   }
 
-  // Get channels scoped to workspace
   const allChannels = db
     .select()
     .from(channels)
     .where(eq(channels.workspaceId, auth.workspaceId))
     .all();
 
-  // Get all read receipts for this user
   const receipts = db
     .select()
     .from(readReceipts)
     .where(eq(readReceipts.userId, resolvedUserId))
     .all();
-  const receiptMap = new Map(receipts.map((r) => [r.channelId, r.lastReadAt]));
+  const receiptMap = new Map(receipts.map((receipt) => [receipt.channelId, receipt.lastReadAt]));
 
-  const results = allChannels.map((ch) => {
-    const lastReadAt = receiptMap.get(ch.id);
+  return c.json(
+    allChannels.map((channel) => {
+      const lastReadAt = receiptMap.get(channel.id);
+      let unreadCount = 0;
 
-    // Count messages after last_read_at (or all messages if never read)
-    let unreadCount: number;
-    if (lastReadAt) {
-      const row = db
-        .select({ count: sql<number>`count(*)` })
-        .from(messages)
-        .where(and(eq(messages.channelId, ch.id), gt(messages.createdAt, lastReadAt)))
-        .get();
-      unreadCount = row?.count ?? 0;
-    } else {
-      const row = db
-        .select({ count: sql<number>`count(*)` })
-        .from(messages)
-        .where(eq(messages.channelId, ch.id))
-        .get();
-      unreadCount = row?.count ?? 0;
-    }
+      if (lastReadAt) {
+        const row = db
+          .select({ count: sql<number>`count(*)` })
+          .from(messages)
+          .where(and(eq(messages.channelId, channel.id), gt(messages.createdAt, lastReadAt)))
+          .get();
+        unreadCount = row?.count ?? 0;
+      } else {
+        const row = db
+          .select({ count: sql<number>`count(*)` })
+          .from(messages)
+          .where(eq(messages.channelId, channel.id))
+          .get();
+        unreadCount = row?.count ?? 0;
+      }
 
-    return {
-      channel_id: ch.id,
-      channel_name: ch.name,
-      unread_count: unreadCount,
-      last_read_at: lastReadAt ?? null,
-    };
-  });
-
-  return c.json(results);
+      return {
+        channel_id: channel.id,
+        channel_name: channel.name,
+        unread_count: unreadCount,
+        last_read_at: lastReadAt ?? null,
+      };
+    })
+  );
 });
 
 // POST /channels
@@ -212,7 +207,6 @@ app.post("/", async (c) => {
     : `#${parsed.data.name}`;
   const db = getDb();
 
-  // Check uniqueness within workspace
   const existing = db
     .select()
     .from(channels)
@@ -240,7 +234,7 @@ app.post("/", async (c) => {
   return c.json(channelToResponse(channel), 201);
 });
 
-// PATCH /channels/:channelId/name — rename a channel
+// PATCH /channels/:channelId/name
 app.patch("/:channelId/name", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
@@ -261,7 +255,6 @@ app.patch("/:channelId/name", async (c) => {
     ? parsed.data.name
     : `#${parsed.data.name}`;
 
-  // Check uniqueness within workspace
   const db = getDb();
   const existing = db
     .select()
@@ -281,7 +274,7 @@ app.patch("/:channelId/name", async (c) => {
   return c.json(channelToResponse(updated));
 });
 
-// PATCH /channels/:channelId/topic — set channel topic
+// PATCH /channels/:channelId/topic
 app.patch("/:channelId/topic", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
@@ -296,7 +289,6 @@ app.patch("/:channelId/topic", async (c) => {
   }
 
   const db = getDb();
-
   db.update(channels)
     .set({ topic: parsed.data.topic || null })
     .where(eq(channels.id, channel.id))
@@ -306,16 +298,31 @@ app.patch("/:channelId/topic", async (c) => {
   return c.json(channelToResponse(updated));
 });
 
-// PATCH /channels/:channelId/position — set channel position
+// PATCH /channels/:channelId/position
 app.patch("/:channelId/position", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
   const position = body?.position;
   if (typeof position !== "number" || !Number.isInteger(position) || position < 0) {
     return c.json({ detail: "position must be a non-negative integer" }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ position })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
 });
 
-// PATCH /channels/:channelId/read-only — toggle read-only mode
+// PATCH /channels/:channelId/read-only
 app.patch("/:channelId/read-only", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
@@ -325,21 +332,45 @@ app.patch("/:channelId/read-only", async (c) => {
   }
 
   const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
-  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
 
   const db = getDb();
   db.update(channels)
-    .set({ position })
+    .set({ isReadOnly: readOnly ? 1 : 0 })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
 });
 
-// PATCH /channels/:channelId/category — set channel category
+// PATCH /channels/:channelId/category
 app.patch("/:channelId/category", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
   const parsed = ChannelCategorySchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ category: parsed.data.category || null })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
 });
 
-// PATCH /channels/:channelId/slow-mode — set slow mode delay
+// PATCH /channels/:channelId/slow-mode
 app.patch("/:channelId/slow-mode", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
@@ -355,13 +386,7 @@ app.patch("/:channelId/slow-mode", async (c) => {
 
   const db = getDb();
   db.update(channels)
-    .set({ category: parsed.data.category || null })
-});
-
     .set({ slowModeSeconds: parsed.data.seconds })
-});
-
-    .set({ isReadOnly: readOnly ? 1 : 0 })
     .where(eq(channels.id, channel.id))
     .run();
 
@@ -369,13 +394,15 @@ app.patch("/:channelId/slow-mode", async (c) => {
   return c.json(channelToResponse(updated));
 });
 
-// PUT /channels/reorder — bulk reorder channels
+// PUT /channels/reorder
 app.put("/reorder", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
   const order = body?.order;
+
   if (!Array.isArray(order) || !order.every((item: unknown) =>
-    typeof item === "object" && item !== null &&
+    typeof item === "object" &&
+    item !== null &&
     typeof (item as Record<string, unknown>).channel_id === "string" &&
     typeof (item as Record<string, unknown>).position === "number"
   )) {
@@ -384,17 +411,19 @@ app.put("/reorder", async (c) => {
 
   const db = getDb();
   for (const item of order) {
-    const ch = getChannelInWorkspace(item.channel_id, auth.workspaceId);
-    if (ch) {
-      db.update(channels)
-        .set({ position: item.position })
-        .where(eq(channels.id, item.channel_id))
-        .run();
-    }
+    const channel = getChannelInWorkspace(item.channel_id, auth.workspaceId);
+    if (!channel) continue;
+
+    db.update(channels)
+      .set({ position: item.position })
+      .where(eq(channels.id, item.channel_id))
+      .run();
   }
 
   return c.json({ updated: order.length });
-// GET /channels/categories — list all categories in workspace
+});
+
+// GET /channels/categories/list
 app.get("/categories/list", (c) => {
   const auth = c.get("auth");
   const db = getDb();
@@ -404,14 +433,10 @@ app.get("/categories/list", (c) => {
     .where(eq(channels.workspaceId, auth.workspaceId))
     .all();
 
-  const categories = [...new Set(rows.map(r => r.category).filter(Boolean))].sort();
+  const categories = [...new Set(rows.map((row) => row.category).filter(Boolean))].sort();
   return c.json({ categories });
 });
 
-<<<<<<< HEAD
-=======
->>>>>>> 487001f (feat: add schema, migration, and route for read-only channels)
->>>>>>> 41e1d13 (feat: add schema, migration, and route for read-only channels)
 // GET /channels/:channelId
 app.get("/:channelId", (c) => {
   const auth = c.get("auth");
@@ -420,7 +445,6 @@ app.get("/:channelId", (c) => {
     return c.json({ detail: "Channel not found" }, 404);
   }
 
-  // Resolve creator name
   let createdByName: string | null = null;
   if (channel.createdBy && channel.createdBy !== "system" && channel.createdBy !== "human") {
     const db = getDb();
@@ -431,16 +455,10 @@ app.get("/:channelId", (c) => {
       .get();
     createdByName = creator ? (creator.displayName ?? creator.name) : null;
   } else {
-    createdByName = channel.createdBy; // "system" or "human"
+    createdByName = channel.createdBy;
   }
 
-  const response = channelToResponse(channel);
-  response.created_by_name = createdByName;
-  return c.json(response);
-});
-
   const db = getDb();
-  // Get last active timestamp for this channel
   const lastActive = db
     .select({ lastActiveAt: sql<string>`MAX(${messages.createdAt})` })
     .from(messages)
@@ -449,23 +467,22 @@ app.get("/:channelId", (c) => {
 
   return c.json({
     ...channelToResponse(channel),
+    created_by_name: createdByName,
     last_active_at: lastActive?.lastActiveAt ?? null,
   });
 });
 
-// GET /channels/:channelId/members — list all members in a channel
+// GET /channels/:channelId/members
 app.get("/:channelId/members", (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
   const db = getDb();
 
-  // Verify channel exists and belongs to workspace
   const channel = getChannelInWorkspace(channelId, auth.workspaceId);
   if (!channel) {
     return c.json({ detail: "Channel not found" }, 404);
   }
 
-  // Fetch members with user info and optional agent info
   const members = db
     .select({
       userId: channelMembers.userId,
@@ -483,72 +500,49 @@ app.get("/:channelId/members", (c) => {
     .where(eq(channelMembers.channelId, channelId))
     .all();
 
-  const result = members.map((m) => ({
-    user_id: m.userId,
-    name: m.displayName ?? m.name,
-    type: m.type,
-    joined_at: m.joinedAt,
-    agent_name: m.agentName ?? null,
-    agent_type: m.agentType ?? null,
-    status: m.status ?? null,
-  }));
-
-  return c.json(result);
+  return c.json(
+    members.map((member) => ({
+      user_id: member.userId,
+      name: member.displayName ?? member.name,
+      type: member.type,
+      joined_at: member.joinedAt,
+      agent_name: member.agentName ?? null,
+      agent_type: member.agentType ?? null,
+      status: member.status ?? null,
+    }))
+  );
 });
 
-// GET /channels/:channelId/stats — get channel statistics
+// GET /channels/:channelId/stats
 app.get("/:channelId/stats", (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
-});
-
-// GET /channels/:channelId/mentionable — list users that can be @mentioned in this channel
-app.get("/:channelId/mentionable", (c) => {
-  const auth = c.get("auth");
-  const channelId = c.req.param("channelId");
-  const db = getDb();
-});
-
-// GET /channels/:channelId/top-senders — get most active senders in a channel
-app.get("/:channelId/top-senders", (c) => {
-  const auth = c.get("auth");
-  const channelId = c.req.param("channelId");
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "10", 10) || 10, 50);
-
   const channel = getChannelInWorkspace(channelId, auth.workspaceId);
   if (!channel) {
     return c.json({ detail: "Channel not found" }, 404);
   }
 
   const db = getDb();
-
-  // Message count
   const msgCount = db
     .select({ count: sql<number>`count(*)` })
     .from(messages)
     .where(eq(messages.channelId, channelId))
     .get();
-
-  // Member count
   const memberCount = db
     .select({ count: sql<number>`count(*)` })
     .from(channelMembers)
     .where(eq(channelMembers.channelId, channelId))
     .get();
-
-  // Pinned message count
   const pinnedCount = db
     .select({ count: sql<number>`count(*)` })
     .from(messages)
     .where(and(eq(messages.channelId, channelId), eq(messages.isPinned, 1)))
     .get();
-
-  // Last message timestamp
   const lastMsg = db
     .select({ createdAt: messages.createdAt })
     .from(messages)
     .where(eq(messages.channelId, channelId))
-    .orderBy(sql`${messages.createdAt} DESC`)
+    .orderBy(desc(messages.createdAt))
     .limit(1)
     .get();
 
@@ -560,7 +554,19 @@ app.get("/:channelId/top-senders", (c) => {
     last_message_at: lastMsg?.createdAt ?? null,
     created_at: channel.createdAt,
   });
-  // Return all workspace members as mentionable (agents + humans)
+});
+
+// GET /channels/:channelId/mentionable
+app.get("/:channelId/mentionable", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
   const members = db
     .select({
       id: users.id,
@@ -570,25 +576,34 @@ app.get("/:channelId/top-senders", (c) => {
       agentName: agents.agentName,
     })
     .from(users)
-    .innerJoin(
-      workspaceMembers,
-      eq(users.id, workspaceMembers.userId)
-    )
+    .innerJoin(workspaceMembers, eq(users.id, workspaceMembers.userId))
     .leftJoin(agents, eq(users.id, agents.id))
     .where(eq(workspaceMembers.workspaceId, auth.workspaceId))
     .all();
 
-  const result = members.map((m) => ({
-    id: m.id,
-    name: m.name,
-    display_name: m.displayName ?? null,
-    type: m.type,
-    mention_name: m.agentName ?? m.name,
-  }));
-
-  return c.json(result);
+  return c.json(
+    members.map((member) => ({
+      id: member.id,
+      name: member.name,
+      display_name: member.displayName ?? null,
+      type: member.type,
+      mention_name: member.agentName ?? member.name,
+    }))
+  );
 });
 
+// GET /channels/:channelId/top-senders
+app.get("/:channelId/top-senders", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "10", 10) || 10, 50);
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
   const rows = db
     .select({
       senderId: messages.senderId,
@@ -600,23 +615,23 @@ app.get("/:channelId/top-senders", (c) => {
     .from(messages)
     .innerJoin(users, eq(messages.senderId, users.id))
     .where(eq(messages.channelId, channelId))
-    .groupBy(messages.senderId)
+    .groupBy(messages.senderId, users.displayName, users.name, users.type)
     .orderBy(sql`count(*) DESC`)
     .limit(limit)
     .all();
 
   return c.json(
-    rows.map((r) => ({
-      sender_id: r.senderId,
-      sender_name: r.senderName,
-      sender_type: r.senderType,
-      message_count: r.messageCount,
-      last_message_at: r.lastMessageAt,
+    rows.map((row) => ({
+      sender_id: row.senderId,
+      sender_name: row.senderName,
+      sender_type: row.senderType,
+      message_count: row.messageCount,
+      last_message_at: row.lastMessageAt,
     }))
   );
 });
 
-// POST /channels/:channelId/archive — archive a channel
+// POST /channels/:channelId/archive
 app.post("/:channelId/archive", (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
@@ -643,7 +658,7 @@ app.post("/:channelId/archive", (c) => {
   return c.json(channelToResponse(updated));
 });
 
-// POST /channels/:channelId/unarchive — unarchive a channel
+// POST /channels/:channelId/unarchive
 app.post("/:channelId/unarchive", (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
@@ -666,7 +681,7 @@ app.post("/:channelId/unarchive", (c) => {
   return c.json(channelToResponse(updated));
 });
 
-// DELETE /channels/:channelId — permanently delete a channel and its message graph
+// DELETE /channels/:channelId
 app.delete("/:channelId", requireAdmin, (c) => {
   const auth = c.get("auth");
   const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
@@ -680,7 +695,7 @@ app.delete("/:channelId", requireAdmin, (c) => {
   return c.json(deleteChannelGraph(channel));
 });
 
-// POST /channels/:channelId/read — mark channel as read for a user
+// POST /channels/:channelId/read
 app.post("/:channelId/read", async (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
@@ -691,7 +706,6 @@ app.post("/:channelId/read", async (c) => {
     return c.json({ detail: "Channel not found" }, 404);
   }
 
-  // Use auth.userId, fall back to body, then type-based lookup
   let userId = auth.userId ?? "";
   if (!userId) {
     try {
@@ -704,13 +718,13 @@ app.post("/:channelId/read", async (c) => {
 
   if (!userId) {
     const human = db.select().from(users).where(eq(users.type, "human")).get();
-    if (!human) return c.json({ detail: "No user found" }, 400);
+    if (!human) {
+      return c.json({ detail: "No user found" }, 400);
+    }
     userId = human.id;
   }
 
   const now = new Date().toISOString();
-
-  // Upsert read receipt
   const existing = db
     .select()
     .from(readReceipts)

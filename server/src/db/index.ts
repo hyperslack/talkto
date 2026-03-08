@@ -234,9 +234,8 @@ function createTables(sqlite: Database) {
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
       position INTEGER DEFAULT 0,
-});
-
       slow_mode_seconds INTEGER DEFAULT 0,
+      is_read_only INTEGER NOT NULL DEFAULT 0,
       is_archived INTEGER NOT NULL DEFAULT 0,
       archived_at TEXT,
       workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -374,16 +373,21 @@ function migrateUp(sqlite: Database) {
   // Migration: add position column to channels
   if (!hasColumn("channels", "position")) {
     sqlite.exec("ALTER TABLE channels ADD COLUMN position INTEGER DEFAULT 0");
-});
+  }
 
   // Migration: add category column to channels
   if (!hasColumn("channels", "category")) {
     sqlite.exec("ALTER TABLE channels ADD COLUMN category TEXT");
-});
+  }
 
   // Migration: add slow_mode_seconds to channels
   if (!hasColumn("channels", "slow_mode_seconds")) {
     sqlite.exec("ALTER TABLE channels ADD COLUMN slow_mode_seconds INTEGER DEFAULT 0");
+  }
+
+  // Migration: add is_read_only to channels
+  if (!hasColumn("channels", "is_read_only")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN is_read_only INTEGER NOT NULL DEFAULT 0");
   }
 }
 
@@ -476,21 +480,6 @@ function runMigrations(sqlite: Database) {
   // ---------------------------------------------------------------
   migrateCascadeFks(sqlite);
   fixMessagesSelfRefFk(sqlite);
-});
-
-
-  // ---------------------------------------------------------------
-  // Post-rebuild migrations: columns added after migration 5
-  // Must run after migrateCascadeFks since it rebuilds tables
-  // ---------------------------------------------------------------
-  const hasColumnPost = (table: string, column: string): boolean => {
-    const info = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    return info.some((col) => col.name === column);
-  };
-
-  if (!hasColumnPost("channels", "is_read_only")) {
-    sqlite.exec("ALTER TABLE channels ADD COLUMN is_read_only INTEGER NOT NULL DEFAULT 0");
-  }
 }
 
 /**
@@ -528,16 +517,20 @@ function migrateCascadeFks(sqlite: Database) {
         name TEXT NOT NULL,
         type TEXT NOT NULL,
         topic TEXT,
+        category TEXT,
         project_path TEXT,
         created_by TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        position INTEGER DEFAULT 0,
+        slow_mode_seconds INTEGER DEFAULT 0,
+        is_read_only INTEGER NOT NULL DEFAULT 0,
         is_archived INTEGER NOT NULL DEFAULT 0,
         archived_at TEXT,
         workspace_id TEXT NOT NULL REFERENCES workspaces(id),
         UNIQUE(name, workspace_id)
       )`,
       "channels",
-      "id, name, type, topic, project_path, created_by, created_at, is_archived, archived_at, workspace_id",
+      "id, name, type, topic, category, project_path, created_by, created_at, position, slow_mode_seconds, is_read_only, is_archived, archived_at, workspace_id",
       [
         "CREATE INDEX IF NOT EXISTS idx_channels_name ON channels(name)",
         "CREATE INDEX IF NOT EXISTS idx_channels_workspace ON channels(workspace_id)",

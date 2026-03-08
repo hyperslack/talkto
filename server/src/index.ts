@@ -50,7 +50,6 @@ import featuresRoutes from "./routes/features";
 import workspacesRoutes from "./routes/workspaces";
 import authRoutes from "./routes/auth";
 import webhooksRoutes from "./routes/webhooks";
-});
 
 import channelWelcomeRoutes from "./routes/channel-welcome";
 
