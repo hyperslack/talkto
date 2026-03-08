@@ -3,10 +3,20 @@
  */
 
 import { Hono } from "hono";
-import { eq, asc, and, gt, sql } from "drizzle-orm";
+import { eq, asc, and, gt, sql, desc } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
+import { ChannelCreateSchema, ChannelRenameSchema, ChannelTopicSchema } from "../types";
+});
+
+import { channels, channelMembers, users, agents, messages, readReceipts, workspaceMembers } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
+});
+
+import { ChannelCreateSchema, ChannelTopicSchema, ChannelCategorySchema } from "../types";
+});
+
+import { ChannelCreateSchema, ChannelTopicSchema, ChannelSlowModeSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
@@ -23,17 +33,28 @@ function getChannelInWorkspace(channelId: string, workspaceId: string) {
     .get() ?? null;
 }
 
-function channelToResponse(ch: typeof channels.$inferSelect): ChannelResponse {
+function channelToResponse(ch: typeof channels.$inferSelect, extras?: { pinned_count?: number }): ChannelResponse {
   return {
     id: ch.id,
     name: ch.name,
     type: ch.type,
     topic: ch.topic,
+    position: ch.position ?? 0,
+});
+
+    category: ch.category ?? null,
+});
+
+    slow_mode_seconds: ch.slowModeSeconds ?? 0,
+});
+
+    is_read_only: ch.isReadOnly === 1,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
     is_archived: ch.isArchived === 1,
     archived_at: ch.archivedAt,
+    pinned_count: extras?.pinned_count,
   };
 }
 
@@ -46,12 +67,73 @@ app.get("/", (c) => {
     .select()
     .from(channels)
     .where(eq(channels.workspaceId, auth.workspaceId))
-    .orderBy(asc(channels.name))
+    .orderBy(asc(channels.position), asc(channels.name))
     .all();
   if (!includeArchived) {
     result = result.filter((ch) => ch.isArchived !== 1);
   }
-  return c.json(result.map(channelToResponse));
+
+  // Batch-fetch pinned counts for all channels
+  const pinnedCounts = new Map<string, number>();
+  if (result.length > 0) {
+    const rows = db
+      .select({
+        channelId: messages.channelId,
+        count: sql<number>`count(*)`,
+      })
+      .from(messages)
+      .where(eq(messages.isPinned, 1))
+      .groupBy(messages.channelId)
+      .all();
+    for (const row of rows) {
+      pinnedCounts.set(row.channelId, row.count);
+    }
+  }
+
+  return c.json(result.map((ch) => channelToResponse(ch, { pinned_count: pinnedCounts.get(ch.id) ?? 0 })));
+});
+
+  // Batch-fetch last_active_at for all channels
+  const lastActiveRows = db
+    .select({
+      channelId: messages.channelId,
+      lastActiveAt: sql<string>`MAX(${messages.createdAt})`.as("last_active_at"),
+});
+
+  // Batch-fetch member counts for all channels
+  const memberCountRows = db
+    .select({
+      channelId: channelMembers.channelId,
+      memberCount: sql<number>`count(*)`.as("member_count"),
+    })
+    .from(channelMembers)
+    .groupBy(channelMembers.channelId)
+    .all();
+  const memberCountMap = new Map(memberCountRows.map((r) => [r.channelId, r.memberCount]));
+
+  // Batch-fetch message counts for all channels
+  const messageCountRows = db
+    .select({
+      channelId: messages.channelId,
+      messageCount: sql<number>`count(*)`.as("message_count"),
+    })
+    .from(messages)
+    .groupBy(messages.channelId)
+    .all();
+  const lastActiveMap = new Map(lastActiveRows.map((r) => [r.channelId, r.lastActiveAt]));
+
+  return c.json(result.map((ch) => ({
+    ...channelToResponse(ch),
+    last_active_at: lastActiveMap.get(ch.id) ?? null,
+});
+
+  const messageCountMap = new Map(messageCountRows.map((r) => [r.channelId, r.messageCount]));
+
+  return c.json(result.map((ch) => ({
+    ...channelToResponse(ch),
+    member_count: memberCountMap.get(ch.id) ?? 0,
+    message_count: messageCountMap.get(ch.id) ?? 0,
+  })));
 });
 
 // GET /channels/unread/counts — get unread counts for all channels for a user
@@ -158,6 +240,47 @@ app.post("/", async (c) => {
   return c.json(channelToResponse(channel), 201);
 });
 
+// PATCH /channels/:channelId/name — rename a channel
+app.patch("/:channelId/name", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelRenameSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+  if (channel.type === "general") {
+    return c.json({ detail: "Cannot rename the #general channel" }, 400);
+  }
+
+  const newName = parsed.data.name.startsWith("#")
+    ? parsed.data.name
+    : `#${parsed.data.name}`;
+
+  // Check uniqueness within workspace
+  const db = getDb();
+  const existing = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.name, newName), eq(channels.workspaceId, auth.workspaceId)))
+    .get();
+  if (existing && existing.id !== channel.id) {
+    return c.json({ detail: `Channel ${newName} already exists` }, 409);
+  }
+
+  db.update(channels)
+    .set({ name: newName })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
+});
+
 // PATCH /channels/:channelId/topic — set channel topic
 app.patch("/:channelId/topic", async (c) => {
   const auth = c.get("auth");
@@ -183,6 +306,112 @@ app.patch("/:channelId/topic", async (c) => {
   return c.json(channelToResponse(updated));
 });
 
+// PATCH /channels/:channelId/position — set channel position
+app.patch("/:channelId/position", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const position = body?.position;
+  if (typeof position !== "number" || !Number.isInteger(position) || position < 0) {
+    return c.json({ detail: "position must be a non-negative integer" }, 400);
+});
+
+// PATCH /channels/:channelId/read-only — toggle read-only mode
+app.patch("/:channelId/read-only", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const readOnly = body?.read_only;
+  if (typeof readOnly !== "boolean") {
+    return c.json({ detail: "read_only must be a boolean" }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  db.update(channels)
+    .set({ position })
+});
+
+// PATCH /channels/:channelId/category — set channel category
+app.patch("/:channelId/category", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelCategorySchema.safeParse(body);
+});
+
+// PATCH /channels/:channelId/slow-mode — set slow mode delay
+app.patch("/:channelId/slow-mode", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelSlowModeSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ category: parsed.data.category || null })
+});
+
+    .set({ slowModeSeconds: parsed.data.seconds })
+});
+
+    .set({ isReadOnly: readOnly ? 1 : 0 })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
+});
+
+// PUT /channels/reorder — bulk reorder channels
+app.put("/reorder", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const order = body?.order;
+  if (!Array.isArray(order) || !order.every((item: unknown) =>
+    typeof item === "object" && item !== null &&
+    typeof (item as Record<string, unknown>).channel_id === "string" &&
+    typeof (item as Record<string, unknown>).position === "number"
+  )) {
+    return c.json({ detail: "order must be array of { channel_id, position }" }, 400);
+  }
+
+  const db = getDb();
+  for (const item of order) {
+    const ch = getChannelInWorkspace(item.channel_id, auth.workspaceId);
+    if (ch) {
+      db.update(channels)
+        .set({ position: item.position })
+        .where(eq(channels.id, item.channel_id))
+        .run();
+    }
+  }
+
+  return c.json({ updated: order.length });
+// GET /channels/categories — list all categories in workspace
+app.get("/categories/list", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const rows = db
+    .select({ category: channels.category })
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .all();
+
+  const categories = [...new Set(rows.map(r => r.category).filter(Boolean))].sort();
+  return c.json({ categories });
+});
+
+<<<<<<< HEAD
+=======
+>>>>>>> 487001f (feat: add schema, migration, and route for read-only channels)
+>>>>>>> 41e1d13 (feat: add schema, migration, and route for read-only channels)
 // GET /channels/:channelId
 app.get("/:channelId", (c) => {
   const auth = c.get("auth");
@@ -190,7 +419,38 @@ app.get("/:channelId", (c) => {
   if (!channel) {
     return c.json({ detail: "Channel not found" }, 404);
   }
-  return c.json(channelToResponse(channel));
+
+  // Resolve creator name
+  let createdByName: string | null = null;
+  if (channel.createdBy && channel.createdBy !== "system" && channel.createdBy !== "human") {
+    const db = getDb();
+    const creator = db
+      .select({ name: users.name, displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, channel.createdBy))
+      .get();
+    createdByName = creator ? (creator.displayName ?? creator.name) : null;
+  } else {
+    createdByName = channel.createdBy; // "system" or "human"
+  }
+
+  const response = channelToResponse(channel);
+  response.created_by_name = createdByName;
+  return c.json(response);
+});
+
+  const db = getDb();
+  // Get last active timestamp for this channel
+  const lastActive = db
+    .select({ lastActiveAt: sql<string>`MAX(${messages.createdAt})` })
+    .from(messages)
+    .where(eq(messages.channelId, channel.id))
+    .get();
+
+  return c.json({
+    ...channelToResponse(channel),
+    last_active_at: lastActive?.lastActiveAt ?? null,
+  });
 });
 
 // GET /channels/:channelId/members — list all members in a channel
@@ -234,6 +494,126 @@ app.get("/:channelId/members", (c) => {
   }));
 
   return c.json(result);
+});
+
+// GET /channels/:channelId/stats — get channel statistics
+app.get("/:channelId/stats", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+});
+
+// GET /channels/:channelId/mentionable — list users that can be @mentioned in this channel
+app.get("/:channelId/mentionable", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+});
+
+// GET /channels/:channelId/top-senders — get most active senders in a channel
+app.get("/:channelId/top-senders", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "10", 10) || 10, 50);
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+
+  // Message count
+  const msgCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .get();
+
+  // Member count
+  const memberCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(channelMembers)
+    .where(eq(channelMembers.channelId, channelId))
+    .get();
+
+  // Pinned message count
+  const pinnedCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(and(eq(messages.channelId, channelId), eq(messages.isPinned, 1)))
+    .get();
+
+  // Last message timestamp
+  const lastMsg = db
+    .select({ createdAt: messages.createdAt })
+    .from(messages)
+    .where(eq(messages.channelId, channelId))
+    .orderBy(sql`${messages.createdAt} DESC`)
+    .limit(1)
+    .get();
+
+  return c.json({
+    channel_id: channelId,
+    message_count: msgCount?.count ?? 0,
+    member_count: memberCount?.count ?? 0,
+    pinned_count: pinnedCount?.count ?? 0,
+    last_message_at: lastMsg?.createdAt ?? null,
+    created_at: channel.createdAt,
+  });
+  // Return all workspace members as mentionable (agents + humans)
+  const members = db
+    .select({
+      id: users.id,
+      name: users.name,
+      displayName: users.displayName,
+      type: users.type,
+      agentName: agents.agentName,
+    })
+    .from(users)
+    .innerJoin(
+      workspaceMembers,
+      eq(users.id, workspaceMembers.userId)
+    )
+    .leftJoin(agents, eq(users.id, agents.id))
+    .where(eq(workspaceMembers.workspaceId, auth.workspaceId))
+    .all();
+
+  const result = members.map((m) => ({
+    id: m.id,
+    name: m.name,
+    display_name: m.displayName ?? null,
+    type: m.type,
+    mention_name: m.agentName ?? m.name,
+  }));
+
+  return c.json(result);
+});
+
+  const rows = db
+    .select({
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      messageCount: sql<number>`count(*)`,
+      lastMessageAt: sql<string>`max(${messages.createdAt})`,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .groupBy(messages.senderId)
+    .orderBy(sql`count(*) DESC`)
+    .limit(limit)
+    .all();
+
+  return c.json(
+    rows.map((r) => ({
+      sender_id: r.senderId,
+      sender_name: r.senderName,
+      sender_type: r.senderType,
+      message_count: r.messageCount,
+      last_message_at: r.lastMessageAt,
+    }))
+  );
 });
 
 // POST /channels/:channelId/archive — archive a channel

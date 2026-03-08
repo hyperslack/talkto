@@ -26,6 +26,7 @@ import {
   broadcastToChannel,
   isRateLimited,
   getClientUserId,
+  getClientCount,
   type WsData,
 } from "./services/ws-manager";
 import { createMcpServer } from "./mcp/server";
@@ -48,6 +49,10 @@ import agentsRoutes from "./routes/agents";
 import featuresRoutes from "./routes/features";
 import workspacesRoutes from "./routes/workspaces";
 import authRoutes from "./routes/auth";
+import webhooksRoutes from "./routes/webhooks";
+});
+
+import channelWelcomeRoutes from "./routes/channel-welcome";
 
 // ---------------------------------------------------------------------------
 // Initialize database
@@ -89,7 +94,15 @@ app.use(
 app.use("/api/*", authMiddleware);
 
 // Health check (before other routes — authMiddleware skips /api/health)
-app.get("/api/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
+app.get("/api/health", (c) => {
+  const wsClients = getClientCount();
+  return c.json({
+    status: "ok",
+    version: "0.1.0",
+    ws_clients: wsClients,
+    uptime_seconds: Math.floor(process.uptime()),
+  });
+});
 
 // Mount API routes
 app.route("/api/auth", authRoutes);
@@ -98,9 +111,41 @@ app.route("/api/users", usersRoutes);
 app.route("/api/channels", channelsRoutes);
 app.route("/api/agents", agentsRoutes);
 app.route("/api/features", featuresRoutes);
+app.route("/api/webhooks", webhooksRoutes);
 
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
+
+// Daily message activity — returns message counts grouped by date
+app.get("/api/activity/daily", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const days = Math.min(parseInt(c.req.query("days") ?? "30", 10) || 30, 365);
+
+  const rows = db
+    .select({
+      date: sql<string>`date(${messages.createdAt})`.as("date"),
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`date(${messages.createdAt}) >= date('now', '-' || ${days} || ' days')`
+      )
+    )
+    .groupBy(sql`date(${messages.createdAt})`)
+    .orderBy(sql`date(${messages.createdAt})`)
+    .all();
+
+  return c.json({
+    days,
+    activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
+  });
+});
+// Channel welcome messages
+app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
 // Search messages across all channels
 app.get("/api/search", (c) => {

@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, DEFAULT_WORKSPACE_ID } from "../db";
 import {
   users,
@@ -16,8 +16,9 @@ import {
   featureRequests,
   featureVotes,
   userSessions,
+  userPreferences,
 } from "../db/schema";
-import { UserOnboardSchema } from "../types";
+import { UserOnboardSchema, UserStatusSchema } from "../types";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
 import { CREATOR_NAME } from "../services/name-generator";
 import type { AppBindings, UserResponse } from "../types";
@@ -33,6 +34,8 @@ function userToResponse(u: typeof users.$inferSelect): UserResponse {
     display_name: u.displayName,
     about: u.about,
     agent_instructions: u.agentInstructions,
+    status_emoji: u.statusEmoji ?? null,
+    status_text: u.statusText ?? null,
   };
 }
 
@@ -192,6 +195,51 @@ app.get("/me", (c) => {
   return c.json(userToResponse(user));
 });
 
+// GET /users/me/stats — message count and activity stats for current user
+app.get("/me/stats", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) {
+    return c.json({ detail: "No human user onboarded yet" }, 404);
+  }
+
+  const totalMessages = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  const channelsActive = db
+    .select({ count: sql<number>`count(DISTINCT ${messages.channelId})` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  const firstMessage = db
+    .select({ ts: sql<string>`MIN(${messages.createdAt})` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  const lastMessage = db
+    .select({ ts: sql<string>`MAX(${messages.createdAt})` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  return c.json({
+    user_id: user.id,
+    message_count: totalMessages?.count ?? 0,
+    channels_active: channelsActive?.count ?? 0,
+    first_message_at: firstMessage?.ts ?? null,
+    last_message_at: lastMessage?.ts ?? null,
+  });
+});
+
 // PATCH /users/me
 app.patch("/me", async (c) => {
   const auth = c.get("auth");
@@ -222,6 +270,66 @@ app.patch("/me", async (c) => {
 
   const updated = db.select().from(users).where(eq(users.id, user.id)).get()!;
   return c.json(userToResponse(updated));
+});
+
+// PATCH /users/me/status — set custom status emoji + text
+app.patch("/me/status", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = UserStatusSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+  const db = getDb();
+
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) {
+    return c.json({ detail: "No human user onboarded yet" }, 404);
+  }
+
+  db.update(users)
+    .set({
+      statusEmoji: parsed.data.status_emoji ?? null,
+      statusText: parsed.data.status_text ?? null,
+    })
+});
+
+// PATCH /users/me/avatar — set or clear avatar URL
+app.patch("/me/avatar", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ detail: "Invalid JSON body" }, 400);
+
+  const { z } = await import("zod");
+  const AvatarSchema = z.object({
+    avatar_url: z.string().url().nullable(),
+  });
+
+  const parsed = AvatarSchema.safeParse(body);
+  if (!parsed.success) return c.json({ detail: parsed.error.message }, 400);
+
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No human user onboarded yet" }, 404);
+
+  db.update(users)
+    .set({ avatarUrl: parsed.data.avatar_url })
+    .where(eq(users.id, user.id))
+    .run();
+
+  const updated = db.select().from(users).where(eq(users.id, user.id)).get()!;
+  return c.json(userToResponse(updated));
+});
+
+  return c.json({
+    id: updated.id,
+    name: updated.name,
+    avatar_url: updated.avatarUrl,
+  });
 });
 
 // DELETE /users/me
@@ -277,6 +385,86 @@ app.delete("/me", (c) => {
     db.delete(users).where(eq(users.id, user.id)).run();
   }
   return c.body(null, 204);
+});
+
+// GET /users/me/preferences — get user preferences
+app.get("/me/preferences", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  const prefs = db.select().from(userPreferences).where(eq(userPreferences.userId, user.id)).get();
+  if (!prefs) {
+    return c.json({
+      theme: "system",
+      notify_mentions: true,
+      notify_dms: true,
+      notify_all: false,
+      compact_mode: false,
+      timezone: null,
+    });
+  }
+
+  return c.json({
+    theme: prefs.theme,
+    notify_mentions: Boolean(prefs.notifyMentions),
+    notify_dms: Boolean(prefs.notifyDMs),
+    notify_all: Boolean(prefs.notifyAll),
+    compact_mode: Boolean(prefs.compactMode),
+    timezone: prefs.timezone,
+  });
+});
+
+// PATCH /users/me/preferences — update user preferences
+app.patch("/me/preferences", async (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  const body = await c.req.json();
+  const now = new Date().toISOString();
+
+  const existing = db.select().from(userPreferences).where(eq(userPreferences.userId, user.id)).get();
+
+  const updates: Record<string, unknown> = { updatedAt: now };
+  if (body.theme !== undefined) updates.theme = body.theme;
+  if (body.notify_mentions !== undefined) updates.notifyMentions = body.notify_mentions ? 1 : 0;
+  if (body.notify_dms !== undefined) updates.notifyDMs = body.notify_dms ? 1 : 0;
+  if (body.notify_all !== undefined) updates.notifyAll = body.notify_all ? 1 : 0;
+  if (body.compact_mode !== undefined) updates.compactMode = body.compact_mode ? 1 : 0;
+  if (body.timezone !== undefined) updates.timezone = body.timezone;
+
+  if (existing) {
+    db.update(userPreferences).set(updates).where(eq(userPreferences.userId, user.id)).run();
+  } else {
+    db.insert(userPreferences).values({
+      userId: user.id,
+      theme: (updates.theme as string) ?? "system",
+      notifyMentions: (updates.notifyMentions as number) ?? 1,
+      notifyDMs: (updates.notifyDMs as number) ?? 1,
+      notifyAll: (updates.notifyAll as number) ?? 0,
+      compactMode: (updates.compactMode as number) ?? 0,
+      timezone: (updates.timezone as string) ?? null,
+      updatedAt: now,
+    }).run();
+  }
+
+  // Return updated prefs
+  const prefs = db.select().from(userPreferences).where(eq(userPreferences.userId, user.id)).get()!;
+  return c.json({
+    theme: prefs.theme,
+    notify_mentions: Boolean(prefs.notifyMentions),
+    notify_dms: Boolean(prefs.notifyDMs),
+    notify_all: Boolean(prefs.notifyAll),
+    compact_mode: Boolean(prefs.compactMode),
+    timezone: prefs.timezone,
+  });
 });
 
 export default app;

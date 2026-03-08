@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { eq, desc, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, messages, users, messageReactions } from "../db/schema";
+import { z } from "zod";
 import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema } from "../types";
 import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEvent, reactionEvent } from "../services/broadcaster";
 import { invokeForMessage } from "../services/agent-invoker";
@@ -62,6 +63,7 @@ app.get("/", (c) => {
       pinnedAt: messages.pinnedAt,
       pinnedBy: messages.pinnedBy,
       editedAt: messages.editedAt,
+      replyCount: sql<number>`(SELECT count(*) FROM messages AS _rc WHERE _rc.parent_id = ${messages.id})`,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -138,10 +140,63 @@ app.get("/", (c) => {
       pinned_at: row.pinnedAt,
       pinned_by: row.pinnedBy,
       edited_at: row.editedAt,
+      reply_count: row.replyCount ?? 0,
       reactions,
       created_at: row.createdAt,
     };
   });
+
+  return c.json(result);
+});
+
+// GET /channels/:channelId/messages/pinned — list pinned messages
+app.get("/pinned", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const rows = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      senderId: messages.senderId,
+      senderName: sql<string>`COALESCE(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      mentions: messages.mentions,
+      parentId: messages.parentId,
+      isPinned: messages.isPinned,
+      pinnedAt: messages.pinnedAt,
+      pinnedBy: messages.pinnedBy,
+      editedAt: messages.editedAt,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), eq(messages.isPinned, 1)))
+    .orderBy(desc(messages.pinnedAt))
+    .all();
+
+  const result: MessageResponse[] = rows.map((row) => ({
+    id: row.id,
+    channel_id: row.channelId,
+    sender_id: row.senderId,
+    sender_name: row.senderName,
+    sender_type: row.senderType as "human" | "agent",
+    content: row.content,
+    mentions: row.mentions ? JSON.parse(row.mentions) : null,
+    parent_id: row.parentId,
+    is_pinned: true,
+    pinned_at: row.pinnedAt,
+    pinned_by: row.pinnedBy,
+    edited_at: row.editedAt,
+    created_at: row.createdAt,
+  }));
 
   return c.json(result);
 });
@@ -170,6 +225,29 @@ app.post("/", async (c) => {
     : null;
   if (!human) {
     return c.json({ detail: "No user onboarded" }, 400);
+  }
+
+  // Enforce slow mode
+  const slowModeSeconds = (channel as Record<string, unknown>).slowModeSeconds as number ?? 0;
+  if (slowModeSeconds > 0 && human) {
+    const lastMsg = db
+      .select({ createdAt: messages.createdAt })
+      .from(messages)
+      .where(and(eq(messages.channelId, channelId), eq(messages.senderId, human.id)))
+      .orderBy(desc(messages.createdAt))
+      .limit(1)
+      .get();
+
+    if (lastMsg) {
+      const elapsed = (Date.now() - new Date(lastMsg.createdAt).getTime()) / 1000;
+      if (elapsed < slowModeSeconds) {
+        const waitSeconds = Math.ceil(slowModeSeconds - elapsed);
+        return c.json({
+          detail: `Slow mode active. Wait ${waitSeconds}s before posting again.`,
+          retry_after_seconds: waitSeconds,
+        }, 429);
+      }
+    }
   }
 
   const msgId = crypto.randomUUID();
@@ -276,6 +354,37 @@ app.post("/:messageId/pin", (c) => {
     id: messageId,
     is_pinned: Boolean(newPinned),
     pinned_at: newPinned ? now : null,
+  });
+});
+
+// GET /channels/:channelId/messages/reactions/summary — emoji usage stats for a channel
+app.get("/reactions/summary", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const rows = db
+    .select({
+      emoji: messageReactions.emoji,
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messageReactions)
+    .innerJoin(messages, eq(messageReactions.messageId, messages.id))
+    .where(eq(messages.channelId, channelId))
+    .groupBy(messageReactions.emoji)
+    .orderBy(sql`count(*) DESC`)
+    .limit(20)
+    .all();
+
+  return c.json({
+    channel_id: channelId,
+    emojis: rows.map((r) => ({ emoji: r.emoji, count: r.count })),
+    total: rows.reduce((sum, r) => sum + r.count, 0),
   });
 });
 
@@ -403,6 +512,63 @@ app.delete("/:messageId", (c) => {
   return c.json({ deleted: true, id: messageId });
 });
 
+// GET /channels/:channelId/messages/:messageId/thread — get thread summary and replies
+app.get("/:messageId/thread", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const db = getDb();
+
+  // Verify channel
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  // Get parent message
+  const parent = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!parent) return c.json({ detail: "Message not found" }, 404);
+  if (parent.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  // Get replies
+  const replies = db
+    .select({
+      id: messages.id,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.parentId, messageId))
+    .orderBy(messages.createdAt)
+    .all();
+
+  // Unique participants
+  const participantMap = new Map<string, string>();
+  for (const r of replies) {
+    participantMap.set(r.senderId, r.senderName);
+  }
+
+  return c.json({
+    parent_id: messageId,
+    reply_count: replies.length,
+    participants: Array.from(participantMap.entries()).map(([id, name]) => ({
+      user_id: id,
+      name,
+    })),
+    last_reply_at: replies.length > 0 ? replies[replies.length - 1].createdAt : null,
+    replies: replies.map((r) => ({
+      id: r.id,
+      sender_id: r.senderId,
+      sender_name: r.senderName,
+      sender_type: r.senderType,
+      content: r.content,
+      created_at: r.createdAt,
+    })),
+  });
+});
+
 // POST /channels/:channelId/messages/:messageId/react — toggle reaction
 app.post("/:messageId/react", async (c) => {
   const auth = c.get("auth");
@@ -504,6 +670,86 @@ app.get("/:messageId/reactions", (c) => {
   }));
 
   return c.json(result);
+});
+
+// POST /channels/:channelId/messages/:messageId/forward — forward message to another channel
+app.post("/:messageId/forward", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const body = await safeJsonBody(c);
+  if (body === null) return c.json({ detail: "Invalid JSON body" }, 400);
+
+  const parsed = z.object({ target_channel_id: z.string().min(1) }).safeParse(body);
+  if (!parsed.success) return c.json({ detail: parsed.error.message }, 400);
+
+  const db = getDb();
+
+  // Verify source channel
+  const sourceChannel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!sourceChannel) return c.json({ detail: "Source channel not found" }, 404);
+
+  // Verify target channel
+  const targetChannel = getChannelInWorkspace(parsed.data.target_channel_id, auth.workspaceId);
+  if (!targetChannel) return c.json({ detail: "Target channel not found" }, 404);
+
+  // Verify message exists in source channel
+  const msg = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!msg) return c.json({ detail: "Message not found" }, 404);
+  if (msg.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  // Cannot forward to same channel
+  if (channelId === parsed.data.target_channel_id) {
+    return c.json({ detail: "Cannot forward to the same channel" }, 400);
+  }
+
+  // Get original sender name
+  const sender = db.select().from(users).where(eq(users.id, msg.senderId)).get();
+  const senderName = sender?.displayName ?? sender?.name ?? "Unknown";
+
+  // Get forwarding user
+  const forwarder = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : null;
+  if (!forwarder) return c.json({ detail: "No user onboarded" }, 400);
+
+  // Create forwarded message with attribution
+  const forwardedContent = `📨 *Forwarded from ${sourceChannel.name}*\n> **${senderName}**: ${msg.content}`;
+  const newMsgId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  db.insert(messages)
+    .values({
+      id: newMsgId,
+      channelId: parsed.data.target_channel_id,
+      senderId: forwarder.id,
+      content: forwardedContent,
+      createdAt: now,
+    })
+    .run();
+
+  // Broadcast
+  broadcastEvent(
+    newMessageEvent({
+      messageId: newMsgId,
+      channelId: parsed.data.target_channel_id,
+      senderId: forwarder.id,
+      senderName: forwarder.displayName ?? forwarder.name,
+      content: forwardedContent,
+      createdAt: now,
+      senderType: "human",
+    }),
+    auth.workspaceId
+  );
+
+  return c.json({
+    id: newMsgId,
+    original_message_id: messageId,
+    source_channel_id: channelId,
+    target_channel_id: parsed.data.target_channel_id,
+    content: forwardedContent,
+    created_at: now,
+  }, 201);
 });
 
 export default app;

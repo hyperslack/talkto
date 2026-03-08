@@ -210,6 +210,8 @@ export const users = sqliteTable("users", {
   agentInstructions: text("agent_instructions"),
   email: text("email"), // optional, for cross-workspace identification
   avatarUrl: text("avatar_url"),
+  statusEmoji: text("status_emoji"), // e.g. "🏠", "🎯", "🔴"
+  statusText: text("status_text"), // e.g. "In a meeting", "On vacation"
 });
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -298,6 +300,16 @@ export const channels = sqliteTable(
     projectPath: text("project_path"),
     createdBy: text("created_by").notNull(), // user UUID or "system" — NOT a FK
     createdAt: text("created_at").notNull(),
+    position: integer("position").default(0), // custom sort order (lower = higher)
+});
+
+    category: text("category"), // grouping label, e.g. "Projects", "DMs", "General"
+});
+
+    slowModeSeconds: integer("slow_mode_seconds").default(0), // 0 = disabled
+});
+
+    isReadOnly: integer("is_read_only").notNull().default(0),
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),
     workspaceId: text("workspace_id")
@@ -510,3 +522,23 @@ export const messageReactionsRelations = relations(messageReactions, ({ one }) =
     references: [users.id],
   }),
 }));
+
+// ---------------------------------------------------------------------------
+// user_preferences — per-user settings
+// ---------------------------------------------------------------------------
+
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    theme: text("theme").default("system"), // "light" | "dark" | "system"
+    notifyMentions: integer("notify_mentions").notNull().default(1), // notify on @mentions
+    notifyDMs: integer("notify_dms").notNull().default(1), // notify on DMs
+    notifyAll: integer("notify_all").notNull().default(0), // notify on all messages
+    compactMode: integer("compact_mode").notNull().default(0), // compact message display
+    timezone: text("timezone"), // e.g. "America/New_York"
+    updatedAt: text("updated_at"),
+  }
+);

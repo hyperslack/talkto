@@ -1,8 +1,8 @@
 /** Individual message bubble — lazy-loads markdown renderer for rich content. */
 import type { Message } from "@/lib/types";
-import { Bot, User, Trash2, Pin, Pencil, Check, X, Reply, SmilePlus } from "lucide-react";
+import { Bot, User, Trash2, Pin, Pencil, Check, X, Reply, SmilePlus, Link } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isPlainText, formatTime, formatFullTimestamp } from "@/lib/message-utils";
+import { isPlainText, formatTime, formatFullTimestamp, formatRelativeTime } from "@/lib/message-utils";
 import { highlightMentions } from "@/lib/highlight-mentions";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { lazy, Suspense, useState, useRef, useEffect } from "react";
@@ -76,6 +76,16 @@ export function MessageBubble({
       {/* Action buttons — appear on hover */}
       {!editing && (
         <div className="absolute right-2 top-1 z-10 flex items-center gap-0.5">
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}/?channel=${message.channel_id}&message=${message.id}`;
+              navigator.clipboard.writeText(url);
+            }}
+            className="rounded p-1 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground/50 hover:!text-primary"
+            title="Copy link to message"
+          >
+            <Link className="h-3.5 w-3.5" />
+          </button>
           {onReply && (
             <button
               onClick={() => onReply(message)}
@@ -194,7 +204,7 @@ export function MessageBubble({
 
           <span
             className="text-[10px] text-muted-foreground/40 shrink-0 cursor-default"
-            title={formatFullTimestamp(message.created_at)}
+            title={`${formatFullTimestamp(message.created_at)} (${formatRelativeTime(message.created_at)})`}
           >
             {time}
           </span>
@@ -273,6 +283,20 @@ export function MessageBubble({
               <span className="text-muted-foreground/70 font-medium">{reaction.count}</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Thread reply count */}
+      {(message.reply_count ?? 0) > 0 && (
+        <div className="pl-10 mt-1">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs text-primary/70 hover:text-primary hover:underline transition-colors"
+            onClick={() => onReply?.(message)}
+          >
+            <Reply className="h-3 w-3" />
+            <span className="font-medium">{message.reply_count} {message.reply_count === 1 ? "reply" : "replies"}</span>
+          </button>
         </div>
       )}
 

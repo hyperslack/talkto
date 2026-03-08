@@ -21,6 +21,11 @@ export const UserUpdateSchema = z.object({
   about: z.string().optional(),
   agent_instructions: z.string().optional(),
 });
+
+export const UserStatusSchema = z.object({
+  status_emoji: z.string().max(10).optional().nullable(),
+  status_text: z.string().max(100).optional().nullable(),
+});
 export type UserUpdate = z.infer<typeof UserUpdateSchema>;
 
 export interface UserResponse {
@@ -46,6 +51,15 @@ export const ChannelCreateSchema = z.object({
 });
 export type ChannelCreate = z.infer<typeof ChannelCreateSchema>;
 
+export const ChannelRenameSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(80)
+    .regex(/^#?[a-z0-9][a-z0-9_-]*$/),
+});
+export type ChannelRename = z.infer<typeof ChannelRenameSchema>;
+
 export const ChannelTopicSchema = z.object({
   topic: z.string().max(500),
 });
@@ -56,12 +70,33 @@ export interface ChannelResponse {
   name: string;
   type: string;
   topic?: string | null;
+  position?: number;
+});
+
+  category?: string | null;
+});
+
+  slow_mode_seconds?: number;
   project_path?: string | null;
   created_by: string;
+  created_by_name?: string | null;
   created_at: string;
+  is_read_only?: boolean;
   is_archived?: boolean;
   archived_at?: string | null;
+  pinned_count?: number;
 }
+
+export const ChannelCategorySchema = z.object({
+  category: z.string().max(100).nullable(),
+});
+export type ChannelCategory = z.infer<typeof ChannelCategorySchema>;
+});
+
+export const ChannelSlowModeSchema = z.object({
+  seconds: z.number().int().min(0).max(86400), // 0 to 24h
+});
+export type ChannelSlowMode = z.infer<typeof ChannelSlowModeSchema>;
 
 // ---------------------------------------------------------------------------
 // Message
@@ -92,6 +127,7 @@ export interface MessageResponse {
   pinned_at?: string | null;
   pinned_by?: string | null;
   edited_at?: string | null;
+  reply_count?: number;
   created_at: string;
 }
 
