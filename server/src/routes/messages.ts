@@ -11,6 +11,7 @@ import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEven
 import { invokeForMessage } from "../services/agent-invoker";
 import type { AppBindings, MessageResponse } from "../types";
 import { and } from "drizzle-orm";
+import { logEdit, getEditHistory } from "../services/edit-history";
 
 const app = new Hono<AppBindings>();
 
@@ -352,6 +353,9 @@ app.patch("/:messageId", async (c) => {
     return c.json({ detail: "You can only edit your own messages" }, 403);
   }
 
+  // Save old content to edit history
+  logEdit(messageId, msg.content);
+
   const editedAt = new Date().toISOString();
   db.update(messages)
     .set({ content: parsed.data.content, editedAt })
@@ -504,6 +508,27 @@ app.get("/:messageId/reactions", (c) => {
   }));
 
   return c.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// GET /channels/:channelId/messages/:messageId/edit-history
+// ---------------------------------------------------------------------------
+
+app.get("/:messageId/edit-history", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const msg = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!msg) return c.json({ detail: "Message not found" }, 404);
+  if (msg.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  const history = getEditHistory(messageId);
+  return c.json({ message_id: messageId, history });
 });
 
 export default app;
