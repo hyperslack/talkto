@@ -20,6 +20,7 @@ import { ChannelCreateSchema, ChannelTopicSchema, ChannelSlowModeSchema } from "
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
+import { setArchiveReason, getArchiveReason, clearArchiveReason } from "../services/archive-reason";
 
 const app = new Hono<AppBindings>();
 
@@ -639,6 +640,10 @@ app.post("/:channelId/archive", (c) => {
     .where(eq(channels.id, channelId))
     .run();
 
+  // Store archive reason if provided (via query param or we default to null)
+  const reason = c.req.query("reason") ?? null;
+  setArchiveReason(channelId, reason, auth.userId ?? null);
+
   const updated = db.select().from(channels).where(eq(channels.id, channelId)).get()!;
   return c.json(channelToResponse(updated));
 });
@@ -661,6 +666,8 @@ app.post("/:channelId/unarchive", (c) => {
     .set({ isArchived: 0, archivedAt: null })
     .where(eq(channels.id, channelId))
     .run();
+
+  clearArchiveReason(channelId);
 
   const updated = db.select().from(channels).where(eq(channels.id, channelId)).get()!;
   return c.json(channelToResponse(updated));
@@ -729,6 +736,24 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// ---------------------------------------------------------------------------
+// GET /channels/:channelId/archive-reason — why a channel was archived
+// ---------------------------------------------------------------------------
+
+app.get("/:channelId/archive-reason", (c) => {
+  const auth = c.get("auth");
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const reason = getArchiveReason(channel.id);
+  if (!reason) {
+    return c.json({ channel_id: channel.id, reason: null, archived_by: null, archived_at: null });
+  }
+  return c.json(reason);
 });
 
 export default app;
