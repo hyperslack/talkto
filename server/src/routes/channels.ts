@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, asc, and, gt, sql } from "drizzle-orm";
+import { eq, asc, and, gt, sql, desc } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
 import { ChannelCreateSchema, ChannelRenameSchema, ChannelTopicSchema } from "../types";
@@ -72,6 +72,23 @@ app.get("/", (c) => {
   }
 
   return c.json(result.map((ch) => channelToResponse(ch, { pinned_count: pinnedCounts.get(ch.id) ?? 0 })));
+});
+
+  // Batch-fetch last_active_at for all channels
+  const lastActiveRows = db
+    .select({
+      channelId: messages.channelId,
+      lastActiveAt: sql<string>`MAX(${messages.createdAt})`.as("last_active_at"),
+    })
+    .from(messages)
+    .groupBy(messages.channelId)
+    .all();
+  const lastActiveMap = new Map(lastActiveRows.map((r) => [r.channelId, r.lastActiveAt]));
+
+  return c.json(result.map((ch) => ({
+    ...channelToResponse(ch),
+    last_active_at: lastActiveMap.get(ch.id) ?? null,
+  })));
 });
 
 // GET /channels/unread/counts — get unread counts for all channels for a user
@@ -318,6 +335,20 @@ app.get("/:channelId", (c) => {
   const response = channelToResponse(channel);
   response.created_by_name = createdByName;
   return c.json(response);
+});
+
+  const db = getDb();
+  // Get last active timestamp for this channel
+  const lastActive = db
+    .select({ lastActiveAt: sql<string>`MAX(${messages.createdAt})` })
+    .from(messages)
+    .where(eq(messages.channelId, channel.id))
+    .get();
+
+  return c.json({
+    ...channelToResponse(channel),
+    last_active_at: lastActive?.lastActiveAt ?? null,
+  });
 });
 
 // GET /channels/:channelId/members — list all members in a channel
