@@ -1,12 +1,12 @@
 /** Message feed — displays messages for the active channel. */
-import { useEffect, useRef, useMemo, useCallback, lazy, Suspense } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, lazy, Suspense } from "react";
 import { useMessages, useMe, useDeleteMessage, usePinMessage, useEditMessage, useReactToMessage } from "@/hooks/use-queries";
 import { useAppStore } from "@/stores/app-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MessageBubble } from "./message-bubble";
 import { MessageInput } from "./message-input";
-import { AlertTriangle, Bot, MessageSquare } from "lucide-react";
+import { AlertTriangle, ArrowDown, Bot, MessageSquare } from "lucide-react";
 import { formatDateSeparator, shouldShowDateSeparator } from "@/lib/message-utils";
 import type { Message } from "@/lib/types";
 
@@ -137,6 +137,8 @@ export function MessageFeed() {
   // Track whether user is near the bottom of the scroll area.
   // Only auto-scroll if they haven't scrolled up to read history.
   const isNearBottom = useRef(true);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   const handleScroll = useCallback(() => {
@@ -146,7 +148,12 @@ export function MessageFeed() {
     if (!viewport) return;
     const { scrollTop, scrollHeight, clientHeight } = viewport;
     // "Near bottom" = within 150px of the bottom edge
-    isNearBottom.current = scrollHeight - scrollTop - clientHeight < 150;
+    const nearBottom = scrollHeight - scrollTop - clientHeight < 150;
+    isNearBottom.current = nearBottom;
+    setShowScrollButton(!nearBottom);
+    if (nearBottom) {
+      setNewMessageCount(0);
+    }
   }, []);
 
   // Attach scroll listener to the radix viewport
@@ -163,11 +170,23 @@ export function MessageFeed() {
   const streamingText = streamingAgents.map(
     (name) => channelStreams?.get(name) ?? ""
   ).join("");
+  const prevMessageCount = useRef(messages.length);
   useEffect(() => {
+    if (messages.length > prevMessageCount.current && !isNearBottom.current) {
+      setNewMessageCount((c) => c + (messages.length - prevMessageCount.current));
+    }
+    prevMessageCount.current = messages.length;
+
     if (isNearBottom.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages.length, streamingText.length, currentTyping.length]);
+
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    setShowScrollButton(false);
+    setNewMessageCount(0);
+  }, []);
 
   if (!activeChannelId) {
     return (
@@ -249,6 +268,19 @@ export function MessageFeed() {
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
+
+      {/* Scroll to bottom button */}
+      {showScrollButton && (
+        <div className="flex justify-center -mt-4 mb-1 relative z-10">
+          <button
+            onClick={scrollToBottom}
+            className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
+          >
+            <ArrowDown className="h-3 w-3" />
+            {newMessageCount > 0 ? `${newMessageCount} new message${newMessageCount > 1 ? "s" : ""}` : "Scroll to bottom"}
+          </button>
+        </div>
+      )}
 
       {/* Input */}
       <MessageInput channelId={activeChannelId} />
