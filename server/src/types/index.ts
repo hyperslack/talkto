@@ -81,6 +81,7 @@ export interface ChannelResponse {
   created_by: string;
   created_by_name?: string | null;
   created_at: string;
+  is_read_only?: boolean;
   is_archived?: boolean;
   archived_at?: string | null;
   pinned_count?: number;
