@@ -28,7 +28,6 @@ import {
   getClientUserId,
   type WsData,
 } from "./services/ws-manager";
-import { startLivenessTask, stopLivenessTask } from "./routes/agents";
 import { createMcpServer } from "./mcp/server";
 import { authMiddleware, mcpAuthMiddleware } from "./middleware/auth";
 import {
@@ -264,15 +263,7 @@ app.get(
 );
 app.get("*", serveStatic({ path: resolve(frontendDist, "index.html") }));
 
-// ---------------------------------------------------------------------------
-// Start liveness background task
-// ---------------------------------------------------------------------------
-
 const disableServerBootstrap = process.env.TALKTO_DISABLE_SERVER === "1";
-
-if (!disableServerBootstrap) {
-  startLivenessTask();
-}
 
 // ---------------------------------------------------------------------------
 // Reconnect OpenCode MCP clients after server restart
@@ -516,7 +507,6 @@ console.log(`[SERVER] MCP at ${config.mcpUrl} (placeholder)`);
 // Graceful shutdown — shared cleanup logic
 function gracefulShutdown(signal: string) {
   console.log(`\n[SERVER] Shutting down (${signal})...`);
-  stopLivenessTask();
   closeDb();
   server?.stop();
   process.exit(0);
@@ -535,7 +525,6 @@ process.on("SIGHUP", () => gracefulShutdown("SIGHUP"));
 // for cleanup when signals aren't delivered (e.g. Windows process termination).
 // Note: do NOT call process.exit() here — it would re-trigger beforeExit in a loop.
 process.on("beforeExit", () => {
-  stopLivenessTask();
   closeDb();
   server?.stop();
 });

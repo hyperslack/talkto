@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { Agent } from "@/lib/types";
 import { useAppStore } from "@/stores/app-store";
 import { useDeleteAgent, useOpenDM, useChannels } from "@/hooks/use-queries";
-import { Bot, ChevronRight, Copy, Ghost, MessageSquare, Trash2 } from "lucide-react";
+import { AlertTriangle, Bot, ChevronRight, Copy, MessageSquare, Trash2, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarBadge } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -95,21 +95,23 @@ export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps
     );
   }
 
-  // Split into active and ghost agents
-  const activeAgents = dmAgents.filter((a) => !a.is_ghost);
-  const ghostAgents = dmAgents.filter((a) => a.is_ghost);
+  const invocableAgents = dmAgents.filter((a) => a.is_invocable);
+  const unavailableAgents = dmAgents.filter((a) => !a.is_invocable);
 
-  // Sort: online first, then alphabetical
-  const sortAgents = (list: Agent[]) =>
-    [...list].sort((a, b) => {
-      const aStatus = agentStatuses.get(a.agent_name) ?? a.status;
-      const bStatus = agentStatuses.get(b.agent_name) ?? b.status;
-      if (aStatus === bStatus) return a.agent_name.localeCompare(b.agent_name);
-      return aStatus === "online" ? -1 : 1;
-    });
+  // Sort alphabetically within each group
+  const sortAlpha = (list: Agent[]) =>
+    [...list].sort((a, b) => a.agent_name.localeCompare(b.agent_name));
 
-  const sortedActive = sortAgents(activeAgents);
-  const sortedGhosts = sortAgents(ghostAgents);
+  const onlineAgents = invocableAgents.filter(
+    (a) => (agentStatuses.get(a.agent_name) ?? a.status) === "online",
+  );
+  const offlineAgents = invocableAgents.filter(
+    (a) => (agentStatuses.get(a.agent_name) ?? a.status) !== "online",
+  );
+
+  const sortedOnline = sortAlpha(onlineAgents);
+  const sortedOffline = sortAlpha(offlineAgents);
+  const sortedUnavailable = sortAlpha(unavailableAgents);
 
   return (
     <div className="px-3">
@@ -121,7 +123,7 @@ export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps
 
       <div className="space-y-0.5">
         <TooltipProvider delayDuration={300}>
-          {sortedActive.map((agent) => {
+          {sortedOnline.map((agent) => {
             const status =
               agentStatuses.get(agent.agent_name) ?? agent.status;
             return (
@@ -131,14 +133,18 @@ export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps
         </TooltipProvider>
       </div>
 
-      {sortedGhosts.length > 0 && (
-        <GhostSection agents={sortedGhosts} onSelectChannel={onSelectChannel} />
+      {sortedOffline.length > 0 && (
+        <OfflineSection agents={sortedOffline} onSelectChannel={onSelectChannel} />
+      )}
+
+      {sortedUnavailable.length > 0 && (
+        <UnavailableSection agents={sortedUnavailable} onSelectChannel={onSelectChannel} />
       )}
     </div>
   );
 }
 
-function GhostSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectChannel?: (id: string) => void }) {
+function OfflineSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectChannel?: (id: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
   const agentStatuses = useAppStore((s) => s.agentStatuses);
 
@@ -154,8 +160,8 @@ function GhostSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectCh
             isOpen && "rotate-90",
           )}
         />
-        <Ghost className="h-3 w-3" />
-        <span>Ghosts ({agents.length})</span>
+        <WifiOff className="h-3 w-3" />
+        <span>Offline ({agents.length})</span>
       </button>
 
       {isOpen && (
@@ -169,7 +175,49 @@ function GhostSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectCh
                   key={agent.id}
                   agent={agent}
                   status={status}
-                  isGhost
+                  onSelectChannel={onSelectChannel}
+                />
+              );
+            })}
+          </TooltipProvider>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UnavailableSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectChannel?: (id: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const agentStatuses = useAppStore((s) => s.agentStatuses);
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex w-full items-center gap-1.5 px-0 py-1 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/30 hover:text-sidebar-foreground/50 transition-colors"
+      >
+        <ChevronRight
+          className={cn(
+            "h-3 w-3 transition-transform duration-200",
+            isOpen && "rotate-90",
+          )}
+        />
+        <AlertTriangle className="h-3 w-3" />
+        <span>Unavailable ({agents.length})</span>
+      </button>
+
+      {isOpen && (
+        <div className="space-y-0.5 mt-0.5">
+          <TooltipProvider delayDuration={300}>
+            {agents.map((agent) => {
+              const status =
+                agentStatuses.get(agent.agent_name) ?? agent.status;
+              return (
+                <AgentItem
+                  key={agent.id}
+                  agent={agent}
+                  status={status}
+                  isUnavailable
                   onSelectChannel={onSelectChannel}
                 />
               );
@@ -184,15 +232,15 @@ function GhostSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectCh
 function AgentItem({
   agent,
   status,
-  isGhost = false,
+  isUnavailable = false,
   onSelectChannel,
 }: {
   agent: Agent;
   status: "online" | "offline";
-  isGhost?: boolean;
+  isUnavailable?: boolean;
   onSelectChannel?: (id: string) => void;
 }) {
-  const isOnline = status === "online" && !isGhost;
+  const isOnline = status === "online" && !isUnavailable;
   const hasProfile =
     agent.description || agent.personality || agent.current_task || agent.gender;
   const activeChannelId = useAppStore((s) => s.activeChannelId);
@@ -230,22 +278,22 @@ function AgentItem({
           ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
           : "hover:bg-sidebar-accent/50",
         openDM.isPending && "opacity-50 pointer-events-none",
-        isGhost && "opacity-50",
+        isUnavailable && "opacity-50",
       )}
     >
       {/* Avatar with status badge — square for agents */}
       <Avatar size="sm" shape="square">
         <AvatarFallback
           className={cn(
-            isGhost
+            isUnavailable
               ? "bg-muted text-muted-foreground/20"
               : isOnline
                 ? "bg-talkto-agent/12 text-talkto-agent"
                 : "bg-muted text-muted-foreground/40",
           )}
         >
-          {isGhost ? (
-            <Ghost className="h-3.5 w-3.5" />
+          {isUnavailable ? (
+            <AlertTriangle className="h-3.5 w-3.5" />
           ) : (
             <Bot className="h-3.5 w-3.5" />
           )}
@@ -253,7 +301,7 @@ function AgentItem({
         <AvatarBadge
           className={cn(
             "ring-sidebar",
-            isGhost
+            isUnavailable
               ? "bg-muted-foreground/15"
               : isOnline
                 ? "bg-talkto-online"
@@ -266,7 +314,7 @@ function AgentItem({
         <span
           className={cn(
             "block truncate text-xs",
-            isGhost
+            isUnavailable
               ? "text-sidebar-foreground/25 line-through"
               : isOnline
                 ? "text-sidebar-foreground"
@@ -275,12 +323,12 @@ function AgentItem({
         >
           {agent.agent_name}
         </span>
-        {!isGhost && agent.current_task && isOnline && (
+        {!isUnavailable && agent.current_task && isOnline && (
           <span className="block truncate text-[10px] text-sidebar-foreground/30 max-w-[140px]">
             {agent.current_task}
           </span>
         )}
-        {!isGhost && !isOnline && agent.message_count != null && agent.message_count > 0 && (
+        {!isUnavailable && !isOnline && agent.message_count != null && agent.message_count > 0 && (
           <span className="block truncate text-[10px] text-sidebar-foreground/20">
             {agent.message_count} message{agent.message_count !== 1 ? "s" : ""}
           </span>
@@ -292,7 +340,7 @@ function AgentItem({
         variant="outline"
         className={cn(
           "h-4 shrink-0 max-w-[72px] truncate px-1.5 text-[9px] leading-none border-sidebar-border",
-          isGhost
+          isUnavailable
             ? "text-sidebar-foreground/15"
             : "text-sidebar-foreground/30",
         )}
@@ -337,9 +385,9 @@ function AgentItem({
       <TooltipContent side="right" className="max-w-64 space-y-1.5 p-3">
         <p className="text-xs font-medium">
           {agent.agent_name}
-          {isGhost && (
+          {isUnavailable && (
             <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/60">
-              (ghost)
+              (unavailable)
             </span>
           )}
           {agent.gender && (
@@ -352,9 +400,9 @@ function AgentItem({
             </span>
           )}
         </p>
-        {isGhost && (
+        {isUnavailable && (
           <p className="text-[11px] text-destructive/70">
-            Unreachable — process no longer running
+            TalkTo does not currently have verified invocation credentials for this agent.
           </p>
         )}
         {agent.description && (
@@ -381,14 +429,7 @@ function AgentItem({
             )}
           </p>
         )}
-        {!isGhost && Boolean(
-          agent.provider_session_id && (
-            agent.agent_type === "claude_code" ||
-            agent.agent_type === "codex" ||
-            agent.agent_type === "cursor" ||
-            agent.server_url
-          )
-        ) && (
+        {agent.is_invocable && (
           <p className="text-[11px] text-talkto-agent flex items-center gap-1">
             Invocable — messages reach this agent directly
           </p>

@@ -91,8 +91,8 @@ function getClient(): Codex {
 const busyThreads = new Set<string>();
 
 /**
- * Set of thread IDs known to be alive (registered or successfully prompted).
- * Cleared on TalkTo restart — agents become ghosts until re-register.
+ * Set of thread IDs known to be alive in the current server process.
+ * Registration verification and successful prompts repopulate this cache.
  */
 const knownAliveThreads = new Set<string>();
 

@@ -117,6 +117,7 @@ describe("Agents API", () => {
       expect(agent.id).toBeDefined();
       expect(agent.agent_name).toBeDefined();
       expect(agent.agent_type).toBeDefined();
+      expect(typeof agent.is_invocable).toBe("boolean");
       expect(typeof agent.is_ghost).toBe("boolean");
     }
   });
@@ -129,6 +130,7 @@ describe("Agents API", () => {
     );
     expect(creator).toBeDefined();
     expect(creator.agent_type).toBe("system");
+    expect(creator.is_invocable).toBe(false);
     expect(creator.is_ghost).toBe(false);
   });
 
@@ -137,6 +139,35 @@ describe("Agents API", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.agent_name).toBe("the_creator");
+  });
+
+  it("GET /api/agents derives online status from invocability", async () => {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const userId = crypto.randomUUID();
+    const agentName = `api-derived-status-${Date.now()}`;
+
+    db.insert(users)
+      .values({ id: userId, name: agentName, type: "agent", createdAt: now })
+      .run();
+    db.insert(agents)
+      .values({
+        id: userId,
+        agentName,
+        agentType: "codex",
+        projectPath: "/tmp/api-derived-status",
+        projectName: "api-derived-status",
+        status: "offline",
+        providerSessionId: "still-resumable",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      })
+      .run();
+
+    const res = await app.fetch(req("GET", `/api/agents/${agentName}`));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.is_invocable).toBe(true);
+    expect(data.status).toBe("online");
   });
 
   it("GET /api/agents/:name returns 404 for unknown", async () => {
@@ -227,6 +258,58 @@ describe("Agents API", () => {
     expect(storedAgent).toBeUndefined();
     const storedDm = db.select().from(channels).where(eq(channels.id, dmChannelId)).get();
     expect(storedDm).toBeUndefined();
+  });
+
+  it("POST /api/agents/cleanup-unavailable removes unreachable agents in bulk", async () => {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const unavailableId = crypto.randomUUID();
+    const availableId = crypto.randomUUID();
+    const unavailableName = `api-cleanup-unavailable-${Date.now()}`;
+    const availableName = `api-cleanup-available-${Date.now()}`;
+
+    db.insert(users)
+      .values([
+        { id: unavailableId, name: unavailableName, type: "agent", createdAt: now },
+        { id: availableId, name: availableName, type: "agent", createdAt: now },
+      ])
+      .run();
+
+    db.insert(agents)
+      .values([
+        {
+          id: unavailableId,
+          agentName: unavailableName,
+          agentType: "claude_code",
+          projectPath: "/tmp/api-cleanup-unavailable",
+          projectName: "api-cleanup-unavailable",
+          status: "offline",
+          providerSessionId: null,
+          workspaceId: DEFAULT_WORKSPACE_ID,
+        },
+        {
+          id: availableId,
+          agentName: availableName,
+          agentType: "codex",
+          projectPath: "/tmp/api-cleanup-available",
+          projectName: "api-cleanup-available",
+          status: "offline",
+          providerSessionId: "still-valid",
+          workspaceId: DEFAULT_WORKSPACE_ID,
+        },
+      ])
+      .run();
+
+    const res = await app.fetch(req("POST", "/api/agents/cleanup-unavailable"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.deleted).toBeGreaterThanOrEqual(1);
+    expect(data.agent_names).toContain(unavailableName);
+
+    const removed = db.select().from(agents).where(eq(agents.id, unavailableId)).get();
+    const kept = db.select().from(agents).where(eq(agents.id, availableId)).get();
+    expect(removed).toBeUndefined();
+    expect(kept?.agentName).toBe(availableName);
   });
 });
 

@@ -295,3 +295,34 @@ This pass will implement:
 13. After re-authentication, headless Claude prompting works again with the same permission mode TalkTo uses.
    - Verified with `claude -p "Reply with OK only." --model sonnet --permission-mode bypassPermissions --allow-dangerously-skip-permissions`
    - Result: `OK`
+
+---
+
+## Findings (Registration Verification / Lifecycle Simplification - 2026-03-08)
+
+### Current lifecycle model
+1. Registration for subprocess agents (`claude_code`, `codex`, `cursor`) is optimistic.
+   - `registerOrConnectAgent()` immediately marks those sessions alive in process-local Sets.
+   - No provider-backed verification is performed before TalkTo accepts the credential.
+
+2. Subprocess liveness after TalkTo restart is not durable.
+   - Claude/Codex/Cursor liveness is tracked only in memory in their SDK wrappers.
+   - After TalkTo restarts, those Sets are empty, so persisted credentials are not enough to prove liveness under the current model.
+
+3. OpenCode is different.
+   - It has a real session endpoint, so TalkTo can verify it without agent re-registration.
+
+### Claude-specific discoveries
+4. Claude session IDs are recoverable locally from `~/.claude/projects/.../*.jsonl`.
+   - The first JSON line includes both `cwd` and `sessionId`.
+   - Matching by `cwd` is necessary; the globally newest file is not a safe rule.
+
+5. Claude invocation required `cwd` alignment.
+   - TalkTo was resuming Claude with `resume=<sessionId>` but without passing the stored project path as SDK `cwd`.
+   - Because root `dev:server` starts from `talkto/server`, Claude resume failed with `No conversation found...` for sessions actually bound to `talkto`.
+   - Passing `cwd=projectPath` fixed direct resume probes against the real local Claude session.
+
+### Product conclusion
+6. A registration-time smoke test on the same headless resume path TalkTo uses for DMs/@mentions is a better truth source than proactive subprocess “alive” bookkeeping.
+7. If registration verifies invocability, TalkTo can assume subprocess agents remain invocable until a real invoke proves otherwise.
+8. Failure-time invalidation still matters and should remain, because auth/session validity can change after registration.

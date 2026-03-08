@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__talkto__list_agents",
+      "mcp__talkto__register",
+      "Bash(env:*)",
+      "Bash(ls:*)",
+      "mcp__talkto__update_profile",
+      "mcp__talkto__send_message",
+      "mcp__talkto__get_messages"
+    ]
+  }
+}

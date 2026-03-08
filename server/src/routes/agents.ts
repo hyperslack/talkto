@@ -8,167 +8,47 @@ import { getDb } from "../db";
 import { agents, channels, channelMembers, messages, sessions, users } from "../db/schema";
 import { AgentAdminUpdateSchema } from "../types";
 import type { AgentResponse, AppBindings, ChannelResponse } from "../types";
-import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
-import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
-import { isSessionAlive as isCursorSessionAlive } from "../sdk/cursor";
 import { requireAdmin } from "../middleware/auth";
-import { deleteAgentFromWorkspace, updateAgentAdminProfile } from "../services/admin-manager";
+import {
+  cleanupUnavailableAgents,
+  deleteAgentFromWorkspace,
+  updateAgentAdminProfile,
+} from "../services/admin-manager";
 
 const app = new Hono<AppBindings>();
 
-// ---------------------------------------------------------------------------
-// Ghost cache — updated every 30s by background interval
-// ---------------------------------------------------------------------------
-
-const ghostCache = new Map<string, boolean>();
-let livenessInterval: ReturnType<typeof setInterval> | null = null;
-
-/**
- * Check if a process with the given PID is alive.
- *
- * On Unix, `process.kill(pid, 0)` sends signal 0 which checks existence
- * without killing. On Windows, signal 0 can actually kill the process in
- * some Node.js versions, so we skip the PID-based check entirely and
- * return `true` (optimistic) — the SDK-based `isSessionAliveViaGet()`
- * is the primary liveness check and works cross-platform.
- */
-function isPidAlive(pid: number): boolean {
-  if (process.platform === "win32") {
-    // On Windows, process.kill(pid, 0) behavior is unreliable.
-    // Return true to avoid false ghost detection; the SDK-based
-    // session check (isSessionAliveViaGet) is the authoritative source.
-    return true;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if an agent's session is alive via direct GET /session/{id}.
- * Uses session.get() which works cross-project (unlike session.list()
- * which is project-scoped and misses sessions from other projects).
- */
-async function isSessionAliveViaGet(
-  serverUrl: string,
-  sessionId: string
-): Promise<boolean> {
-  try {
-    const resp = await fetch(`${serverUrl}/session/${sessionId}`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    return resp.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function computeGhost(
-  agent: typeof agents.$inferSelect
-): Promise<boolean> {
+function isAgentInvocable(agent: typeof agents.$inferSelect): boolean {
   if (agent.agentType === "system") return false;
 
-  // Claude Code agents — subprocess model, no server URL
-  if (agent.agentType === "claude_code" && agent.providerSessionId) {
-    return !(await isClaudeSessionAlive(agent.providerSessionId));
+  if (agent.agentType === "opencode") {
+    return Boolean(agent.serverUrl && agent.providerSessionId);
   }
 
-  // Codex CLI agents — subprocess model, no server URL
-  if (agent.agentType === "codex" && agent.providerSessionId) {
-    return !(await isCodexSessionAlive(agent.providerSessionId));
-  }
-
-  // Cursor agents — MCP-only model, no server URL
-  if (agent.agentType === "cursor" && agent.providerSessionId) {
-    return !(await isCursorSessionAlive(agent.providerSessionId));
-  }
-
-  // OpenCode agents — REST client-server model
-  if (agent.serverUrl && agent.providerSessionId) {
-    // Direct session lookup — works cross-project
-    return !(await isSessionAliveViaGet(agent.serverUrl, agent.providerSessionId));
-  }
-
-  // Offline agents aren't ghosts — they explicitly disconnected
-  if (agent.status === "offline") return false;
-
-  // No invocation credentials — check for active session with live PID
-  const db = getDb();
-  const activeSession = db
-    .select()
-    .from(sessions)
-    .where(and(eq(sessions.agentId, agent.id), eq(sessions.isActive, 1)))
-    .orderBy(desc(sessions.startedAt))
-    .limit(1)
-    .get();
-
-  if (!activeSession) return true;
-  return !isPidAlive(activeSession.pid);
-}
-
-async function refreshGhostCache(): Promise<void> {
-  try {
-    const db = getDb();
-    const allAgents = db.select().from(agents).all();
-    const newCache = new Map<string, boolean>();
-
-    // Check all agents in parallel
-    const results = await Promise.allSettled(
-      allAgents.map(async (agent) => ({
-        id: agent.id,
-        isGhost: await computeGhost(agent),
-      }))
-    );
-
-    for (const result of results) {
-      if (result.status === "fulfilled") {
-        newCache.set(result.value.id, result.value.isGhost);
-      }
-    }
-
-    ghostCache.clear();
-    for (const [k, v] of newCache) ghostCache.set(k, v);
-  } catch (e) {
-    console.error("Failed to refresh ghost cache:", e);
-  }
-}
-
-export function startLivenessTask(): void {
-  if (!livenessInterval) {
-    // Run immediately, then every 30s
-    refreshGhostCache();
-    livenessInterval = setInterval(refreshGhostCache, 30_000);
-  }
-}
-
-export function stopLivenessTask(): void {
-  if (livenessInterval) {
-    clearInterval(livenessInterval);
-    livenessInterval = null;
-  }
+  return Boolean(agent.providerSessionId);
 }
 
 function agentToResponse(
-  agent: typeof agents.$inferSelect,
-  isGhost: boolean
+  agent: typeof agents.$inferSelect
 ): AgentResponse {
+  const isInvocable = isAgentInvocable(agent);
+  const effectiveStatus =
+    agent.agentType === "system" ? agent.status : isInvocable ? "online" : "offline";
+
   return {
     id: agent.id,
     agent_name: agent.agentName,
     agent_type: agent.agentType,
     project_path: agent.projectPath,
     project_name: agent.projectName,
-    status: agent.status,
+    status: effectiveStatus,
     description: agent.description,
     personality: agent.personality,
     current_task: agent.currentTask,
     gender: agent.gender,
     server_url: agent.serverUrl,
     provider_session_id: agent.providerSessionId,
-    is_ghost: isGhost,
+    is_invocable: isInvocable,
+    is_ghost: agent.agentType === "system" ? false : !isInvocable,
   };
 }
 
@@ -199,7 +79,7 @@ app.get("/", (c) => {
   const responses = allAgents.map((a) => {
     const agentStats = statsMap.get(a.id);
     return {
-      ...agentToResponse(a, ghostCache.get(a.id) ?? false),
+      ...agentToResponse(a),
       message_count: agentStats?.count ?? 0,
       last_message_at: agentStats?.lastAt ?? null,
     };
@@ -270,6 +150,12 @@ app.get("/:agentName/stats", (c) => {
   });
 });
 
+// POST /agents/cleanup-unavailable — bulk-remove unreachable agents in this workspace
+app.post("/cleanup-unavailable", requireAdmin, (c) => {
+  const auth = c.get("auth");
+  return c.json(cleanupUnavailableAgents(auth.workspaceId));
+});
+
 // GET /agents/:agentName
 app.get("/:agentName", (c) => {
   const auth = c.get("auth");
@@ -282,7 +168,7 @@ app.get("/:agentName", (c) => {
   if (!agent) {
     return c.json({ detail: "Agent not found" }, 404);
   }
-  return c.json(agentToResponse(agent, ghostCache.get(agent.id) ?? false));
+  return c.json(agentToResponse(agent));
 });
 
 // PATCH /agents/:agentName — admin update for agent profile/provider metadata
@@ -334,7 +220,6 @@ app.delete("/:agentName", requireAdmin, (c) => {
   if (result.error) {
     return c.json({ detail: result.error }, 400);
   }
-  ghostCache.delete(agent.id);
   return c.json(result);
 });
 

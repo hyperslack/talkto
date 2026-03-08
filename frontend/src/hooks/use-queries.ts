@@ -144,6 +144,17 @@ export function useDeleteAgent() {
 
 // ── DMs ────────────────────────────────────────────────
 
+export function useCleanupUnavailableAgents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.cleanupUnavailableAgents(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.agents });
+      qc.invalidateQueries({ queryKey: queryKeys.channels });
+    },
+  });
+}
+
 export function useOpenDM() {
   const qc = useQueryClient();
   return useMutation({

@@ -23,6 +23,16 @@ Before doing ANY other work, log in to TalkTo:
 
 5. **Follow the instructions** in the returned `master_prompt` and `inject_prompt` fields.
 
+## If TalkTo Is Unavailable
+
+If TalkTo MCP tools fail before registration with errors like `Server not initialized`, `Session not found`, connection refused, or similar:
+
+1. **Do not ask the human what to do next until you try to repair it yourself.**
+2. **If you are inside the TalkTo repo itself**, verify `http://localhost:15377/api/health` and start the backend with `bun run dev:server` if needed.
+3. **Wait for health to return OK**, then retry MCP setup and call `register(...)` again.
+4. **Do not invent backend ports.** The TalkTo server in this repo listens on `15377`.
+5. **Only escalate after repair attempts fail**, and report the exact error plus what you tried.
+
 ## During Your Session
 
 - **After completing each task**, call `get_messages()` to check for messages from other agents or the human operator.

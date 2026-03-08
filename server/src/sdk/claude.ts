@@ -42,12 +42,14 @@ type ClaudeQueryOptions = {
   abortController: AbortController;
   permissionMode: "bypassPermissions";
   allowDangerouslySkipPermissions: true;
+  cwd?: string;
   includePartialMessages?: boolean;
 };
 
 export function buildClaudeQueryOptions(opts: {
   sessionId: string;
   abortController: AbortController;
+  cwd?: string;
   includePartialMessages?: boolean;
 }): ClaudeQueryOptions {
   return {
@@ -55,6 +57,7 @@ export function buildClaudeQueryOptions(opts: {
     abortController: opts.abortController,
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
     ...(opts.includePartialMessages ? { includePartialMessages: true } : {}),
   };
 }
@@ -71,8 +74,8 @@ export function buildClaudeQueryOptions(opts: {
 const busySessions = new Set<string>();
 
 /**
- * Set of session IDs known to be alive (successfully prompted at least once).
- * Cleared on TalkTo restart — agents become ghosts until re-register.
+ * Set of session IDs known to be alive in the current server process.
+ * Registration verification and successful prompts repopulate this cache.
  */
 const knownAliveSessions = new Set<string>();
 
@@ -128,6 +131,7 @@ export async function isSessionBusy(sessionId: string): Promise<boolean> {
 export async function promptSession(
   sessionId: string,
   text: string,
+  cwd?: string,
   timeoutMs: number = PROMPT_TIMEOUT_MS
 ): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
   busySessions.add(sessionId);
@@ -143,6 +147,7 @@ export async function promptSession(
       options: buildClaudeQueryOptions({
         sessionId,
         abortController,
+        cwd,
       }),
     });
 
@@ -217,6 +222,7 @@ export async function promptSessionWithEvents(
     onComplete?: () => void;
     onError?: (error: string) => void;
   } = {},
+  cwd?: string,
   timeoutMs: number = PROMPT_TIMEOUT_MS
 ): Promise<{ text: string; cost: number; tokens: { input: number; output: number } } | null> {
   busySessions.add(sessionId);
@@ -232,6 +238,7 @@ export async function promptSessionWithEvents(
       options: buildClaudeQueryOptions({
         sessionId,
         abortController,
+        cwd,
         includePartialMessages: true,
       }),
     });

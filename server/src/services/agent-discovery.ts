@@ -1,23 +1,16 @@
 /**
- * Agent discovery — verify agent liveness and resolve invocation info.
+ * Agent discovery — resolve stored invocation info.
  *
- * Supports multiple agent providers (OpenCode, Claude Code, Codex CLI, Cursor).
- * Routes liveness checks to the appropriate SDK based on agent_type.
- *
- * No auto-discovery: if an agent's session is dead, it becomes a ghost
- * and must re-register with a valid session_id. Auto-discovery was removed
- * because all OpenCode sessions share the same directory path, making
- * project-based session matching meaningless and causing identity theft.
+ * For subprocess providers, TalkTo trusts registration-time verification
+ * and keeps persisted credentials until a real invoke fails.
+ * Failure-time cleanup removes unreachable agents entirely instead of
+ * keeping stale offline shells in the workspace.
  */
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { agents, sessions } from "../db/schema";
-import { isSessionAlive as isOpenCodeSessionAlive } from "../sdk/opencode";
-import { isSessionAlive as isClaudeSessionAlive } from "../sdk/claude";
-import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
-import { isSessionAlive as isCursorSessionAlive } from "../sdk/cursor";
-import { agentStatusEvent, broadcastEvent } from "./broadcaster";
+import { deleteAgentFromWorkspace } from "./admin-manager";
 
 // ---------------------------------------------------------------------------
 // Invocation info resolution
@@ -30,16 +23,7 @@ export interface InvocationInfo {
   agentType: string;
 }
 
-/**
- * Look up an agent's invocation details and verify they're still valid.
- *
- * Flow:
- * 1. Read server_url + provider_session_id from DB
- * 2. If both exist, verify session is alive via SDK
- * 3. If stale (session dead), clear credentials — agent becomes a ghost
- *
- * Returns invocation info or null if agent is not invocable.
- */
+/** Look up an agent's stored invocation details. */
 export async function getAgentInvocationInfo(
   agentName: string
 ): Promise<InvocationInfo | null> {
@@ -61,59 +45,25 @@ export async function getAgentInvocationInfo(
     return null;
   }
 
-  let serverUrl = agent.serverUrl;
-  let sessionId = agent.providerSessionId;
-
-  // If we have credentials, verify liveness based on agent type
-  if (sessionId) {
-    let alive = false;
-
-    if (agent.agentType === "claude_code") {
-      // Claude Code — subprocess model, no server URL needed
-      alive = await isClaudeSessionAlive(sessionId);
-    } else if (agent.agentType === "codex") {
-      // Codex CLI — subprocess model, no server URL needed
-      alive = await isCodexSessionAlive(sessionId);
-    } else if (agent.agentType === "cursor") {
-      // Cursor — MCP-only model, no server URL needed
-      alive = await isCursorSessionAlive(sessionId);
-    } else if (serverUrl) {
-      // OpenCode — REST client-server model
-      alive = await isOpenCodeSessionAlive(serverUrl, sessionId);
-    }
-
-    if (alive) {
-      console.log(
-        `[DISCOVERY] '${agentName}' is alive: type=${agent.agentType} server=${serverUrl ?? "n/a"} session=${sessionId}`
-      );
-      return { serverUrl: serverUrl ?? null, sessionId, projectPath: agent.projectPath, agentType: agent.agentType };
-    }
-
-    // Session is dead — clear stale credentials
+  if (agent.providerSessionId) {
     console.log(
-      `[DISCOVERY] '${agentName}' session ${sessionId} is DEAD — clearing stale credentials`
+      `[DISCOVERY] '${agentName}' has stored credentials: type=${agent.agentType} server=${agent.serverUrl ?? "n/a"} session=${agent.providerSessionId}`
     );
-    clearStaleCredentials(agentName);
-    serverUrl = null;
-    sessionId = null;
+    return {
+      serverUrl: agent.serverUrl ?? null,
+      sessionId: agent.providerSessionId,
+      projectPath: agent.projectPath,
+      agentType: agent.agentType,
+    };
   }
 
-  // No auto-discovery. If an agent's session is dead, it becomes a ghost.
-  // The agent must re-register with a valid session_id to come back.
-  //
-  // Auto-discovery was removed because ALL OpenCode sessions share the same
-  // directory path, making project-based session matching meaningless.
-  // This caused agents to get reassigned to wrong sessions (identity theft).
   console.log(
-    `[DISCOVERY] '${agentName}' has no valid session — agent is a ghost. Must re-register.`
+    `[DISCOVERY] '${agentName}' has no stored invocation credentials — not invocable.`
   );
   return null;
 }
 
-/**
- * Clear server_url and provider_session_id for an agent with a dead session,
- * and mark the agent as offline (ghost).
- */
+/** Remove an unreachable agent after a real provider failure. */
 export function clearStaleCredentials(agentName: string): void {
   const db = getDb();
   const now = new Date().toISOString();
@@ -129,32 +79,20 @@ export function clearStaleCredentials(agentName: string): void {
       .where(and(eq(sessions.agentId, agent.id), eq(sessions.isActive, 1)))
       .run();
 
-    db.update(agents)
-      .set({ serverUrl: null, providerSessionId: null, status: "offline" })
-      .where(eq(agents.id, agent.id))
-      .run();
-
-    broadcastEvent(
-      agentStatusEvent({
-        agentName,
-        status: "offline",
-        agentType: agent.agentType,
-        projectName: agent.projectName,
-      }),
-      agent.workspaceId
-    );
+    const result = deleteAgentFromWorkspace(agent);
+    if (result.error) {
+      console.error(
+        `[DISCOVERY] Failed to delete unreachable agent '${agentName}': ${result.error}`
+      );
+      return;
+    }
     console.log(
-      `[DISCOVERY] Cleared stale credentials for '${agentName}' — marked offline`
+      `[DISCOVERY] Removed unreachable agent '${agentName}' after provider failure`
     );
   }
 }
 
-/**
- * Check if an agent is a ghost (unreachable, stale registration).
- *
- * A ghost has no valid invocation credentials and no live session.
- * System agents (the_creator) are never ghosts.
- */
+/** Check if an agent currently lacks invocable credentials. */
 export async function isAgentGhost(agentName: string): Promise<boolean> {
   const db = getDb();
 
@@ -167,23 +105,9 @@ export async function isAgentGhost(agentName: string): Promise<boolean> {
   if (!agent) return false;
   if (agent.agentType === "system") return false;
 
-  // If agent has credentials, check if session is alive (route by provider)
-  if (agent.providerSessionId) {
-    let alive = false;
-    if (agent.agentType === "claude_code") {
-      alive = await isClaudeSessionAlive(agent.providerSessionId);
-    } else if (agent.agentType === "codex") {
-      alive = await isCodexSessionAlive(agent.providerSessionId);
-    } else if (agent.agentType === "cursor") {
-      alive = await isCursorSessionAlive(agent.providerSessionId);
-    } else if (agent.serverUrl) {
-      alive = await isOpenCodeSessionAlive(agent.serverUrl, agent.providerSessionId);
-    }
-    if (alive) return false;
-    // Session is dead — agent is a ghost
-    return true;
+  if (agent.agentType === "opencode") {
+    return !(agent.serverUrl && agent.providerSessionId);
   }
 
-  // No credentials at all — ghost
-  return true;
+  return !agent.providerSessionId;
 }

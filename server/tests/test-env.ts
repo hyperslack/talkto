@@ -16,3 +16,7 @@ if (!process.env.TALKTO_DATA_DIR) {
 if (!process.env.TALKTO_DISABLE_SERVER) {
   process.env.TALKTO_DISABLE_SERVER = "1";
 }
+
+if (!process.env.TALKTO_SKIP_REGISTRATION_VERIFY) {
+  process.env.TALKTO_SKIP_REGISTRATION_VERIFY = "1";
+}

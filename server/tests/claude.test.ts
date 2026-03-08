@@ -158,6 +158,7 @@ describe("buildClaudeQueryOptions", () => {
     expect(options.abortController).toBe(abortController);
     expect(options.permissionMode).toBe("bypassPermissions");
     expect(options.allowDangerouslySkipPermissions).toBe(true);
+    expect(options.cwd).toBeUndefined();
     expect(options.includePartialMessages).toBeUndefined();
   });
 
@@ -169,6 +170,16 @@ describe("buildClaudeQueryOptions", () => {
     });
 
     expect(options.includePartialMessages).toBe(true);
+  });
+
+  test("includes cwd when resuming a project-bound Claude session", () => {
+    const options = buildClaudeQueryOptions({
+      sessionId: "ses_project",
+      abortController: new AbortController(),
+      cwd: "B:\\projects\\sides\\talkto",
+    });
+
+    expect(options.cwd).toBe("B:\\projects\\sides\\talkto");
   });
 });
 

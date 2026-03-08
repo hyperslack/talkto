@@ -189,3 +189,25 @@
 - `bun test server/tests/claude.test.ts` ✅
 - `bun test server/tests/mcp.test.ts` ✅
 - `bun run typecheck` ✅
+
+---
+
+## Session: 2026-03-08 - Registration verification / lifecycle simplification
+
+### Status
+- New lifecycle refactor started.
+- Existing planning files synchronized.
+- Code-path audit and Claude-specific root-cause work underway.
+
+### Actions Completed
+1. Confirmed the current subprocess lifecycle model is based on in-memory liveness Sets, not durable provider-backed verification.
+2. Confirmed OpenCode is the only provider with a direct session health API today.
+3. Verified Claude session recovery from local transcript files under `.claude/projects` and tightened prompt guidance to match `cwd` before reading `sessionId`.
+4. Isolated the recent Claude invocation failure to TalkTo resuming from the wrong working directory.
+5. Patched Claude SDK calls to pass `projectPath` as `cwd` and validated that change with targeted tests plus a live external resume probe returning `OK`.
+
+### Next Actions
+1. Finish auditing every registration/discovery/UI path that still depends on subprocess ghost probing.
+2. Move subprocess verification to `register()`.
+3. Remove proactive subprocess liveness checks while keeping failure-time invalidation.
+4. Revalidate backend behavior and update operator-facing status semantics if needed.

@@ -213,6 +213,8 @@ describe("MCP — register", () => {
     expect(data.master_prompt).toBeDefined();
     expect(typeof data.inject_prompt).toBe("string");
     expect(data.inject_prompt).toContain("CLAUDE_CODE_SESSION_ID");
+    expect(data.inject_prompt).toContain(".claude/projects");
+    expect(data.inject_prompt).toContain("cwd");
     expect(data.inject_prompt).not.toContain("else { $PID }");
     expect(data.inject_prompt).not.toContain("else echo \"$$\"");
   });
@@ -305,6 +307,69 @@ describe("MCP — register", () => {
     );
     expect(data.code).toBe("invalid_claude_session_id");
     expect(typeof data.hint).toBe("string");
+  });
+
+  it("rejects placeholder Claude session IDs with recovery guidance", async () => {
+    const sessionId = await initMcpSession();
+    const { result } = await callTool(sessionId, "register", {
+      session_id: "claude-code-session-1",
+      project_path: "/tmp/test-project",
+      agent_type: "claude_code",
+    });
+
+    const data = result as Record<string, unknown>;
+    expect(data.error).toBe(
+      'claude_code requires a real session ID. Placeholder values like "claude-code-session-1" will not work.'
+    );
+    expect(data.code).toBe("placeholder_session_id");
+    expect(typeof data.hint).toBe("string");
+    expect(String(data.hint)).toContain("CLAUDE_CODE_SESSION_ID");
+    expect(String(data.hint)).toContain(".claude/projects");
+    expect(String(data.hint)).toContain("cwd");
+  });
+
+  it("rejects placeholder Cursor session IDs with recovery guidance", async () => {
+    const sessionId = await initMcpSession();
+    const { result } = await callTool(sessionId, "register", {
+      session_id: "cursor-chat-id",
+      project_path: "/tmp/test-project",
+      agent_type: "cursor",
+    });
+
+    const data = result as Record<string, unknown>;
+    expect(data.error).toBe(
+      'cursor requires a real session ID. Placeholder values like "cursor-chat-id" will not work.'
+    );
+    expect(data.code).toBe("placeholder_session_id");
+    expect(typeof data.hint).toBe("string");
+    expect(String(data.hint)).toContain("agent create-chat");
+  });
+
+  it("fails registration when verification is required but OpenCode is not reachable", async () => {
+    const previous = process.env.TALKTO_SKIP_REGISTRATION_VERIFY;
+    process.env.TALKTO_SKIP_REGISTRATION_VERIFY = "0";
+
+    try {
+      const sessionId = await initMcpSession();
+      const { result } = await callTool(sessionId, "register", {
+        session_id: "test-opencode-without-server",
+        project_path: "/tmp/test-project",
+        agent_type: "opencode",
+      });
+
+      const data = result as Record<string, unknown>;
+      expect(data.error).toBe(
+        "OpenCode registration verification requires a reachable server_url."
+      );
+      expect(data.code).toBe("session_verification_failed");
+      expect(typeof data.hint).toBe("string");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TALKTO_SKIP_REGISTRATION_VERIFY;
+      } else {
+        process.env.TALKTO_SKIP_REGISTRATION_VERIFY = previous;
+      }
+    }
   });
 });
 
@@ -413,6 +478,8 @@ describe("MCP — Full Agent Workflow", () => {
         (a: Record<string, unknown>) => a.name === agentName
       );
       expect(found).toBeDefined();
+      expect((found as Record<string, unknown>).status).toBe("online");
+      expect((found as Record<string, unknown>).invocable).toBe(true);
     } else {
       const data = result as Record<string, unknown>;
       expect(data.error).toBeUndefined();
@@ -493,6 +560,13 @@ describe("MCP — Full Agent Workflow", () => {
     const data = result as Record<string, unknown>;
     expect(data.error).toBeUndefined();
     expect(data.status).toBe("disconnected");
+
+    const agentRes = await app.fetch(apiRequest(`/api/agents/${disconnectName}`));
+    expect(agentRes.status).toBe(200);
+    const stored = await agentRes.json();
+    expect(stored.provider_session_id).toBeNull();
+    expect(stored.is_invocable).toBe(false);
+    expect(stored.status).toBe("offline");
   });
 });
 

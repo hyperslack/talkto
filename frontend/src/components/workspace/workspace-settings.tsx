@@ -22,6 +22,7 @@ import {
   useRemoveMember,
   useUpdateAgent,
   useDeleteAgent,
+  useCleanupUnavailableAgents,
   useApiKeys,
   useCreateApiKey,
   useRevokeApiKey,
@@ -314,6 +315,8 @@ function AgentsSection({
   isAdmin: boolean;
 }) {
   const visibleAgents = agents.filter((agent) => agent.agent_type !== "system");
+  const unavailableCount = visibleAgents.filter((agent) => !agent.is_invocable).length;
+  const cleanupUnavailable = useCleanupUnavailableAgents();
 
   return (
     <section className="space-y-3">
@@ -325,6 +328,19 @@ function AgentsSection({
         <Badge variant="secondary" className="ml-auto text-[10px]">
           {visibleAgents.length}
         </Badge>
+        {isAdmin ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[10px]"
+            disabled={cleanupUnavailable.isPending || unavailableCount === 0}
+            onClick={() => cleanupUnavailable.mutate()}
+          >
+            {cleanupUnavailable.isPending
+              ? "Removing…"
+              : `Remove unreachable${unavailableCount > 0 ? ` (${unavailableCount})` : ""}`}
+          </Button>
+        ) : null}
       </div>
 
       <div className="space-y-2">
@@ -356,7 +372,6 @@ function AgentAdminRow({
   const [gender, setGender] = useState<"male" | "female" | "non-binary" | "">(
     (agent.gender as "male" | "female" | "non-binary" | "") ?? ""
   );
-  const [agentType, setAgentType] = useState(agent.agent_type);
   const updateAgent = useUpdateAgent();
   const deleteAgent = useDeleteAgent();
 
@@ -365,7 +380,6 @@ function AgentAdminRow({
     setPersonality(agent.personality ?? "");
     setCurrentTask(agent.current_task ?? "");
     setGender((agent.gender as "male" | "female" | "non-binary" | "") ?? "");
-    setAgentType(agent.agent_type);
   };
 
   return (
@@ -379,15 +393,15 @@ function AgentAdminRow({
             <Badge variant="secondary" className="text-[10px]">
               {agent.agent_type}
             </Badge>
-            {agent.is_ghost ? (
+            {!agent.is_invocable ? (
               <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                ghost
+                unavailable
               </Badge>
             ) : null}
           </div>
           <p className="mt-1 text-[10px] text-muted-foreground/60">
             {agent.project_name}
-            {agent.provider_session_id ? " · invocable" : " · not invocable"}
+            {agent.is_invocable ? " · invocable" : " · unavailable"}
           </p>
         </div>
 
@@ -432,7 +446,6 @@ function AgentAdminRow({
                   personality: personality || null,
                   current_task: currentTask || null,
                   gender: gender || null,
-                  agent_type: agentType as "opencode" | "claude_code" | "codex" | "cursor" | "system",
                 },
               },
               {
@@ -461,17 +474,7 @@ function AgentAdminRow({
             placeholder="Current task"
             className="h-8 text-xs"
           />
-          <div className="grid grid-cols-2 gap-2">
-            <select
-              value={agentType}
-              onChange={(e) => setAgentType(e.target.value)}
-              className="h-8 rounded-md border border-input bg-background px-3 text-xs"
-            >
-              <option value="opencode">opencode</option>
-              <option value="claude_code">claude_code</option>
-              <option value="codex">codex</option>
-              <option value="cursor">cursor</option>
-            </select>
+          <div className="grid grid-cols-1 gap-2">
             <select
               value={gender}
               onChange={(e) => setGender(e.target.value as "male" | "female" | "non-binary" | "")}

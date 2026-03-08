@@ -27,11 +27,10 @@ import {
   channelCreatedEvent,
   featureUpdateEvent,
 } from "./broadcaster";
+import { deleteAgentFromWorkspace } from "./admin-manager";
 import { generateUniqueName } from "./name-generator";
 import { promptEngine } from "./prompt-engine";
-import { markSessionAlive as markClaudeSessionAlive } from "../sdk/claude";
-import { markSessionAlive as markCodexSessionAlive } from "../sdk/codex";
-import { markSessionAlive as markCursorSessionAlive, setCursorSessionMeta } from "../sdk/cursor";
+import { setCursorSessionMeta } from "../sdk/cursor";
 
 /** Derive project name from path (git repo name or folder basename).
  *  Uses spawnSync to avoid shell-quoting issues across platforms. */
@@ -128,13 +127,8 @@ export function registerOrConnectAgent(opts: {
   const agentType = opts.agentType ?? "opencode";
   const workspaceId = opts.workspaceId ?? DEFAULT_WORKSPACE_ID;
 
-  // For subprocess-based / MCP-only agents, mark the session as alive on registration
-  if (agentType === "claude_code") {
-    markClaudeSessionAlive(sessionId);
-  } else if (agentType === "codex") {
-    markCodexSessionAlive(sessionId);
-  } else if (agentType === "cursor") {
-    markCursorSessionAlive(sessionId);
+  // Cursor invocations need the project path to build --workspace resumes.
+  if (agentType === "cursor") {
     setCursorSessionMeta(sessionId, { projectPath });
   }
 
@@ -400,7 +394,7 @@ function createNewAgent(opts: {
   };
 }
 
-/** Mark agent as offline and end active session */
+/** Disconnect an agent by removing its stored identity from the workspace. */
 export function disconnectAgent(agentName: string): Record<string, unknown> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -414,18 +408,12 @@ export function disconnectAgent(agentName: string): Record<string, unknown> {
     .where(and(eq(sessions.agentId, agent.id), eq(sessions.isActive, 1)))
     .run();
 
-  db.update(agents).set({ status: "offline" }).where(eq(agents.id, agent.id)).run();
+  const result = deleteAgentFromWorkspace(agent);
+  if (result.error) return result;
 
-  broadcastEvent(
-    agentStatusEvent({
-      agentName,
-      status: "offline",
-      agentType: agent.agentType,
-      projectName: agent.projectName,
-    }),
-    agent.workspaceId
+  console.log(
+    `[REGISTER] ${agentName} disconnected: removed stored agent identity`
   );
-
   return { status: "disconnected", agent_name: agentName };
 }
 
@@ -464,11 +452,18 @@ export function listAllAgents(workspaceId: string = DEFAULT_WORKSPACE_ID): Array
     .orderBy(agents.agentName)
     .all()
     .map((a) => {
+      const isInvocable =
+        a.agentType === "system"
+          ? false
+          : a.agentType === "opencode"
+            ? Boolean(a.serverUrl && a.providerSessionId)
+            : Boolean(a.providerSessionId);
       const entry: Record<string, unknown> = {
         name: a.agentName,
         type: a.agentType,
         project: a.projectName,
-        status: a.status,
+        status: a.agentType === "system" ? a.status : isInvocable ? "online" : "offline",
+        invocable: isInvocable,
       };
       if (a.description) entry.description = a.description;
       if (a.personality) entry.personality = a.personality;

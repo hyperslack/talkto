@@ -52,10 +52,10 @@ export function MessageInput({ channelId }: MessageInputProps) {
       });
     }
 
-    // Add all agents (exclude ghosts and system agents)
+    // Add all invocable agents except system agents.
     if (agents) {
       for (const a of agents) {
-        if (a.is_ghost || a.agent_type === "system") continue;
+        if (!a.is_invocable || a.agent_type === "system") continue;
         list.push({
           name: a.agent_name,
           label: a.agent_name,

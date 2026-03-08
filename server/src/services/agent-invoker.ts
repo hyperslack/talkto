@@ -18,7 +18,7 @@
  * Invocations run as fire-and-forget background tasks with typing state broadcasts.
  */
 
-import { eq, desc, sql, and, ne } from "drizzle-orm";
+import { eq, desc, sql, and, ne, inArray } from "drizzle-orm";
 import { getDb, DEFAULT_WORKSPACE_ID } from "../db";
 import { agents, channels, messages, users } from "../db/schema";
 import {
@@ -129,26 +129,20 @@ function extractMentionsFromText(text: string, excludeSender?: string, workspace
 
   if (mentioned.size === 0) return [];
 
-  // Validate against registered agents (scoped to workspace if provided)
+  // Validate against registered agents in one query instead of N lookups.
   const db = getDb();
-  const validAgents: string[] = [];
-
-  for (const name of mentioned) {
-    const conditions = [eq(agents.agentName, name)];
-    if (workspaceId) {
-      conditions.push(eq(agents.workspaceId, workspaceId));
-    }
-    const agent = db
-      .select({ agentName: agents.agentName })
-      .from(agents)
-      .where(conditions.length > 1 ? and(...conditions) : conditions[0])
-      .get();
-    if (agent) {
-      validAgents.push(agent.agentName);
-    }
+  const names = [...mentioned];
+  const conditions = [inArray(agents.agentName, names)];
+  if (workspaceId) {
+    conditions.push(eq(agents.workspaceId, workspaceId));
   }
 
-  return validAgents;
+  return db
+    .select({ agentName: agents.agentName })
+    .from(agents)
+    .where(and(...conditions))
+    .all()
+    .map((agent) => agent.agentName);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,10 +170,10 @@ function expandAtAll(channelName: string, excludeSender: string, workspaceId?: s
   try {
     const db = getDb();
 
-    // Fetch all non-system, non-ghost agents (excluding sender), scoped to workspace
+    // Fetch all non-system agents (excluding sender), scoped to workspace.
+    // Invocability is determined from stored credentials below.
     const conditions = [
       ne(agents.agentType, "system"),
-      ne(agents.status, "ghost"),
       ne(agents.agentName, excludeSender),
     ];
     if (workspaceId) {
@@ -547,7 +541,12 @@ async function promptByProvider(
     return cursorPromptWithEvents(info.sessionId, prompt, callbacks);
   }
   if (info.agentType === "claude_code") {
-    return claudePromptWithEvents(info.sessionId, prompt, callbacks);
+    return claudePromptWithEvents(
+      info.sessionId,
+      prompt,
+      callbacks,
+      info.projectPath
+    );
   }
   if (info.agentType === "codex") {
     return codexPromptWithEvents(info.sessionId, prompt, callbacks);

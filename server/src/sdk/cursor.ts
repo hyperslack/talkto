@@ -304,7 +304,7 @@ export function resetCliCache(): void {
 /** Sessions currently being prompted. */
 const busySessions = new Set<string>();
 
-/** Sessions known to be alive (registered via MCP). */
+/** Sessions known to be alive in the current server process. */
 const knownAliveSessions = new Set<string>();
 
 /** Per-session metadata (project path, etc.). */

@@ -109,6 +109,16 @@ export function updateAgentAdminProfile(
     return { error: "Only built-in system agents may use agent_type='system'." };
   }
 
+  if (
+    normalizedAgentType !== undefined &&
+    normalizedAgentType !== agent.agentType
+  ) {
+    return {
+      error:
+        "Changing agent provider type is not supported. Delete the agent and re-register with the correct provider.",
+    };
+  }
+
   const patch: Partial<typeof agents.$inferInsert> = {};
   if (updates.description !== undefined) patch.description = updates.description;
   if (updates.personality !== undefined) patch.personality = updates.personality;
@@ -116,13 +126,7 @@ export function updateAgentAdminProfile(
   if (normalizedGender !== undefined) patch.gender = normalizedGender as ManagedGender | null;
   if (normalizedAgentType !== undefined) {
     patch.agentType = normalizedAgentType;
-    if (normalizedAgentType !== agent.agentType) {
-      // Provider changes invalidate any stored invocation session metadata.
-      // The agent must re-register under the new provider type.
-      patch.providerSessionId = null;
-      patch.serverUrl = null;
-      patch.status = "offline";
-    } else if (normalizedAgentType !== "opencode") {
+    if (normalizedAgentType !== "opencode") {
       patch.serverUrl = null;
     }
   }
@@ -223,5 +227,39 @@ export function deleteAgentFromWorkspace(agent: typeof agents.$inferSelect): Rec
     deleted: true,
     id: agent.id,
     agent_name: agent.agentName,
+  };
+}
+
+export function cleanupUnavailableAgents(workspaceId: string): Record<string, unknown> {
+  const db = getDb();
+  const candidates = db
+    .select()
+    .from(agents)
+    .where(eq(agents.workspaceId, workspaceId))
+    .all()
+    .filter((agent) => {
+      if (agent.agentType === "system") return false;
+      if (agent.agentType === "opencode") {
+        return !(agent.serverUrl && agent.providerSessionId);
+      }
+      return !agent.providerSessionId;
+    });
+
+  const deleted: string[] = [];
+  const errors: string[] = [];
+
+  for (const agent of candidates) {
+    const result = deleteAgentFromWorkspace(agent);
+    if (result.error) {
+      errors.push(`${agent.agentName}: ${result.error}`);
+    } else {
+      deleted.push(agent.agentName);
+    }
+  }
+
+  return {
+    deleted: deleted.length,
+    agent_names: deleted,
+    errors,
   };
 }

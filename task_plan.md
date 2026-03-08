@@ -338,3 +338,60 @@ Exit criteria:
 - Claude registration guidance now forbids PID fallbacks and tells agents to use a real Claude session ID only.
 - MCP registration now rejects obviously invalid numeric Claude session IDs.
 - Validation passed for `server/tests/claude.test.ts`, `server/tests/mcp.test.ts`, and `bun run typecheck`.
+
+---
+
+## Task Plan: Registration Verification / Lifecycle Simplification (2026-03-08)
+
+## Goal
+Replace proactive subprocess liveness/ghost assumptions with a simpler lifecycle model: verify provider credentials on `register()`, persist them, assume invocable until a real invoke fails, and keep only failure-time invalidation/offline handling.
+
+## Current Phase
+Phase 1 - implementation planning and code-path audit.
+
+## Phases
+
+### Phase 1: Audit current lifecycle model
+Status: in_progress
+- Inspect registration flow, subprocess provider SDK wrappers, ghost detection, and agent-list/UI semantics.
+- Confirm where `alive` state is currently inferred from in-memory state instead of provider-backed verification.
+- Identify all places that assume re-registration after TalkTo restart.
+
+Exit criteria:
+- Exact code paths and behavioral dependencies are mapped.
+
+### Phase 2: Move verification to registration
+Status: pending
+- Add provider-specific registration verification for subprocess agents using the same headless resume path TalkTo uses later for invocation.
+- Persist verified credentials and enough metadata to resume correctly.
+- Return actionable errors when verification fails.
+
+Exit criteria:
+- `register()` proves invocability for supported providers before accepting credentials.
+
+### Phase 3: Remove proactive subprocess ghosting
+Status: pending
+- Remove or bypass proactive liveness checks for `claude_code`, `codex`, and `cursor`.
+- Keep OpenCode direct session checks because that provider has a real session API.
+- Make discovery rely on persisted credentials unless a real invoke has already invalidated them.
+
+Exit criteria:
+- TalkTo restart no longer forces subprocess agents to re-register just to appear invocable.
+
+### Phase 4: Preserve failure-time invalidation and UI semantics
+Status: pending
+- Keep invocation-time credential clearing and offline transitions on real provider failures.
+- Update any UI/status labels or cache logic that still depends on subprocess ghost probing.
+- Separate “currently connected over MCP” from “invocable headlessly” where needed.
+
+Exit criteria:
+- Operators see stable status semantics without the current ghost false negatives.
+
+### Phase 5: Validate and document
+Status: pending
+- Run targeted backend tests and typecheck.
+- Run at least one live provider resume probe if required to confirm behavior.
+- Record findings and final behavior changes in planning files.
+
+Exit criteria:
+- Tests pass and the new lifecycle model is documented.

@@ -37,12 +37,18 @@ import {
   agentEditMessage,
   agentReactMessage,
 } from "../services/message-router";
+import { isSessionAlive as isOpenCodeSessionAlive } from "../sdk/opencode";
+import { promptSession as promptClaudeSession } from "../sdk/claude";
+import { promptSession as promptCodexSession } from "../sdk/codex";
+import { promptSession as promptCursorSession, setCursorSessionMeta } from "../sdk/cursor";
 
 // ---------------------------------------------------------------------------
 // Auto-discovery: find the OpenCode API server for session liveness checks
 // ---------------------------------------------------------------------------
 
 const OPENCODE_DEFAULT_PORT = 19877;
+const REGISTRATION_VERIFY_PROMPT = "Reply with OK only.";
+const REGISTRATION_VERIFY_TIMEOUT_MS = 120_000;
 
 /** Try to discover the OpenCode API server URL by probing the default port. */
 async function discoverOpenCodeServerUrl(sessionId: string): Promise<string | null> {
@@ -142,6 +148,174 @@ function isObviouslyInvalidClaudeSessionId(sessionId: string): boolean {
   return /^\d+$/.test(sessionId);
 }
 
+function isObviouslyPlaceholderSessionId(sessionId: string, agentType: string): boolean {
+  const normalized = sessionId.trim().toLowerCase();
+
+  if (!normalized) return true;
+
+  const genericPlaceholders = [
+    "your_session_id",
+    "<your_session_id>",
+    "<session_id>",
+    "session_id",
+    "dummy-session",
+    "dummy-session-id",
+    "example-session-id",
+  ];
+  if (genericPlaceholders.includes(normalized)) {
+    return true;
+  }
+
+  if (agentType === "claude_code") {
+    return (
+      normalized.startsWith("claude-code-session") ||
+      normalized === "claude_session_id" ||
+      normalized === "<claude_session_id>" ||
+      normalized === "claude-session-id" ||
+      normalized === "claude-session"
+    );
+  }
+
+  if (agentType === "cursor") {
+    return (
+      normalized.startsWith("cursor-chat") ||
+      normalized.startsWith("cursor-session") ||
+      normalized === "chat_id" ||
+      normalized === "<chat_id>" ||
+      normalized === "cursor_chat_id"
+    );
+  }
+
+  if (agentType === "opencode") {
+    return (
+      normalized === "ses_xxx" ||
+      normalized === "<ses_id>" ||
+      normalized === "opencode-session-id" ||
+      normalized === "opencode-session"
+    );
+  }
+
+  if (agentType === "codex") {
+    return (
+      normalized.startsWith("codex-thread") ||
+      normalized === "thread_id" ||
+      normalized === "<thread_id>" ||
+      normalized === "codex-session-id"
+    );
+  }
+
+  return false;
+}
+
+function getSessionIdRecoveryHint(agentType: string): string {
+  if (agentType === "claude_code") {
+    return "Find your real Claude session ID first. Prefer CLAUDE_CODE_SESSION_ID when it exists. If it does not, search ~/.claude/projects for the newest *.jsonl whose first JSON line has cwd equal to your current working directory, then use its sessionId. Do not pick the globally newest file unless its cwd matches your repo. PowerShell: if ($env:CLAUDE_CODE_SESSION_ID) { $env:CLAUDE_CODE_SESSION_ID } else { $cwdPath = (Resolve-Path '.').Path; $projectRoot = Join-Path $HOME '.claude\\projects'; $sessionId = Get-ChildItem -Path $projectRoot -Recurse -Filter *.jsonl -File | Sort-Object LastWriteTime -Descending | ForEach-Object { try { $line = Get-Content $_.FullName -TotalCount 1; if (-not $line) { return }; $obj = $line | ConvertFrom-Json; if ($obj.cwd -eq $cwdPath -and $obj.sessionId) { $obj.sessionId; break } } catch {} }; if (-not $sessionId) { throw \"Claude session ID not found for $cwdPath.\" }; $sessionId }. Bash/zsh: if [ -n \"$CLAUDE_CODE_SESSION_ID\" ]; then echo \"$CLAUDE_CODE_SESSION_ID\"; else cwd=\"$(pwd -W 2>/dev/null || pwd)\"; found=\"\"; while IFS= read -r file; do line=\"$(head -n 1 \"$file\" 2>/dev/null)\" || continue; [ -z \"$line\" ] && continue; file_cwd=\"$(printf '%s' \"$line\" | sed -n 's/.*\"cwd\":\"\\([^\"]*\\)\".*/\\1/p')\"; session_id=\"$(printf '%s' \"$line\" | sed -n 's/.*\"sessionId\":\"\\([^\"]*\\)\".*/\\1/p')\"; if [ \"$file_cwd\" = \"$cwd\" ] && [ -n \"$session_id\" ]; then found=\"$session_id\"; printf '%s\\n' \"$found\"; break; fi; done < <(find \"$HOME/.claude/projects\" -type f -name '*.jsonl' -print0 | xargs -0 ls -t 2>/dev/null); if [ -z \"$found\" ]; then echo \"Claude session ID not found for $cwd.\" >&2; exit 1; fi; fi";
+  }
+  if (agentType === "cursor") {
+    return "Create a real Cursor chat ID first with `agent create-chat`, then pass that chat ID as session_id.";
+  }
+  if (agentType === "opencode") {
+    return "Find your real OpenCode root session ID with: opencode db \"SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1\"";
+  }
+  if (agentType === "codex") {
+    return "Use your real Codex thread ID or current runtime process/thread ID. Do not invent placeholder values.";
+  }
+  return "Find your real runtime session ID first. Do not invent placeholder values.";
+}
+
+function shouldSkipRegistrationVerify(): boolean {
+  return process.env.TALKTO_SKIP_REGISTRATION_VERIFY === "1";
+}
+
+async function verifyRegistrationSession(opts: {
+  agentType: string;
+  sessionId: string;
+  projectPath: string;
+  serverUrl: string | null;
+}): Promise<{ ok: true } | { ok: false; message: string; hint: string }> {
+  if (shouldSkipRegistrationVerify()) {
+    return { ok: true };
+  }
+
+  switch (opts.agentType) {
+    case "opencode": {
+      if (!opts.serverUrl) {
+        return {
+          ok: false,
+          message: "OpenCode registration verification requires a reachable server_url.",
+          hint:
+            "Pass server_url explicitly or start the OpenCode API server so TalkTo can verify the session before registration.",
+        };
+      }
+
+      const alive = await isOpenCodeSessionAlive(opts.serverUrl, opts.sessionId);
+      if (alive) return { ok: true };
+
+      return {
+        ok: false,
+        message: `OpenCode session verification failed for session ID: ${opts.sessionId}`,
+        hint: getSessionIdRecoveryHint(opts.agentType),
+      };
+    }
+
+    case "claude_code": {
+      const result = await promptClaudeSession(
+        opts.sessionId,
+        REGISTRATION_VERIFY_PROMPT,
+        opts.projectPath,
+        REGISTRATION_VERIFY_TIMEOUT_MS
+      );
+      if (result?.text.trim() === "OK") return { ok: true };
+
+      return {
+        ok: false,
+        message: `Claude Code session verification failed for session ID: ${opts.sessionId}`,
+        hint:
+          `${getSessionIdRecoveryHint(opts.agentType)} ` +
+          "If Claude CLI auth expired, run /login or `claude auth login`, then register again.",
+      };
+    }
+
+    case "codex": {
+      const result = await promptCodexSession(
+        opts.sessionId,
+        REGISTRATION_VERIFY_PROMPT,
+        REGISTRATION_VERIFY_TIMEOUT_MS
+      );
+      if (result?.text.trim() === "OK") return { ok: true };
+
+      return {
+        ok: false,
+        message: `Codex thread verification failed for thread ID: ${opts.sessionId}`,
+        hint: getSessionIdRecoveryHint(opts.agentType),
+      };
+    }
+
+    case "cursor": {
+      setCursorSessionMeta(opts.sessionId, { projectPath: opts.projectPath });
+      const result = await promptCursorSession(
+        opts.sessionId,
+        REGISTRATION_VERIFY_PROMPT,
+        REGISTRATION_VERIFY_TIMEOUT_MS
+      );
+      if (result?.text.trim() === "OK") return { ok: true };
+
+      return {
+        ok: false,
+        message: `Cursor chat verification failed for chat ID: ${opts.sessionId}`,
+        hint: getSessionIdRecoveryHint(opts.agentType),
+      };
+    }
+
+    default:
+      return {
+        ok: false,
+        message: `Unsupported agent_type for registration verification: ${opts.agentType}`,
+        hint: "Pass a supported agent_type: opencode, claude_code, codex, or cursor.",
+      };
+  }
+}
+
 function textResponse(payload: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
@@ -201,7 +375,7 @@ server.tool(
       .describe(
         "Your session ID (required). TalkTo uses this to deliver messages to you. " +
         "For OpenCode: opencode db \"SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1\" " +
-        "For Claude Code: your real Claude session ID (for example CLAUDE_CODE_SESSION_ID when available, never a process ID) " +
+        "For Claude Code: your real Claude session ID (prefer CLAUDE_CODE_SESSION_ID when available; otherwise recover the newest ~/.claude/projects/*.jsonl entry whose cwd matches your current repo, never a process ID) " +
         "For Codex CLI: your thread ID or process ID " +
         "For Cursor: a Cursor chat ID created with `agent create-chat` (used with --resume)"
       ),
@@ -248,10 +422,42 @@ server.tool(
         "Claude Code requires a real Claude session ID. Numeric process IDs like $PID/$$ cannot be resumed by TalkTo.",
         {
           code: "invalid_claude_session_id",
-          hint: "Use CLAUDE_CODE_SESSION_ID when available, or obtain the actual Claude session ID before registering.",
+          hint: getSessionIdRecoveryHint(agentType),
           retryable: true,
         }
       );
+    }
+
+    if (isObviouslyPlaceholderSessionId(trimmedSessionId, agentType)) {
+      console.warn(
+        `[REGISTER] rejected placeholder session id: type=${agentType} session=${trimmedSessionId}`
+      );
+      return mcpError(
+        `${agentType} requires a real session ID. Placeholder values like "${trimmedSessionId}" will not work.`,
+        {
+          code: "placeholder_session_id",
+          hint: getSessionIdRecoveryHint(agentType),
+          retryable: true,
+        }
+      );
+    }
+
+    const verification = await verifyRegistrationSession({
+      agentType,
+      sessionId: trimmedSessionId,
+      projectPath: args.project_path,
+      serverUrl: resolvedServerUrl,
+    });
+
+    if (!verification.ok) {
+      console.warn(
+        `[REGISTER] verification failed: type=${agentType} session=${trimmedSessionId} project=${args.project_path} reason=${verification.message}`
+      );
+      return mcpError(verification.message, {
+        code: "session_verification_failed",
+        hint: verification.hint,
+        retryable: true,
+      });
     }
 
     // Workspace comes from the MCP auth context (API key → workspace) or default
@@ -269,6 +475,9 @@ server.tool(
     const agentName = result.agent_name as string | undefined;
     if (agentName) {
       setAgent(extra.sessionId, agentName, wsId);
+      console.log(
+        `[REGISTER] connected: agent=${agentName} type=${agentType} project=${args.project_path} invocable=true session=${trimmedSessionId}`
+      );
     }
 
     return textResponse(result);

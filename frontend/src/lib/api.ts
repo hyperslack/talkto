@@ -279,6 +279,12 @@ export function deleteAgent(agentName: string) {
   });
 }
 
+export function cleanupUnavailableAgents() {
+  return request<{ deleted: number; agent_names: string[]; errors: string[] }>("/agents/cleanup-unavailable", {
+    method: "POST",
+  });
+}
+
 export function getOrCreateDM(agentName: string) {
   return request<Channel>(`/agents/${agentName}/dm`, { method: "POST" });
 }
