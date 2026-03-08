@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, DEFAULT_WORKSPACE_ID } from "../db";
 import {
   users,
@@ -192,6 +192,51 @@ app.get("/me", (c) => {
     return c.json({ detail: "No human user onboarded yet" }, 404);
   }
   return c.json(userToResponse(user));
+});
+
+// GET /users/me/stats — message count and activity stats for current user
+app.get("/me/stats", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) {
+    return c.json({ detail: "No human user onboarded yet" }, 404);
+  }
+
+  const totalMessages = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  const channelsActive = db
+    .select({ count: sql<number>`count(DISTINCT ${messages.channelId})` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  const firstMessage = db
+    .select({ ts: sql<string>`MIN(${messages.createdAt})` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  const lastMessage = db
+    .select({ ts: sql<string>`MAX(${messages.createdAt})` })
+    .from(messages)
+    .where(eq(messages.senderId, user.id))
+    .get();
+
+  return c.json({
+    user_id: user.id,
+    message_count: totalMessages?.count ?? 0,
+    channels_active: channelsActive?.count ?? 0,
+    first_message_at: firstMessage?.ts ?? null,
+    last_message_at: lastMessage?.ts ?? null,
+  });
 });
 
 // PATCH /users/me
