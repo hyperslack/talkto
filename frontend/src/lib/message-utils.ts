@@ -125,6 +125,9 @@ export function formatTextStats(text: string): string {
   const words = countWords(text);
   const chars = text.length;
   return `${words} word${words !== 1 ? "s" : ""} · ${chars} char${chars !== 1 ? "s" : ""}`;
+}
+
+/**
  * Format an ISO timestamp as a relative time string ("just now", "5m ago", "2h ago", "3d ago").
  */
 export function formatRelativeTime(iso: string): string {
