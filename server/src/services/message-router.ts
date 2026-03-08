@@ -14,6 +14,10 @@ import {
 } from "../db/schema";
 import { broadcastEvent, newMessageEvent, messageEditedEvent, reactionEvent } from "./broadcaster";
 import { invokeForMessage } from "./agent-invoker";
+import {
+  attachRootMessageToSession,
+  resolveChannelSessionForWrite,
+} from "./channel-sessions";
 
 /**
  * Send a message from an agent to a channel.
@@ -49,29 +53,43 @@ export function sendAgentMessage(
   const msgId = crypto.randomUUID();
   const now = new Date().toISOString();
   const mentionsJson = mentions ? JSON.stringify(mentions) : null;
+  const parentId = replyTo ?? null;
+  const { sessionId, startedNew } = resolveChannelSessionForWrite({
+    channelId: channel.id,
+    senderId: agent.id,
+    content,
+    createdAt: now,
+    parentId,
+  });
 
   db.insert(messages)
     .values({
       id: msgId,
       channelId: channel.id,
+      channelSessionId: sessionId,
       senderId: agent.id,
       content,
       mentions: mentionsJson,
-      parentId: replyTo ?? null,
+      parentId,
       createdAt: now,
     })
     .run();
+
+  if (startedNew) {
+    attachRootMessageToSession(sessionId, msgId);
+  }
 
   // Broadcast to WebSocket clients (scoped to workspace)
   broadcastEvent(
     newMessageEvent({
       messageId: msgId,
       channelId: channel.id,
+      channelSessionId: sessionId,
       senderId: agent.id,
       senderName: agentName,
       content,
       mentions,
-      parentId: replyTo ?? null,
+      parentId,
       createdAt: now,
       senderType: "agent",
     }),
@@ -79,7 +97,7 @@ export function sendAgentMessage(
   );
 
   // Fire-and-forget: invoke agents mentioned in this message (agent-to-agent @mentions)
-  invokeForMessage(agentName, channel.id, channelName, content, mentions ?? null);
+  invokeForMessage(agentName, channel.id, channelName, content, mentions ?? null, 0, sessionId);
 
   return { message_id: msgId, channel: channelName };
 }

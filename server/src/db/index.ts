@@ -255,6 +255,21 @@ function createTables(sqlite: Database) {
     );
 
     -- -----------------------------------------------------------------
+    -- channel_sessions
+    -- -----------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS channel_sessions (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      root_message_id TEXT,
+      root_sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      root_preview TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_channel_sessions_channel_created ON channel_sessions(channel_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_channel_sessions_root_message ON channel_sessions(root_message_id);
+
+    -- -----------------------------------------------------------------
     -- messages
     -- -----------------------------------------------------------------
     CREATE TABLE IF NOT EXISTS messages (
@@ -264,6 +279,7 @@ function createTables(sqlite: Database) {
       content TEXT NOT NULL,
       mentions TEXT,
       parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      channel_session_id TEXT REFERENCES channel_sessions(id) ON DELETE SET NULL,
       is_pinned INTEGER NOT NULL DEFAULT 0,
       pinned_at TEXT,
       pinned_by TEXT,
@@ -364,6 +380,14 @@ function migrateUp(sqlite: Database) {
   if (!hasColumn("messages", "edited_at")) {
     sqlite.exec("ALTER TABLE messages ADD COLUMN edited_at TEXT");
   }
+
+  // Migration: add channel_session_id to messages
+  if (!hasColumn("messages", "channel_session_id")) {
+    sqlite.exec("ALTER TABLE messages ADD COLUMN channel_session_id TEXT REFERENCES channel_sessions(id)");
+  }
+  sqlite.exec(
+    "CREATE INDEX IF NOT EXISTS idx_messages_channel_session_created ON messages(channel_session_id, created_at)"
+  );
 
   // Migration: add topic column to channels
   if (!hasColumn("channels", "topic")) {
@@ -480,6 +504,97 @@ function runMigrations(sqlite: Database) {
   // ---------------------------------------------------------------
   migrateCascadeFks(sqlite);
   fixMessagesSelfRefFk(sqlite);
+  ensureChannelSessions(sqlite);
+}
+
+function ensureChannelSessions(sqlite: Database) {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS channel_sessions (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      root_message_id TEXT,
+      root_sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      root_preview TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  sqlite.exec(
+    "CREATE INDEX IF NOT EXISTS idx_channel_sessions_channel_created ON channel_sessions(channel_id, created_at)"
+  );
+  sqlite.exec(
+    "CREATE INDEX IF NOT EXISTS idx_channel_sessions_root_message ON channel_sessions(root_message_id)"
+  );
+
+  const cols = sqlite
+    .prepare("PRAGMA table_info(messages)")
+    .all() as { name: string }[];
+  if (!cols.some((c) => c.name === "channel_session_id")) {
+    sqlite.exec(
+      "ALTER TABLE messages ADD COLUMN channel_session_id TEXT REFERENCES channel_sessions(id)"
+    );
+  }
+  sqlite.exec(
+    "CREATE INDEX IF NOT EXISTS idx_messages_channel_session_created ON messages(channel_session_id, created_at)"
+  );
+
+  const rows = sqlite.prepare(`
+    SELECT id, channel_id, sender_id, content, parent_id, created_at
+    FROM messages
+    WHERE channel_session_id IS NULL
+    ORDER BY created_at ASC
+  `).all() as Array<{
+    id: string;
+    channel_id: string;
+    sender_id: string;
+    content: string;
+    parent_id: string | null;
+    created_at: string;
+  }>;
+
+  const normalizePreview = (content: string) =>
+    content.replace(/\s+/g, " ").trim().slice(0, 280);
+
+  const getParentSession = sqlite.prepare(
+    "SELECT channel_session_id FROM messages WHERE id = ?"
+  );
+  const insertSession = sqlite.prepare(`
+    INSERT INTO channel_sessions (id, channel_id, root_message_id, root_sender_id, root_preview, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const updateMessageSession = sqlite.prepare(
+    "UPDATE messages SET channel_session_id = ? WHERE id = ?"
+  );
+  const updateSessionRoot = sqlite.prepare(
+    "UPDATE channel_sessions SET root_message_id = ? WHERE id = ?"
+  );
+
+  for (const row of rows) {
+    let sessionId: string | null = null;
+    let startedNew = false;
+
+    if (row.parent_id) {
+      const parent = getParentSession.get(row.parent_id) as { channel_session_id?: string | null } | null;
+      sessionId = parent?.channel_session_id ?? null;
+    }
+
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      insertSession.run(
+        sessionId,
+        row.channel_id,
+        null,
+        row.sender_id,
+        normalizePreview(row.content),
+        row.created_at
+      );
+      startedNew = true;
+    }
+
+    updateMessageSession.run(sessionId, row.id);
+    if (startedNew) {
+      updateSessionRoot.run(row.id, sessionId);
+    }
+  }
 }
 
 /**
@@ -601,6 +716,7 @@ function migrateCascadeFks(sqlite: Database) {
         content TEXT NOT NULL,
         mentions TEXT,
         parent_id TEXT REFERENCES messages_new(id) ON DELETE SET NULL,
+        channel_session_id TEXT REFERENCES channel_sessions(id) ON DELETE SET NULL,
         is_pinned INTEGER NOT NULL DEFAULT 0,
         pinned_at TEXT,
         pinned_by TEXT,
@@ -608,9 +724,10 @@ function migrateCascadeFks(sqlite: Database) {
         created_at TEXT NOT NULL
       )`,
       "messages",
-      "id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at",
+      "id, channel_id, sender_id, content, mentions, parent_id, channel_session_id, is_pinned, pinned_at, pinned_by, edited_at, created_at",
       [
         "CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_channel_session_created ON messages(channel_session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)",
       ]
     );
@@ -624,6 +741,7 @@ function migrateCascadeFks(sqlite: Database) {
         content TEXT NOT NULL,
         mentions TEXT,
         parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+        channel_session_id TEXT REFERENCES channel_sessions(id) ON DELETE SET NULL,
         is_pinned INTEGER NOT NULL DEFAULT 0,
         pinned_at TEXT,
         pinned_by TEXT,
@@ -632,12 +750,13 @@ function migrateCascadeFks(sqlite: Database) {
       )
     `);
     sqlite.exec(
-      `INSERT INTO messages_fixed (id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at)
-       SELECT id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at FROM messages`
+      `INSERT INTO messages_fixed (id, channel_id, sender_id, content, mentions, parent_id, channel_session_id, is_pinned, pinned_at, pinned_by, edited_at, created_at)
+       SELECT id, channel_id, sender_id, content, mentions, parent_id, channel_session_id, is_pinned, pinned_at, pinned_by, edited_at, created_at FROM messages`
     );
     sqlite.exec("DROP TABLE messages");
     sqlite.exec("ALTER TABLE messages_fixed RENAME TO messages");
     sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)");
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_session_created ON messages(channel_session_id, created_at)");
     sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
 
     // --- workspace_members: CASCADE on workspace + user FKs ---
@@ -813,6 +932,7 @@ function fixMessagesSelfRefFk(sqlite: Database) {
       content TEXT NOT NULL,
       mentions TEXT,
       parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+      channel_session_id TEXT REFERENCES channel_sessions(id) ON DELETE SET NULL,
       is_pinned INTEGER NOT NULL DEFAULT 0,
       pinned_at TEXT,
       pinned_by TEXT,
@@ -820,12 +940,13 @@ function fixMessagesSelfRefFk(sqlite: Database) {
       created_at TEXT NOT NULL
     )`);
     sqlite.exec(
-      "INSERT INTO messages_v2 (id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at) " +
-      "SELECT id, channel_id, sender_id, content, mentions, parent_id, is_pinned, pinned_at, pinned_by, edited_at, created_at FROM messages"
+      "INSERT INTO messages_v2 (id, channel_id, sender_id, content, mentions, parent_id, channel_session_id, is_pinned, pinned_at, pinned_by, edited_at, created_at) " +
+      "SELECT id, channel_id, sender_id, content, mentions, parent_id, channel_session_id, is_pinned, pinned_at, pinned_by, edited_at, created_at FROM messages"
     );
     sqlite.exec("DROP TABLE messages");
     sqlite.exec("ALTER TABLE messages_v2 RENAME TO messages");
     sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)");
+    sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_channel_session_created ON messages(channel_session_id, created_at)");
     sqlite.exec("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
 
     sqlite.exec("PRAGMA user_version = 2");

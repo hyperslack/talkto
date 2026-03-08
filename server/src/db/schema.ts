@@ -319,6 +319,7 @@ export const channels = sqliteTable(
 
 export const channelsRelations = relations(channels, ({ one, many }) => ({
   members: many(channelMembers),
+  sessions: many(channelSessions),
   messages: many(messages),
   workspace: one(workspaces, { fields: [channels.workspaceId], references: [workspaces.id] }),
 }));
@@ -355,6 +356,42 @@ export const channelMembersRelations = relations(channelMembers, ({ one }) => ({
 }));
 
 // ---------------------------------------------------------------------------
+// channel_sessions
+// ---------------------------------------------------------------------------
+
+export const channelSessions = sqliteTable(
+  "channel_sessions",
+  {
+    id: text("id").primaryKey(),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id),
+    rootMessageId: text("root_message_id"),
+    rootSenderId: text("root_sender_id")
+      .notNull()
+      .references(() => users.id),
+    rootPreview: text("root_preview").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_channel_sessions_channel_created").on(table.channelId, table.createdAt),
+    index("idx_channel_sessions_root_message").on(table.rootMessageId),
+  ]
+);
+
+export const channelSessionsRelations = relations(channelSessions, ({ one, many }) => ({
+  channel: one(channels, {
+    fields: [channelSessions.channelId],
+    references: [channels.id],
+  }),
+  rootSender: one(users, {
+    fields: [channelSessions.rootSenderId],
+    references: [users.id],
+  }),
+  messages: many(messages),
+}));
+
+// ---------------------------------------------------------------------------
 // messages
 // ---------------------------------------------------------------------------
 
@@ -371,6 +408,7 @@ export const messages = sqliteTable(
     content: text("content").notNull(),
     mentions: text("mentions"), // JSON array string, e.g. '["agent1","agent2"]'
     parentId: text("parent_id").references(() => messages.id),
+    channelSessionId: text("channel_session_id").references(() => channelSessions.id),
     isPinned: integer("is_pinned").notNull().default(0),
     pinnedAt: text("pinned_at"),
     pinnedBy: text("pinned_by"),
@@ -379,6 +417,7 @@ export const messages = sqliteTable(
   },
   (table) => [
     index("idx_messages_channel_created").on(table.channelId, table.createdAt),
+    index("idx_messages_channel_session_created").on(table.channelSessionId, table.createdAt),
     index("idx_messages_sender").on(table.senderId),
   ]
 );
@@ -395,6 +434,10 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   parent: one(messages, {
     fields: [messages.parentId],
     references: [messages.id],
+  }),
+  channelSession: one(channelSessions, {
+    fields: [messages.channelSessionId],
+    references: [channelSessions.id],
   }),
 }));
 

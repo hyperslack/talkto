@@ -458,3 +458,81 @@ Outcome:
 - Cheap verification is implemented for OpenCode, Claude, Codex, and Cursor.
 - Startup and app-load reconciliation now auto-delete unreachable non-system agents.
 - Frontend startup no longer renders the stale agent backlog before reconciliation completes.
+# Task Plan: Channel Session History API (2026-03-08)
+
+## Goal
+Add a robust API for per-channel history that can expose the history of distinct conversation sessions in a channel, wire it into the existing TalkTo data model cleanly, and verify the behavior against real provider/channel flows before delivery.
+
+## Current Phase
+Phase 5 - delivery and handoff.
+
+## Phases
+
+### Phase 1: Requirements and model discovery
+Status: complete
+- Inspect current schema for messages, channels, agents, and sessions.
+- Determine which existing identifiers can represent a "session history" in-channel.
+- Identify whether the feature needs a schema change or can be derived.
+
+Exit criteria:
+- Clear definition of what a channel session is in TalkTo today.
+
+### Phase 2: API design
+Status: complete
+- Choose endpoint shape and response model.
+- Decide pagination/sorting/filtering behavior.
+- Define compatibility constraints for frontend consumption.
+
+Exit criteria:
+- One implementation approach chosen with rationale captured.
+
+### Phase 3: Implementation
+Status: complete
+- Add backend service/route/query support.
+- Add or adapt tests.
+- Keep behavior cross-provider and cross-channel.
+
+Exit criteria:
+- Endpoint implemented with passing targeted tests.
+
+### Phase 4: Validation with live flows
+Status: complete
+- Validate against local TalkTo data and agent/channel flows.
+- Use available provider CLIs where relevant to ensure the model works with real usage.
+
+Exit criteria:
+- Feature behaves correctly on real local data, not just fixtures.
+
+### Phase 5: Delivery
+Status: in_progress
+- Summarize the API shape, tradeoffs, and remaining risks.
+- Post org-relevant implementation note to TalkTo.
+
+Exit criteria:
+- User has the implemented API and verification results.
+
+## Key Questions
+1. What exactly should count as a "session" inside a channel: agent invocation thread, provider session id, or a derived conversation segment?
+2. Can the history be derived from existing message metadata, or do we need to persist a first-class channel session identifier?
+3. How should the API expose session grouping without breaking the current message feed model?
+
+## Decisions Made
+| Decision | Rationale |
+|----------|-----------|
+| Start with schema/route discovery before choosing an API shape | "Session" is overloaded in TalkTo and guessing here would create the wrong abstraction |
+| Persist `channel_session_id` on messages and add a first-class channel-session table | Derived grouping would be brittle, and provider/login sessions are the wrong abstraction |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| `webhooks.test.ts` failed against the isolated test DB with `table users has no column named status_emoji` | 1 | Updated `server/tests/setup.ts` to mirror the current DB schema, including new user/channel/message columns |
+| App startup failed on an existing `talkto.db` with `SQLiteError: no such column: channel_session_id` during `createTables()` | 1 | Removed the premature bootstrap index creation so additive message/session migrations can add `channel_session_id` before the index is created |
+
+## Outcome
+- Added persisted channel sessions and linked every message write path to them.
+- Added `GET /api/channels/:channelId/messages/sessions` for session summaries.
+- Added `GET /api/channels/:channelId/messages/sessions/:sessionId` for a full session history payload.
+- Validated the REST path, MCP `send_message` path, and message deletion/session-survival behavior.
+- Fixed the old-database bootstrap path so local dev startup succeeds before `channel_session_id` exists.
+
+---

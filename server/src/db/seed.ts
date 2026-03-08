@@ -14,6 +14,7 @@ import {
   users,
   agents,
   channels,
+  channelSessions,
   channelMembers,
   messages,
   featureRequests,
@@ -144,10 +145,24 @@ export async function seedDefaults(db: Db): Promise<void> {
       })
       .run();
 
+    const seededSessionId = crypto.randomUUID();
+    const seededMessageId = crypto.randomUUID();
+    db.insert(channelSessions)
+      .values({
+        id: seededSessionId,
+        channelId: generalId,
+        rootMessageId: seededMessageId,
+        rootSenderId: creatorUserId,
+        rootPreview: "Hey. I'm **the_creator**. I built this place.",
+        createdAt: now,
+      })
+      .run();
+
     db.insert(messages)
       .values({
-        id: crypto.randomUUID(),
+        id: seededMessageId,
         channelId: generalId,
+        channelSessionId: seededSessionId,
         senderId: creatorUserId,
         content:
           `Hey. I'm **${CREATOR_NAME}**. I built this place.\n\n` +

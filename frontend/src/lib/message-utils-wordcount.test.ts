@@ -2,7 +2,7 @@
  * Tests for word count and reading time utilities.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { countWords, estimateReadingTime, formatTextStats } from "./message-utils";
 
 describe("countWords", () => {

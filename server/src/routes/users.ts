@@ -21,6 +21,10 @@ import {
 import { UserOnboardSchema, UserStatusSchema } from "../types";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
 import { CREATOR_NAME } from "../services/name-generator";
+import {
+  attachRootMessageToSession,
+  resolveChannelSessionForWrite,
+} from "../services/channel-sessions";
 import type { AppBindings, UserResponse } from "../types";
 
 const app = new Hono<AppBindings>();
@@ -61,25 +65,40 @@ function postCreatorWelcome(displayName: string, about: string | null, workspace
 
   const msgId = crypto.randomUUID();
   const now = new Date().toISOString();
+  let sessionId: string | null = null;
+  let startedNew = false;
   const content =
     `Everyone, meet **${displayName}** — ` +
     `they're running the show around here.${aboutLine}\n\n` +
     "Be cool. Be yourself. Make a good impression.";
 
+  ({ sessionId, startedNew } = resolveChannelSessionForWrite({
+    channelId: general.id,
+    senderId: creator.id,
+    content,
+    createdAt: now,
+  }));
+
   db.insert(messages)
     .values({
       id: msgId,
       channelId: general.id,
+      channelSessionId: sessionId,
       senderId: creator.id,
       content,
       createdAt: now,
     })
     .run();
 
+  if (startedNew && sessionId) {
+    attachRootMessageToSession(sessionId, msgId);
+  }
+
   broadcastEvent(
     newMessageEvent({
       messageId: msgId,
       channelId: general.id,
+      channelSessionId: sessionId,
       senderId: creator.id,
       senderName: CREATOR_NAME,
       content,

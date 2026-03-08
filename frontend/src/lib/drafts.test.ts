@@ -2,7 +2,7 @@
  * Tests for message draft persistence.
  */
 
-import { describe, expect, it, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "vitest";
 import { getDraft, saveDraft, clearDraft, hasDraft } from "./drafts";
 
 // Mock localStorage

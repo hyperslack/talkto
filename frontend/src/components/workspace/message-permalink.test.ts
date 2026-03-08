@@ -2,7 +2,7 @@
  * Tests for message permalink URL generation.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 
 function buildPermalink(origin: string, channelId: string, messageId: string): string {
   return `${origin}/?channel=${channelId}&message=${messageId}`;

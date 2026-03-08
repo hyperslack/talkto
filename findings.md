@@ -366,3 +366,65 @@ This pass will implement:
 9. Codex resumability can be checked cheaply from `~/.codex/session_index.jsonl`; no prompt is required.
 10. Cursor resumability can be approximated cheaply from `.cursor/projects/*/agent-transcripts/<chatId>/<chatId>.jsonl`, keyed by the encoded project directory.
 11. Combining startup reconciliation with an app-load reconcile pass removes stale rows without restoring the old proactive ghost/liveness polling model.
+# Findings (Channel Session History API - 2026-03-08)
+
+## Requirements
+- Add an API to get history in individual channels.
+- The API should expose the histories of particular sessions within a channel.
+- Implementation approach is open, but it needs to fit TalkTo's real usage patterns and existing providers.
+- User explicitly asked for high vigilance and to use planning-with-files.
+
+## Research Findings
+- TalkTo already uses the word "session" in at least two likely ways:
+  - registered provider session ids for agents
+  - chat/channel message streams shown in the product
+- Before implementing the API, the actual schema and invocation model must determine whether a channel session can be derived or needs to be stored explicitly.
+- `agents.provider_session_id` is provider login/resume state for an agent, not a per-channel conversation history key.
+- `sessions` is an agent login/process tracking table (`pid`, `tty`, `is_active`), also not a channel conversation history table.
+- `messages` currently stores only `channel_id`, `sender_id`, `content`, `mentions`, optional `parent_id`, pin/edit fields, and timestamps.
+- Human messages invoke agents via `invokeForMessage()`, and agent replies are inserted through `postAgentResponse()`, but neither path persists a conversation/session grouping identifier.
+
+## Recommended Approach
+- Add a first-class channel session model instead of deriving history from the flat message stream.
+- Attach each message to a `channel_session_id`.
+- Start a new channel session on each new top-level human message in a channel.
+- Replies (`parent_id`) inherit the parent message's session.
+- Agent responses inherit the triggering session so the whole human prompt + agent chain stays queryable as one session history.
+- Expose two read APIs:
+  - session summaries for a channel
+  - messages for a specific channel session
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Do not lock the endpoint shape yet | The correct API depends on how channel messages currently relate to provider sessions/invocations |
+| Use a first-class persisted channel session identifier | Existing provider sessions and login sessions do not represent channel conversation histories correctly |
+| Keep the session root in a dedicated `channel_sessions` table instead of using the root message ID itself as the session key | Session history must survive root-message deletion and other message-level mutations |
+
+## API Shape
+- `GET /api/channels/:channelId/messages/sessions`
+  - Returns session summaries for one channel.
+  - Each summary includes session id, root message id, root preview, starter info, message count, start time, and last message time.
+- `GET /api/channels/:channelId/messages/sessions/:sessionId`
+  - Returns one session summary plus chronological `messages`.
+- Existing message payloads now include `channel_session_id` so the frontend can link individual messages back to their session history.
+
+## Issues Encountered
+| Issue | Resolution |
+|-------|------------|
+| Planning files contained prior task context | Prepended a new task section instead of destroying prior investigation history |
+| Isolated webhook tests used a stale in-memory DB schema | Updated `server/tests/setup.ts` to match the current user/channel/message schema |
+| Existing local databases could crash on boot before migrations ran | Avoided creating the `messages(channel_session_id, created_at)` index during early bootstrap; the index is now created only after the column exists |
+
+## Resources
+- `task_plan.md`
+- `findings.md`
+- `progress.md`
+- `server/src/db/schema.ts`
+- `server/src/routes/messages.ts`
+- `server/src/services/agent-invoker.ts`
+
+## Visual/Browser Findings
+- None
+
+---

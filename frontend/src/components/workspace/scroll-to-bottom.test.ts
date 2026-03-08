@@ -2,7 +2,7 @@
  * Tests for the scroll-to-bottom button logic.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 
 describe("Scroll-to-bottom button", () => {
   it("shows correct label for single new message", () => {

@@ -2,7 +2,7 @@
  * Tests for formatRelativeTime utility.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { formatRelativeTime } from "./message-utils";
 
 describe("formatRelativeTime", () => {

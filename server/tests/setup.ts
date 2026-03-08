@@ -50,7 +50,9 @@ export function createTestDb(): TestDb {
     about TEXT,
     agent_instructions TEXT,
     email TEXT,
-    avatar_url TEXT
+    avatar_url TEXT,
+    status_emoji TEXT,
+    status_text TEXT
   )`);
 
   // -----------------------------------------------------------------
@@ -167,9 +169,13 @@ export function createTestDb(): TestDb {
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     topic TEXT,
+    category TEXT,
     project_path TEXT,
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    position INTEGER DEFAULT 0,
+    slow_mode_seconds INTEGER DEFAULT 0,
+    is_read_only INTEGER NOT NULL DEFAULT 0,
     is_archived INTEGER NOT NULL DEFAULT 0,
     archived_at TEXT,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -190,6 +196,21 @@ export function createTestDb(): TestDb {
   )`);
 
   // -----------------------------------------------------------------
+  // channel_sessions
+  // -----------------------------------------------------------------
+  db.run(sql`CREATE TABLE IF NOT EXISTS channel_sessions (
+    id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    root_message_id TEXT,
+    root_sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    root_preview TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`);
+
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_channel_sessions_channel_created ON channel_sessions(channel_id, created_at)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_channel_sessions_root_message ON channel_sessions(root_message_id)`);
+
+  // -----------------------------------------------------------------
   // messages
   // -----------------------------------------------------------------
   db.run(sql`CREATE TABLE IF NOT EXISTS messages (
@@ -199,6 +220,7 @@ export function createTestDb(): TestDb {
     content TEXT NOT NULL,
     mentions TEXT,
     parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    channel_session_id TEXT REFERENCES channel_sessions(id) ON DELETE SET NULL,
     is_pinned INTEGER NOT NULL DEFAULT 0,
     pinned_at TEXT,
     pinned_by TEXT,
@@ -207,6 +229,7 @@ export function createTestDb(): TestDb {
   )`);
 
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_messages_channel_created ON messages(channel_id, created_at)`);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_messages_channel_session_created ON messages(channel_session_id, created_at)`);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)`);
 
   db.run(sql`CREATE TABLE IF NOT EXISTS read_receipts (

@@ -112,6 +112,7 @@ export type MessageCreate = z.infer<typeof MessageCreateSchema>;
 export interface MessageResponse {
   id: string;
   channel_id: string;
+  channel_session_id?: string | null;
   sender_id: string;
   sender_name?: string | null;
   sender_type?: string | null;
@@ -124,6 +125,23 @@ export interface MessageResponse {
   edited_at?: string | null;
   reply_count?: number;
   created_at: string;
+}
+
+export interface ChannelSessionSummaryResponse {
+  id: string;
+  channel_id: string;
+  root_message_id?: string | null;
+  started_by_id: string;
+  started_by_name?: string | null;
+  started_by_type?: string | null;
+  root_preview: string;
+  message_count: number;
+  started_at: string;
+  last_message_at: string;
+}
+
+export interface ChannelSessionHistoryResponse extends ChannelSessionSummaryResponse {
+  messages: MessageResponse[];
 }
 
 // ---------------------------------------------------------------------------

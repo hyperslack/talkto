@@ -31,6 +31,10 @@ import {
 import { clearStaleCredentials, getAgentInvocationInfo } from "./agent-discovery";
 import type { InvocationInfo } from "./agent-discovery";
 import {
+  attachRootMessageToSession,
+  resolveChannelSessionForWrite,
+} from "./channel-sessions";
+import {
   promptSessionWithEvents as openCodePromptWithEvents,
   isSessionBusy as isOpenCodeSessionBusy,
 } from "../sdk/opencode";
@@ -261,7 +265,8 @@ export function invokeForMessage(
   channelName: string,
   content: string,
   mentions: string[] | null,
-  depth: number = 0
+  depth: number = 0,
+  channelSessionId: string | null = null
 ): void {
   if (depth >= MAX_CHAIN_DEPTH) {
     console.log(
@@ -271,7 +276,7 @@ export function invokeForMessage(
   }
 
   spawnBackgroundTask(async () => {
-    await _invokeForMessage(senderName, channelId, channelName, content, mentions, depth);
+    await _invokeForMessage(senderName, channelId, channelName, content, mentions, depth, channelSessionId);
   });
 }
 
@@ -281,7 +286,8 @@ async function _invokeForMessage(
   channelName: string,
   content: string,
   mentions: string[] | null,
-  depth: number
+  depth: number,
+  channelSessionId: string | null
 ): Promise<void> {
   // Derive workspace from channel for scoping mention lookups
   const db = getDb();
@@ -314,7 +320,7 @@ async function _invokeForMessage(
     if (target === senderName) {
       console.log(`[INVOKE] Skipping self-invocation for '${target}'`);
     } else {
-      await invokeAgent(target, channelId, channelName, content, /* isDm */ true, depth, /* silent */ false, workspaceId);
+      await invokeAgent(target, channelId, channelName, content, /* isDm */ true, depth, /* silent */ false, workspaceId, channelSessionId);
       invoked.add(target);
     }
   }
@@ -336,7 +342,7 @@ async function _invokeForMessage(
           context
         );
         const silent = fromAtAll.has(mentioned);
-        await invokeAgent(mentioned, channelId, channelName, prompt, /* isDm */ false, depth, silent, workspaceId);
+        await invokeAgent(mentioned, channelId, channelName, prompt, /* isDm */ false, depth, silent, workspaceId, channelSessionId);
         invoked.add(mentioned);
       });
 
@@ -377,7 +383,8 @@ async function invokeAgent(
   isDm: boolean,
   depth: number = 0,
   silent: boolean = false,
-  workspaceId?: string
+  workspaceId?: string,
+  channelSessionId: string | null = null
 ): Promise<void> {
   console.log(
     `[INVOKE] Invoking '${agentName}' in ${channelName} (${isDm ? "DM" : "@mention"})`
@@ -490,7 +497,7 @@ async function invokeAgent(
 
     // Post the agent's response as a message in the channel
     // Also triggers agent-to-agent chaining if the response contains @mentions
-    postAgentResponse(agentName, channelId, channelName, result.text, depth);
+    postAgentResponse(agentName, channelId, channelName, result.text, depth, channelSessionId);
 
     // Broadcast typing stop (success)
     broadcastEvent(agentTypingEvent(agentName, channelId, false), workspaceId);
@@ -571,7 +578,8 @@ function postAgentResponse(
   channelId: string,
   channelName: string,
   content: string,
-  depth: number = 0
+  depth: number = 0,
+  channelSessionId: string | null = null
 ): void {
   const db = getDb();
 
@@ -594,11 +602,25 @@ function postAgentResponse(
 
   const msgId = crypto.randomUUID();
   const now = new Date().toISOString();
+  let sessionId = channelSessionId;
+  let startedNew = false;
+
+  if (!sessionId) {
+    const resolved = resolveChannelSessionForWrite({
+      channelId,
+      senderId: agent.id,
+      content,
+      createdAt: now,
+    });
+    sessionId = resolved.sessionId;
+    startedNew = resolved.startedNew;
+  }
 
   db.insert(messages)
     .values({
       id: msgId,
       channelId,
+      channelSessionId: sessionId,
       senderId: agent.id,
       content,
       mentions: mentionsJson,
@@ -606,11 +628,16 @@ function postAgentResponse(
     })
     .run();
 
+  if (startedNew && sessionId) {
+    attachRootMessageToSession(sessionId, msgId);
+  }
+
   // Broadcast to WebSocket clients (scoped to workspace)
   broadcastEvent(
     newMessageEvent({
       messageId: msgId,
       channelId,
+      channelSessionId: sessionId,
       senderId: agent.id,
       senderName: agentName,
       content,
@@ -630,7 +657,7 @@ function postAgentResponse(
     console.log(
       `[INVOKE] Agent-to-agent chain: '${agentName}' mentioned ${mentionedAgents.join(", ")} (depth ${depth} → ${depth + 1})`
     );
-    invokeForMessage(agentName, channelId, channelName, content, mentionedAgents, depth + 1);
+    invokeForMessage(agentName, channelId, channelName, content, mentionedAgents, depth + 1, sessionId);
   } else if (mentionedAgents.length > 0) {
     console.log(
       `[INVOKE] Agent-to-agent chain stopped: depth ${depth + 1} would exceed max ${MAX_CHAIN_DEPTH}`

@@ -5,12 +5,22 @@
 import { Hono } from "hono";
 import { eq, desc, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { channels, messages, users, messageReactions } from "../db/schema";
+import { channels, channelSessions, messages, users, messageReactions } from "../db/schema";
 import { z } from "zod";
 import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema } from "../types";
 import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEvent, reactionEvent } from "../services/broadcaster";
 import { invokeForMessage } from "../services/agent-invoker";
-import type { AppBindings, MessageResponse } from "../types";
+import {
+  attachRootMessageToSession,
+  cleanupChannelSessionAfterMessageDelete,
+  resolveChannelSessionForWrite,
+} from "../services/channel-sessions";
+import type {
+  AppBindings,
+  ChannelSessionHistoryResponse,
+  ChannelSessionSummaryResponse,
+  MessageResponse,
+} from "../types";
 import { and } from "drizzle-orm";
 
 const app = new Hono<AppBindings>();
@@ -34,6 +44,87 @@ function getChannelInWorkspace(channelId: string, workspaceId: string) {
     .get() ?? null;
 }
 
+function getReactionsByMessage(messageIds: string[]) {
+  const db = getDb();
+  const allReactions = messageIds.length > 0
+    ? db
+        .select({
+          messageId: messageReactions.messageId,
+          emoji: messageReactions.emoji,
+          userName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+        })
+        .from(messageReactions)
+        .innerJoin(users, eq(messageReactions.userId, users.id))
+        .where(sql`${messageReactions.messageId} IN (${sql.join(messageIds.map((id) => sql`${id}`), sql`, `)})`)
+        .all()
+    : [];
+
+  const reactionsByMessage = new Map<string, Map<string, string[]>>();
+  for (const reaction of allReactions) {
+    if (!reactionsByMessage.has(reaction.messageId)) {
+      reactionsByMessage.set(reaction.messageId, new Map());
+    }
+    const emojiMap = reactionsByMessage.get(reaction.messageId)!;
+    const userList = emojiMap.get(reaction.emoji) ?? [];
+    userList.push(reaction.userName);
+    emojiMap.set(reaction.emoji, userList);
+  }
+
+  return reactionsByMessage;
+}
+
+function mapMessageRows(
+  rows: Array<{
+    id: string;
+    channelId: string;
+    channelSessionId: string | null;
+    senderId: string;
+    senderName: string;
+    senderType: string;
+    content: string;
+    mentions: string | null;
+    parentId: string | null;
+    isPinned: number;
+    pinnedAt: string | null;
+    pinnedBy: string | null;
+    editedAt: string | null;
+    replyCount?: number | null;
+    createdAt: string;
+  }>
+): MessageResponse[] {
+  const reactionsByMessage = getReactionsByMessage(rows.map((row) => row.id));
+
+  return rows.map((row) => {
+    const emojiMap = reactionsByMessage.get(row.id);
+    const reactions = emojiMap
+      ? Array.from(emojiMap.entries()).map(([emoji, userNames]) => ({
+          emoji,
+          users: userNames,
+          count: userNames.length,
+        }))
+      : [];
+
+    return {
+      id: row.id,
+      channel_id: row.channelId,
+      channel_session_id: row.channelSessionId,
+      sender_id: row.senderId,
+      sender_name: row.senderName,
+      sender_type: row.senderType,
+      content: row.content,
+      mentions: row.mentions ? JSON.parse(row.mentions) : null,
+      parent_id: row.parentId,
+      is_pinned: Boolean(row.isPinned),
+      pinned_at: row.pinnedAt,
+      pinned_by: row.pinnedBy,
+      edited_at: row.editedAt,
+      reply_count: row.replyCount ?? 0,
+      reactions,
+      created_at: row.createdAt,
+    };
+  });
+}
+
 // GET /channels/:channelId/messages
 app.get("/", (c) => {
   const auth = c.get("auth");
@@ -53,6 +144,7 @@ app.get("/", (c) => {
     .select({
       id: messages.id,
       channelId: messages.channelId,
+      channelSessionId: messages.channelSessionId,
       senderId: messages.senderId,
       senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
       senderType: users.type,
@@ -90,61 +182,150 @@ app.get("/", (c) => {
     .limit(limit)
     .all();
 
-  // Fetch reactions for all messages in one query
-  const messageIds = rows.map((r) => r.id);
-  const allReactions = messageIds.length > 0
-    ? db
-        .select({
-          messageId: messageReactions.messageId,
-          emoji: messageReactions.emoji,
-          userName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
-        })
-        .from(messageReactions)
-        .innerJoin(users, eq(messageReactions.userId, users.id))
-        .where(sql`${messageReactions.messageId} IN (${sql.join(messageIds.map(id => sql`${id}`), sql`, `)})`)
-        .all()
-    : [];
+  return c.json(mapMessageRows(rows));
+});
 
-  // Group reactions by message ID
-  const reactionsByMessage = new Map<string, Map<string, string[]>>();
-  for (const r of allReactions) {
-    if (!reactionsByMessage.has(r.messageId)) {
-      reactionsByMessage.set(r.messageId, new Map());
-    }
-    const emojiMap = reactionsByMessage.get(r.messageId)!;
-    const userList = emojiMap.get(r.emoji) ?? [];
-    userList.push(r.userName);
-    emojiMap.set(r.emoji, userList);
+// GET /channels/:channelId/messages/sessions
+app.get("/sessions", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
   }
 
-  const result: MessageResponse[] = rows.map((row) => {
-    const emojiMap = reactionsByMessage.get(row.id);
-    const reactions = emojiMap
-      ? Array.from(emojiMap.entries()).map(([emoji, userNames]) => ({
-          emoji,
-          users: userNames,
-          count: userNames.length,
-        }))
-      : [];
+  const rows = db
+    .select({
+      id: channelSessions.id,
+      channelId: channelSessions.channelId,
+      rootMessageId: channelSessions.rootMessageId,
+      startedById: channelSessions.rootSenderId,
+      startedByName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      startedByType: users.type,
+      rootPreview: channelSessions.rootPreview,
+      startedAt: channelSessions.createdAt,
+      messageCount: sql<number>`count(${messages.id})`,
+      lastMessageAt: sql<string>`max(${messages.createdAt})`,
+    })
+    .from(channelSessions)
+    .innerJoin(users, eq(channelSessions.rootSenderId, users.id))
+    .leftJoin(messages, eq(messages.channelSessionId, channelSessions.id))
+    .where(eq(channelSessions.channelId, channelId))
+    .groupBy(
+      channelSessions.id,
+      channelSessions.channelId,
+      channelSessions.rootMessageId,
+      channelSessions.rootSenderId,
+      users.displayName,
+      users.name,
+      users.type,
+      channelSessions.rootPreview,
+      channelSessions.createdAt
+    )
+    .orderBy(desc(sql`max(${messages.createdAt})`), desc(channelSessions.createdAt))
+    .all();
 
-    return {
-      id: row.id,
-      channel_id: row.channelId,
-      sender_id: row.senderId,
-      sender_name: row.senderName,
-      sender_type: row.senderType,
-      content: row.content,
-      mentions: row.mentions ? JSON.parse(row.mentions) : null,
-      parent_id: row.parentId,
-      is_pinned: Boolean(row.isPinned),
-      pinned_at: row.pinnedAt,
-      pinned_by: row.pinnedBy,
-      edited_at: row.editedAt,
-      reply_count: row.replyCount ?? 0,
-      reactions,
-      created_at: row.createdAt,
-    };
-  });
+  const result: ChannelSessionSummaryResponse[] = rows.map((row) => ({
+    id: row.id,
+    channel_id: row.channelId,
+    root_message_id: row.rootMessageId,
+    started_by_id: row.startedById,
+    started_by_name: row.startedByName,
+    started_by_type: row.startedByType,
+    root_preview: row.rootPreview,
+    message_count: row.messageCount ?? 0,
+    started_at: row.startedAt,
+    last_message_at: row.lastMessageAt ?? row.startedAt,
+  }));
+
+  return c.json(result);
+});
+
+// GET /channels/:channelId/messages/sessions/:sessionId
+app.get("/sessions/:sessionId", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const sessionId = c.req.param("sessionId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const session = db
+    .select({
+      id: channelSessions.id,
+      channelId: channelSessions.channelId,
+      rootMessageId: channelSessions.rootMessageId,
+      startedById: channelSessions.rootSenderId,
+      startedByName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      startedByType: users.type,
+      rootPreview: channelSessions.rootPreview,
+      startedAt: channelSessions.createdAt,
+      messageCount: sql<number>`count(${messages.id})`,
+      lastMessageAt: sql<string>`max(${messages.createdAt})`,
+    })
+    .from(channelSessions)
+    .innerJoin(users, eq(channelSessions.rootSenderId, users.id))
+    .leftJoin(messages, eq(messages.channelSessionId, channelSessions.id))
+    .where(and(eq(channelSessions.id, sessionId), eq(channelSessions.channelId, channelId)))
+    .groupBy(
+      channelSessions.id,
+      channelSessions.channelId,
+      channelSessions.rootMessageId,
+      channelSessions.rootSenderId,
+      users.displayName,
+      users.name,
+      users.type,
+      channelSessions.rootPreview,
+      channelSessions.createdAt
+    )
+    .get();
+
+  if (!session) {
+    return c.json({ detail: "Session not found" }, 404);
+  }
+
+  const rows = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      channelSessionId: messages.channelSessionId,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      mentions: messages.mentions,
+      parentId: messages.parentId,
+      isPinned: messages.isPinned,
+      pinnedAt: messages.pinnedAt,
+      pinnedBy: messages.pinnedBy,
+      editedAt: messages.editedAt,
+      replyCount: sql<number>`(SELECT count(*) FROM messages AS _rc WHERE _rc.parent_id = ${messages.id})`,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), eq(messages.channelSessionId, sessionId)))
+    .orderBy(messages.createdAt)
+    .all();
+
+  const result: ChannelSessionHistoryResponse = {
+    id: session.id,
+    channel_id: session.channelId,
+    root_message_id: session.rootMessageId,
+    started_by_id: session.startedById,
+    started_by_name: session.startedByName,
+    started_by_type: session.startedByType,
+    root_preview: session.rootPreview,
+    message_count: session.messageCount ?? 0,
+    started_at: session.startedAt,
+    last_message_at: session.lastMessageAt ?? session.startedAt,
+    messages: mapMessageRows(rows),
+  };
 
   return c.json(result);
 });
@@ -256,11 +437,19 @@ app.post("/", async (c) => {
     ? JSON.stringify(parsed.data.mentions)
     : null;
   const parentId = parsed.data.parent_id ?? null;
+  const { sessionId, startedNew } = resolveChannelSessionForWrite({
+    channelId,
+    senderId: human.id,
+    content: parsed.data.content,
+    createdAt: now,
+    parentId,
+  });
 
   db.insert(messages)
     .values({
       id: msgId,
       channelId,
+      channelSessionId: sessionId,
       senderId: human.id,
       content: parsed.data.content,
       mentions: mentionsJson,
@@ -269,6 +458,10 @@ app.post("/", async (c) => {
     })
     .run();
 
+  if (startedNew) {
+    attachRootMessageToSession(sessionId, msgId);
+  }
+
   const senderName = human.displayName ?? human.name;
 
   // Broadcast to WebSocket clients (scoped to channel's workspace)
@@ -276,6 +469,7 @@ app.post("/", async (c) => {
     newMessageEvent({
       messageId: msgId,
       channelId,
+      channelSessionId: sessionId,
       senderId: human.id,
       senderName,
       content: parsed.data.content,
@@ -305,11 +499,12 @@ app.post("/", async (c) => {
   }
 
   // Fire-and-forget: invoke agents in background (DM target or @mentions)
-  invokeForMessage(senderName, channelId, channel.name, invokeContent, parsed.data.mentions ?? null);
+  invokeForMessage(senderName, channelId, channel.name, invokeContent, parsed.data.mentions ?? null, 0, sessionId);
 
   const response: MessageResponse = {
     id: msgId,
     channel_id: channelId,
+    channel_session_id: sessionId,
     sender_id: human.id,
     sender_name: senderName,
     sender_type: "human",
@@ -505,6 +700,7 @@ app.delete("/:messageId", (c) => {
 
   // Delete the message
   db.delete(messages).where(eq(messages.id, messageId)).run();
+  cleanupChannelSessionAfterMessageDelete(msg.channelSessionId, messageId);
 
   // Broadcast deletion to WebSocket clients (scoped to channel's workspace)
   broadcastEvent(messageDeletedEvent({ messageId, channelId }), channel.workspaceId);
@@ -717,22 +913,34 @@ app.post("/:messageId/forward", async (c) => {
   const forwardedContent = `📨 *Forwarded from ${sourceChannel.name}*\n> **${senderName}**: ${msg.content}`;
   const newMsgId = crypto.randomUUID();
   const now = new Date().toISOString();
+  const { sessionId, startedNew } = resolveChannelSessionForWrite({
+    channelId: parsed.data.target_channel_id,
+    senderId: forwarder.id,
+    content: forwardedContent,
+    createdAt: now,
+  });
 
   db.insert(messages)
     .values({
       id: newMsgId,
       channelId: parsed.data.target_channel_id,
+      channelSessionId: sessionId,
       senderId: forwarder.id,
       content: forwardedContent,
       createdAt: now,
     })
     .run();
 
+  if (startedNew) {
+    attachRootMessageToSession(sessionId, newMsgId);
+  }
+
   // Broadcast
   broadcastEvent(
     newMessageEvent({
       messageId: newMsgId,
       channelId: parsed.data.target_channel_id,
+      channelSessionId: sessionId,
       senderId: forwarder.id,
       senderName: forwarder.displayName ?? forwarder.name,
       content: forwardedContent,
@@ -744,6 +952,7 @@ app.post("/:messageId/forward", async (c) => {
 
   return c.json({
     id: newMsgId,
+    channel_session_id: sessionId,
     original_message_id: messageId,
     source_channel_id: channelId,
     target_channel_id: parsed.data.target_channel_id,

@@ -23,6 +23,7 @@ export interface WsEvent {
 export function newMessageEvent(opts: {
   messageId: string;
   channelId: string;
+  channelSessionId?: string | null;
   senderId: string;
   senderName: string;
   content: string;
@@ -36,6 +37,7 @@ export function newMessageEvent(opts: {
     data: {
       id: opts.messageId,
       channel_id: opts.channelId,
+      channel_session_id: opts.channelSessionId ?? null,
       sender_id: opts.senderId,
       sender_name: opts.senderName,
       sender_type: opts.senderType ?? "agent",

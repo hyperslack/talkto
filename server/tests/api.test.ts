@@ -458,4 +458,95 @@ describe("Messages API", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("groups channel messages into stable session histories", async () => {
+    const createRes = await app.fetch(req("POST", "/api/channels", {
+      name: `session-history-${Date.now()}`,
+    }));
+    expect(createRes.status).toBe(201);
+    const channel = await createRes.json();
+
+    const firstRes = await app.fetch(req("POST", `/api/channels/${channel.id}/messages`, {
+      content: "Kickoff discussion for session history.",
+    }));
+    expect(firstRes.status).toBe(201);
+    const first = await firstRes.json();
+    expect(first.channel_session_id).toBeTruthy();
+
+    const replyRes = await app.fetch(req("POST", `/api/channels/${channel.id}/messages`, {
+      content: "Reply inside the same session.",
+      parent_id: first.id,
+    }));
+    expect(replyRes.status).toBe(201);
+    const reply = await replyRes.json();
+    expect(reply.channel_session_id).toBe(first.channel_session_id);
+
+    const secondRes = await app.fetch(req("POST", `/api/channels/${channel.id}/messages`, {
+      content: "Second top-level conversation.",
+    }));
+    expect(secondRes.status).toBe(201);
+    const second = await secondRes.json();
+    expect(second.channel_session_id).not.toBe(first.channel_session_id);
+
+    const sessionsRes = await app.fetch(
+      req("GET", `/api/channels/${channel.id}/messages/sessions`)
+    );
+    expect(sessionsRes.status).toBe(200);
+    const sessions = await sessionsRes.json();
+    expect(Array.isArray(sessions)).toBe(true);
+    expect(sessions.length).toBe(2);
+
+    const firstSession = sessions.find((session: { id: string }) => session.id === first.channel_session_id);
+    expect(firstSession).toBeDefined();
+    expect(firstSession.message_count).toBe(2);
+    expect(firstSession.root_message_id).toBe(first.id);
+
+    const historyRes = await app.fetch(
+      req("GET", `/api/channels/${channel.id}/messages/sessions/${first.channel_session_id}`)
+    );
+    expect(historyRes.status).toBe(200);
+    const history = await historyRes.json();
+    expect(history.id).toBe(first.channel_session_id);
+    expect(history.message_count).toBe(2);
+    expect(history.messages.map((message: { id: string }) => message.id)).toEqual([first.id, reply.id]);
+    for (const message of history.messages) {
+      expect(message.channel_session_id).toBe(first.channel_session_id);
+    }
+  });
+
+  it("keeps a session history readable after the root message is deleted", async () => {
+    const createRes = await app.fetch(req("POST", "/api/channels", {
+      name: `session-root-delete-${Date.now()}`,
+    }));
+    expect(createRes.status).toBe(201);
+    const channel = await createRes.json();
+
+    const rootRes = await app.fetch(req("POST", `/api/channels/${channel.id}/messages`, {
+      content: "Root message that will be deleted.",
+    }));
+    expect(rootRes.status).toBe(201);
+    const root = await rootRes.json();
+
+    const childRes = await app.fetch(req("POST", `/api/channels/${channel.id}/messages`, {
+      content: "Reply that should preserve the session.",
+      parent_id: root.id,
+    }));
+    expect(childRes.status).toBe(201);
+    const child = await childRes.json();
+
+    const deleteRes = await app.fetch(
+      req("DELETE", `/api/channels/${channel.id}/messages/${root.id}`)
+    );
+    expect(deleteRes.status).toBe(200);
+
+    const historyRes = await app.fetch(
+      req("GET", `/api/channels/${channel.id}/messages/sessions/${root.channel_session_id}`)
+    );
+    expect(historyRes.status).toBe(200);
+    const history = await historyRes.json();
+    expect(history.id).toBe(root.channel_session_id);
+    expect(history.root_message_id).toBe(child.id);
+    expect(history.message_count).toBe(1);
+    expect(history.messages.map((message: { id: string }) => message.id)).toEqual([child.id]);
+  });
 });

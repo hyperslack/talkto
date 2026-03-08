@@ -239,3 +239,54 @@
 4. Added `GET /api/agents?reconcile=1` and upgraded bulk cleanup to use the same provider-backed reconcile path.
 5. Updated the DM header to derive agent reachability from `is_invocable` instead of transient websocket status noise.
 6. Validated the new behavior with targeted server tests and a clean `bun run typecheck`.
+# Progress Log
+
+## Session: 2026-03-08 - Channel session history API
+
+### Status
+- Backend implementation complete.
+- Focused validation complete across REST, MCP, and write-path test coverage.
+- Final handoff summary pending.
+
+### Actions Completed
+1. Loaded the `brainstorming` and `planning-with-files` skill instructions.
+2. Ran session catchup for planning-with-files.
+3. Inspected existing planning files and decided to preserve prior task context by prepending a new task section.
+4. Recorded the new goal, phases, open questions, and initial findings.
+5. Audited the schema, message routes, invocation path, and every message producer (`messages`, `message-router`, `users`, `webhooks`, seed data).
+6. Cross-checked the local provider CLIs (`claude`, `codex.cmd`, `opencode`, `cursor-agent`) while evaluating how TalkTo uses session identifiers.
+7. Implemented persisted channel sessions in the DB plus backfill/migration logic for existing messages.
+8. Added session-aware message creation/invocation behavior and two new session history APIs.
+9. Updated the isolated server test schema and added API coverage for session grouping and root-message deletion resilience.
+10. Fixed an old-database startup regression by deferring `channel_session_id` index creation until after additive migrations have added the column.
+
+### Next Actions
+1. Deliver the API shape and implementation summary to the user.
+2. Optionally wire the new session-history endpoints into the frontend once the desired UI is defined.
+
+### Files Updated This Session
+- `task_plan.md`
+- `findings.md`
+- `progress.md`
+- `server/src/db/index.ts`
+- `server/src/db/schema.ts`
+- `server/src/db/seed.ts`
+- `server/src/routes/messages.ts`
+- `server/src/routes/users.ts`
+- `server/src/routes/webhooks.ts`
+- `server/src/services/agent-invoker.ts`
+- `server/src/services/broadcaster.ts`
+- `server/src/services/channel-sessions.ts`
+- `server/src/services/message-router.ts`
+- `server/src/types/index.ts`
+- `server/tests/api.test.ts`
+- `server/tests/setup.ts`
+
+### Validation
+- `bun test server/tests/api.test.ts` ✅
+- `bun test server/tests/messages-write.test.ts` ✅
+- `bun test server/tests/webhooks.test.ts` ✅
+- `bun test server/tests/mcp.test.ts` ✅
+- `bun run typecheck` ✅
+- `bun run dev:server` against the existing local `data/talkto.db` ✅
+- `bun test server/tests/api.test.ts server/tests/messages-write.test.ts server/tests/webhooks.test.ts server/tests/mcp.test.ts` ✅

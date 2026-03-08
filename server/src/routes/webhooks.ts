@@ -13,6 +13,10 @@ import { eq, and } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, messages, users } from "../db/schema";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
+import {
+  attachRootMessageToSession,
+  resolveChannelSessionForWrite,
+} from "../services/channel-sessions";
 import type { AppBindings } from "../types";
 
 const app = new Hono<AppBindings>();
@@ -101,22 +105,34 @@ app.post("/incoming", async (c) => {
 
   const messageId = crypto.randomUUID();
   const now = new Date().toISOString();
+  const { sessionId, startedNew } = resolveChannelSessionForWrite({
+    channelId: channel_id,
+    senderId,
+    content,
+    createdAt: now,
+  });
 
   db.insert(messages)
     .values({
       id: messageId,
       channelId: channel_id,
+      channelSessionId: sessionId,
       senderId,
       content,
       createdAt: now,
     })
     .run();
 
+  if (startedNew && sessionId) {
+    attachRootMessageToSession(sessionId, messageId);
+  }
+
   // Broadcast via WebSocket
   broadcastEvent(
     newMessageEvent({
       messageId,
       channelId: channel_id,
+      channelSessionId: sessionId,
       senderId,
       senderName: sender_name,
       senderType: "webhook",
@@ -129,6 +145,7 @@ app.post("/incoming", async (c) => {
   return c.json({
     id: messageId,
     channel_id,
+    channel_session_id: sessionId,
     sender_name,
     content,
     created_at: now,
