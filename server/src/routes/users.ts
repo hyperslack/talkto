@@ -21,6 +21,7 @@ import { UserOnboardSchema } from "../types";
 import { broadcastEvent, newMessageEvent } from "../services/broadcaster";
 import { CREATOR_NAME } from "../services/name-generator";
 import type { AppBindings, UserResponse } from "../types";
+import { getUnreadMentionCount } from "../services/mention-count";
 
 const app = new Hono<AppBindings>();
 
@@ -277,6 +278,32 @@ app.delete("/me", (c) => {
     db.delete(users).where(eq(users.id, user.id)).run();
   }
   return c.body(null, 204);
+});
+
+// ---------------------------------------------------------------------------
+// GET /users/me/mention-count — unread mention count for current user
+// ---------------------------------------------------------------------------
+
+app.get("/me/mention-count", (c) => {
+  const auth = c.get("auth");
+
+  if (!auth.userId) {
+    return c.json({ error: "Authentication required" }, 401);
+  }
+
+  const db = getDb();
+  const user = db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, auth.userId))
+    .get();
+
+  if (!user) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
+  const result = getUnreadMentionCount(auth.userId, user.name, auth.workspaceId);
+  return c.json(result);
 });
 
 export default app;
