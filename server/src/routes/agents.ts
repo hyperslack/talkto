@@ -13,6 +13,7 @@ import { isSessionAlive as isCodexSessionAlive } from "../sdk/codex";
 import { isSessionAlive as isCursorSessionAlive } from "../sdk/cursor";
 import { requireAdmin } from "../middleware/auth";
 import { deleteAgentFromWorkspace, updateAgentAdminProfile } from "../services/admin-manager";
+import { getAgentLastSeen, getAllAgentLastSeen } from "../services/agent-last-seen";
 
 const app = new Hono<AppBindings>();
 
@@ -409,6 +410,39 @@ app.post("/:agentName/dm", (c) => {
     created_at: channel.createdAt,
   };
   return c.json(resp);
+});
+
+// ---------------------------------------------------------------------------
+// GET /agents/last-seen — last message timestamp for all agents
+// ---------------------------------------------------------------------------
+
+app.get("/last-seen", (c) => {
+  const auth = c.get("auth");
+  const results = getAllAgentLastSeen(auth.workspaceId);
+  return c.json(results);
+});
+
+// ---------------------------------------------------------------------------
+// GET /agents/:agentName/last-seen — last message timestamp for one agent
+// ---------------------------------------------------------------------------
+
+app.get("/:agentName/last-seen", (c) => {
+  const auth = c.get("auth");
+  const agentName = c.req.param("agentName");
+  const db = getDb();
+
+  const agent = db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.agentName, agentName), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+
+  if (!agent) {
+    return c.json({ error: "Agent not found" }, 404);
+  }
+
+  const result = getAgentLastSeen(agent.id, auth.workspaceId);
+  return c.json(result);
 });
 
 export default app;
