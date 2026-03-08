@@ -10,6 +10,7 @@ import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
+import { markAllChannelsRead } from "../services/batch-read-mark";
 
 const app = new Hono<AppBindings>();
 
@@ -349,6 +350,21 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// ---------------------------------------------------------------------------
+// POST /channels/read-all — mark all channels as read
+// ---------------------------------------------------------------------------
+
+app.post("/read-all", (c) => {
+  const auth = c.get("auth");
+
+  if (!auth.userId) {
+    return c.json({ error: "Authentication required" }, 401);
+  }
+
+  const result = markAllChannelsRead(auth.userId, auth.workspaceId);
+  return c.json(result);
 });
 
 export default app;
