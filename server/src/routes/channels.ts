@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, asc, and, gt, sql } from "drizzle-orm";
+import { eq, asc, and, gt, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelMembers, users, agents, messages, readReceipts } from "../db/schema";
 import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
@@ -298,6 +298,47 @@ app.delete("/:channelId", requireAdmin, (c) => {
   }
 
   return c.json(deleteChannelGraph(channel));
+});
+
+// DELETE /channels/:channelId/messages/purge — delete messages older than a given date
+app.delete("/:channelId/messages/purge", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  let body: { before?: string } = {};
+  try { body = await c.req.json(); } catch { /* empty body */ }
+
+  if (!body.before) {
+    return c.json({ detail: "Missing 'before' ISO timestamp" }, 400);
+  }
+
+  const beforeDate = new Date(body.before);
+  if (isNaN(beforeDate.getTime())) {
+    return c.json({ detail: "Invalid 'before' timestamp" }, 400);
+  }
+
+  // Delete messages older than the given date (CASCADE handles reactions)
+  const result = db
+    .delete(messages)
+    .where(
+      and(
+        eq(messages.channelId, channelId),
+        lt(messages.createdAt, body.before)
+      )
+    )
+    .run();
+
+  return c.json({
+    channel_id: channelId,
+    purged_before: body.before,
+    deleted_count: result.changes,
+  });
 });
 
 // POST /channels/:channelId/read — mark channel as read for a user
