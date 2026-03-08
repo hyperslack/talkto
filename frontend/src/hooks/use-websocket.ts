@@ -168,6 +168,11 @@ export function useWebSocket(enabled: boolean = true) {
           break;
         }
 
+        case "agent_display_name": {
+          queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+          break;
+        }
+
         case "channel_created": {
           queryClient.invalidateQueries({ queryKey: queryKeys.channels });
           break;
