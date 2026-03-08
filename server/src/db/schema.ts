@@ -304,6 +304,9 @@ export const channels = sqliteTable(
 });
 
     category: text("category"), // grouping label, e.g. "Projects", "DMs", "General"
+});
+
+    slowModeSeconds: integer("slow_mode_seconds").default(0), // 0 = disabled
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),
     workspaceId: text("workspace_id")

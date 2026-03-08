@@ -14,6 +14,9 @@ import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 });
 
 import { ChannelCreateSchema, ChannelTopicSchema, ChannelCategorySchema } from "../types";
+});
+
+import { ChannelCreateSchema, ChannelTopicSchema, ChannelSlowModeSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
@@ -40,6 +43,9 @@ function channelToResponse(ch: typeof channels.$inferSelect, extras?: { pinned_c
 });
 
     category: ch.category ?? null,
+});
+
+    slow_mode_seconds: ch.slowModeSeconds ?? 0,
     project_path: ch.projectPath,
     created_by: ch.createdBy,
     created_at: ch.createdAt,
@@ -319,6 +325,13 @@ app.patch("/:channelId/category", async (c) => {
   const auth = c.get("auth");
   const body = await c.req.json();
   const parsed = ChannelCategorySchema.safeParse(body);
+});
+
+// PATCH /channels/:channelId/slow-mode — set slow mode delay
+app.patch("/:channelId/slow-mode", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelSlowModeSchema.safeParse(body);
   if (!parsed.success) {
     return c.json({ detail: parsed.error.message }, 400);
   }
@@ -331,6 +344,9 @@ app.patch("/:channelId/category", async (c) => {
   const db = getDb();
   db.update(channels)
     .set({ category: parsed.data.category || null })
+});
+
+    .set({ slowModeSeconds: parsed.data.seconds })
     .where(eq(channels.id, channel.id))
     .run();
 
@@ -338,6 +354,7 @@ app.patch("/:channelId/category", async (c) => {
   return c.json(channelToResponse(updated));
 });
 
+<<<<<<< HEAD
 // PUT /channels/reorder — bulk reorder channels
 app.put("/reorder", async (c) => {
   const auth = c.get("auth");
@@ -377,6 +394,8 @@ app.get("/categories/list", (c) => {
   return c.json({ categories });
 });
 
+=======
+>>>>>>> 1c06015 (feat: add channel slow mode)
 // GET /channels/:channelId
 app.get("/:channelId", (c) => {
   const auth = c.get("auth");
