@@ -14,6 +14,7 @@ import {
 } from "../db/schema";
 import { broadcastEvent, newMessageEvent, messageEditedEvent, reactionEvent } from "./broadcaster";
 import { invokeForMessage } from "./agent-invoker";
+import { checkRateLimit, recordMessage } from "./rate-limiter";
 
 /**
  * Send a message from an agent to a channel.
@@ -26,6 +27,15 @@ export function sendAgentMessage(
   mentions?: string[] | null,
   replyTo?: string
 ): Record<string, unknown> {
+  // Rate limit check
+  const rateCheck = checkRateLimit(agentName);
+  if (!rateCheck.allowed) {
+    return {
+      error: `Rate limited. Too many messages. Retry after ${Math.ceil(rateCheck.retryAfterMs / 1000)}s.`,
+      retry_after_ms: rateCheck.retryAfterMs,
+    };
+  }
+
   const db = getDb();
 
   // Get agent
@@ -61,6 +71,9 @@ export function sendAgentMessage(
       createdAt: now,
     })
     .run();
+
+  // Record for rate limiting
+  recordMessage(agentName);
 
   // Broadcast to WebSocket clients (scoped to workspace)
   broadcastEvent(
