@@ -371,6 +371,39 @@ describe("MCP — register", () => {
       }
     }
   });
+
+  it("fails Claude registration when verification is required and the session is not recoverable on disk", async () => {
+    const previousSkip = process.env.TALKTO_SKIP_REGISTRATION_VERIFY;
+    const previousClaudeRoot = process.env.TALKTO_CLAUDE_PROJECTS_DIR;
+    process.env.TALKTO_SKIP_REGISTRATION_VERIFY = "0";
+    process.env.TALKTO_CLAUDE_PROJECTS_DIR = `${process.cwd()}/server/tests/fixtures/empty-claude-projects`;
+
+    try {
+      const sessionId = await initMcpSession();
+      const { result } = await callTool(sessionId, "register", {
+        session_id: "missing-claude-session",
+        project_path: "/tmp/test-project",
+        agent_type: "claude_code",
+      });
+
+      const data = result as Record<string, unknown>;
+      expect(data.error).toBe(
+        "Claude Code session verification failed for session ID: missing-claude-session"
+      );
+      expect(data.code).toBe("session_verification_failed");
+    } finally {
+      if (previousSkip === undefined) {
+        delete process.env.TALKTO_SKIP_REGISTRATION_VERIFY;
+      } else {
+        process.env.TALKTO_SKIP_REGISTRATION_VERIFY = previousSkip;
+      }
+      if (previousClaudeRoot === undefined) {
+        delete process.env.TALKTO_CLAUDE_PROJECTS_DIR;
+      } else {
+        process.env.TALKTO_CLAUDE_PROJECTS_DIR = previousClaudeRoot;
+      }
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -562,11 +595,7 @@ describe("MCP — Full Agent Workflow", () => {
     expect(data.status).toBe("disconnected");
 
     const agentRes = await app.fetch(apiRequest(`/api/agents/${disconnectName}`));
-    expect(agentRes.status).toBe(200);
-    const stored = await agentRes.json();
-    expect(stored.provider_session_id).toBeNull();
-    expect(stored.is_invocable).toBe(false);
-    expect(stored.status).toBe("offline");
+    expect(agentRes.status).toBe(404);
   });
 });
 

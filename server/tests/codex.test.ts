@@ -13,12 +13,18 @@
  */
 
 import { describe, test, expect, beforeEach } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   markSessionAlive,
   markSessionDead,
   isSessionAlive,
   isSessionBusy,
   extractTextFromTurn,
+  getCodexSessionIndexPath,
+  readCodexSessionIndex,
+  hasRecoverableCodexSession,
 } from "../src/sdk/codex";
 import type {
   Turn,
@@ -178,6 +184,37 @@ describe("Codex thread busy tracking", () => {
     markSessionAlive(threadId);
     expect(await isSessionAlive(threadId)).toBe(true);
     expect(await isSessionBusy(threadId)).toBe(false);
+  });
+});
+
+describe("Codex on-disk session recovery", () => {
+  test("reads resumable thread IDs from session_index.jsonl", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "talkto-codex-"));
+    const indexPath = path.join(dir, "session_index.jsonl");
+    writeFileSync(
+      indexPath,
+      `${JSON.stringify({ id: "thread-valid-001" })}\n${JSON.stringify({ id: "thread-valid-002" })}\n`,
+      "utf8"
+    );
+
+    const index = readCodexSessionIndex(indexPath);
+    expect(index.has("thread-valid-001")).toBe(true);
+    expect(hasRecoverableCodexSession("thread-valid-002", index)).toBe(true);
+    expect(hasRecoverableCodexSession("thread-missing", index)).toBe(false);
+  });
+
+  test("uses TALKTO_CODEX_SESSION_INDEX override when present", () => {
+    const previous = process.env.TALKTO_CODEX_SESSION_INDEX;
+    process.env.TALKTO_CODEX_SESSION_INDEX = "/tmp/custom-session-index.jsonl";
+    try {
+      expect(getCodexSessionIndexPath()).toBe("/tmp/custom-session-index.jsonl");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TALKTO_CODEX_SESSION_INDEX;
+      } else {
+        process.env.TALKTO_CODEX_SESSION_INDEX = previous;
+      }
+    }
   });
 });
 

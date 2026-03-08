@@ -14,6 +14,9 @@
  */
 
 import { describe, test, expect, beforeEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   parseCursorEvent,
   resetCliCache,
@@ -23,6 +26,10 @@ import {
   isSessionBusy,
   setCursorSessionMeta,
   getCursorSessionMeta,
+  encodeCursorProjectPath,
+  getCursorProjectsRoot,
+  readCursorSessionIndex,
+  hasRecoverableCursorSession,
 } from "../src/sdk/cursor";
 import type {
   CursorEvent,
@@ -483,6 +490,37 @@ describe("CLI discovery cache", () => {
     resetCliCache();
     resetCliCache();
     // No error — idempotent
+  });
+});
+
+describe("Cursor on-disk session recovery", () => {
+  test("finds resumable chats from project transcript directories", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "talkto-cursor-"));
+    const projectPath = "B:\\projects\\sides\\talkto";
+    const sessionId = "1101c676-1b49-46b4-b43e-eda75f1e0db6";
+    const projectKey = encodeCursorProjectPath(projectPath);
+    const transcriptDir = path.join(root, projectKey, "agent-transcripts", sessionId);
+    mkdirSync(transcriptDir, { recursive: true });
+    writeFileSync(path.join(transcriptDir, `${sessionId}.jsonl`), "{\"type\":\"user\"}\n", "utf8");
+
+    const index = readCursorSessionIndex(root);
+    expect(index.get(sessionId)?.has(projectKey)).toBe(true);
+    expect(hasRecoverableCursorSession(sessionId, projectPath, index)).toBe(true);
+    expect(hasRecoverableCursorSession("missing-session", projectPath, index)).toBe(false);
+  });
+
+  test("uses TALKTO_CURSOR_PROJECTS_DIR override when present", () => {
+    const previous = process.env.TALKTO_CURSOR_PROJECTS_DIR;
+    process.env.TALKTO_CURSOR_PROJECTS_DIR = "/tmp/custom-cursor-projects";
+    try {
+      expect(getCursorProjectsRoot()).toBe("/tmp/custom-cursor-projects");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TALKTO_CURSOR_PROJECTS_DIR;
+      } else {
+        process.env.TALKTO_CURSOR_PROJECTS_DIR = previous;
+      }
+    }
   });
 });
 

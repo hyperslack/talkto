@@ -10,10 +10,10 @@ import { AgentAdminUpdateSchema } from "../types";
 import type { AgentResponse, AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import {
-  cleanupUnavailableAgents,
   deleteAgentFromWorkspace,
   updateAgentAdminProfile,
 } from "../services/admin-manager";
+import { reconcileWorkspaceAgents } from "../services/agent-reconciler";
 
 const app = new Hono<AppBindings>();
 
@@ -53,8 +53,11 @@ function agentToResponse(
 }
 
 // GET /agents
-app.get("/", (c) => {
+app.get("/", async (c) => {
   const auth = c.get("auth");
+  if (c.req.query("reconcile") === "1") {
+    await reconcileWorkspaceAgents(auth.workspaceId);
+  }
   const db = getDb();
   const allAgents = db
     .select()
@@ -151,9 +154,9 @@ app.get("/:agentName/stats", (c) => {
 });
 
 // POST /agents/cleanup-unavailable — bulk-remove unreachable agents in this workspace
-app.post("/cleanup-unavailable", requireAdmin, (c) => {
+app.post("/cleanup-unavailable", requireAdmin, async (c) => {
   const auth = c.get("auth");
-  return c.json(cleanupUnavailableAgents(auth.workspaceId));
+  return c.json(await reconcileWorkspaceAgents(auth.workspaceId));
 });
 
 // GET /agents/:agentName

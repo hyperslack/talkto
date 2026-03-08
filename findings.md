@@ -326,3 +326,43 @@ This pass will implement:
 6. A registration-time smoke test on the same headless resume path TalkTo uses for DMs/@mentions is a better truth source than proactive subprocess “alive” bookkeeping.
 7. If registration verifies invocability, TalkTo can assume subprocess agents remain invocable until a real invoke proves otherwise.
 8. Failure-time invalidation still matters and should remain, because auth/session validity can change after registration.
+
+---
+
+## Findings (Startup Session Reconciliation / Active-Agent Model - 2026-03-08)
+
+### Current startup behavior
+1. The server currently reconnects only OpenCode MCP transports on startup.
+   - `server/src/index.ts` runs `reconnectOpenCodeMcpClients()` after boot.
+   - There is no equivalent persisted-agent reconciliation pass for subprocess providers.
+
+2. The frontend currently loads `/api/agents` directly and renders stale persisted rows as `unavailable`.
+   - There is no startup cleanup trigger in `frontend/src/App.tsx` or `frontend/src/hooks/use-queries.ts`.
+   - `useAgents()` still polls every 30s, but polling alone does not remove stale DB rows.
+
+3. Agent reachability is still derived from persisted credential presence, not from a cheap provider-backed startup verification.
+   - `server/src/routes/agents.ts` treats a subprocess agent as invocable if `providerSessionId` is present.
+   - This explains why a backlog of stale rows can survive across restarts until manually cleaned.
+
+### Available provider-side health primitives
+4. OpenCode already has the right primitive.
+   - `server/src/sdk/opencode.ts` exposes `isSessionAlive(serverUrl, sessionId)` via the REST session API.
+
+5. Claude/Codex/Cursor do not currently expose cheap non-interactive health checks in TalkTo's wrappers.
+   - Their wrappers only expose in-process "known alive" Sets plus real prompt execution.
+   - That is insufficient for startup reconciliation because it resets on TalkTo restart.
+
+### Product conclusion
+6. The correct architecture is now:
+   - MCP session initialized: only means a tool transport exists.
+   - Registered agent: a persisted identity with verified provider credentials.
+   - Active agent: a registered identity whose stored credentials pass a cheap startup check, independent of any open terminal.
+
+7. Startup needs a reconciliation pass, not just better rendering.
+   - If a non-system agent fails cheap provider verification at startup, it should be deleted automatically instead of shown as a first-class agent entry.
+
+### Implementation findings
+8. Claude session recoverability can be checked cheaply by reading the first JSON line of `~/.claude/projects/**/*.jsonl` and matching both `sessionId` and `cwd`.
+9. Codex resumability can be checked cheaply from `~/.codex/session_index.jsonl`; no prompt is required.
+10. Cursor resumability can be approximated cheaply from `.cursor/projects/*/agent-transcripts/<chatId>/<chatId>.jsonl`, keyed by the encoded project directory.
+11. Combining startup reconciliation with an app-load reconcile pass removes stale rows without restoring the old proactive ghost/liveness polling model.

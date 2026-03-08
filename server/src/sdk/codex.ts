@@ -21,6 +21,9 @@
  */
 
 import { Codex } from "@openai/codex-sdk";
+import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type {
   Turn,
   ThreadEvent,
@@ -58,6 +61,43 @@ export type {
 
 // Default timeout for prompt calls (10 minutes — matches opencode.ts and claude.ts)
 const PROMPT_TIMEOUT_MS = 600_000;
+
+export function getCodexSessionIndexPath(homeDir: string = os.homedir()): string {
+  return process.env.TALKTO_CODEX_SESSION_INDEX ?? path.join(homeDir, ".codex", "session_index.jsonl");
+}
+
+export function readCodexSessionIndex(
+  indexPath: string = getCodexSessionIndexPath()
+): Set<string> {
+  const sessionIds = new Set<string>();
+  if (!existsSync(indexPath)) return sessionIds;
+
+  try {
+    const raw = readFileSync(indexPath, "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { id?: unknown };
+        if (typeof parsed.id === "string" && parsed.id.trim()) {
+          sessionIds.add(parsed.id);
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    return sessionIds;
+  }
+
+  return sessionIds;
+}
+
+export function hasRecoverableCodexSession(
+  threadId: string,
+  sessionIds: Set<string> = readCodexSessionIndex()
+): boolean {
+  return sessionIds.has(threadId);
+}
 
 // ---------------------------------------------------------------------------
 // Codex client singleton

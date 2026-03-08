@@ -5,6 +5,9 @@
  */
 
 import { describe, expect, it, beforeAll } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Hono } from "hono";
 import "./test-env";
 import { eq } from "drizzle-orm";
@@ -200,20 +203,51 @@ describe("Agents API", () => {
     const res = await app.fetch(req("PATCH", `/api/agents/${agentName}`, {
       description: "updated from api test",
       current_task: "route verification",
-      agent_type: "cursor",
     }));
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.agent_name).toBe(agentName);
-    expect(data.agent_type).toBe("cursor");
+    expect(data.agent_type).toBe("claude_code");
     expect(data.current_task).toBe("route verification");
 
     const stored = db.select().from(agents).where(eq(agents.agentName, agentName)).get();
     expect(stored?.description).toBe("updated from api test");
-    expect(stored?.agentType).toBe("cursor");
-    expect(stored?.providerSessionId).toBeNull();
-    expect(stored?.serverUrl).toBeNull();
-    expect(stored?.status).toBe("offline");
+    expect(stored?.agentType).toBe("claude_code");
+    expect(stored?.providerSessionId).toBe("api-update-session");
+  });
+
+  it("PATCH /api/agents/:name rejects provider changes", async () => {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const userId = crypto.randomUUID();
+    const agentName = `api-retype-agent-${Date.now()}`;
+
+    db.insert(users)
+      .values({ id: userId, name: agentName, type: "agent", createdAt: now })
+      .run();
+    db.insert(agents)
+      .values({
+        id: userId,
+        agentName,
+        agentType: "claude_code",
+        projectPath: "/tmp/api-retype-agent",
+        projectName: "api-retype-agent",
+        status: "online",
+        providerSessionId: "api-retype-session",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      })
+      .run();
+
+    const res = await app.fetch(req("PATCH", `/api/agents/${agentName}`, {
+      agent_type: "cursor",
+    }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.detail).toContain("Delete the agent and re-register");
+
+    const stored = db.select().from(agents).where(eq(agents.agentName, agentName)).get();
+    expect(stored?.agentType).toBe("claude_code");
+    expect(stored?.providerSessionId).toBe("api-retype-session");
   });
 
   it("DELETE /api/agents/:name removes a non-system agent", async () => {
@@ -275,6 +309,21 @@ describe("Agents API", () => {
       ])
       .run();
 
+    const claudeProjectsRoot = mkdtempSync(path.join(tmpdir(), "talkto-api-claude-"));
+    const claudeProjectDir = path.join(claudeProjectsRoot, "tmp-api-cleanup-available");
+    mkdirSync(claudeProjectDir, { recursive: true });
+    writeFileSync(
+      path.join(claudeProjectDir, "still-valid-claude.jsonl"),
+      `${JSON.stringify({
+        sessionId: "still-valid-claude",
+        cwd: "/tmp/api-cleanup-available",
+      })}\n`,
+      "utf8"
+    );
+
+    const previousClaudeRoot = process.env.TALKTO_CLAUDE_PROJECTS_DIR;
+    process.env.TALKTO_CLAUDE_PROJECTS_DIR = claudeProjectsRoot;
+
     db.insert(agents)
       .values([
         {
@@ -284,32 +333,85 @@ describe("Agents API", () => {
           projectPath: "/tmp/api-cleanup-unavailable",
           projectName: "api-cleanup-unavailable",
           status: "offline",
-          providerSessionId: null,
+          providerSessionId: "missing-session-id",
           workspaceId: DEFAULT_WORKSPACE_ID,
         },
         {
           id: availableId,
           agentName: availableName,
-          agentType: "codex",
+          agentType: "claude_code",
           projectPath: "/tmp/api-cleanup-available",
           projectName: "api-cleanup-available",
           status: "offline",
-          providerSessionId: "still-valid",
+          providerSessionId: "still-valid-claude",
           workspaceId: DEFAULT_WORKSPACE_ID,
         },
       ])
       .run();
 
-    const res = await app.fetch(req("POST", "/api/agents/cleanup-unavailable"));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.deleted).toBeGreaterThanOrEqual(1);
-    expect(data.agent_names).toContain(unavailableName);
+    try {
+      const res = await app.fetch(req("POST", "/api/agents/cleanup-unavailable"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.deleted).toBeGreaterThanOrEqual(1);
+      expect(data.agent_names).toContain(unavailableName);
 
-    const removed = db.select().from(agents).where(eq(agents.id, unavailableId)).get();
-    const kept = db.select().from(agents).where(eq(agents.id, availableId)).get();
-    expect(removed).toBeUndefined();
-    expect(kept?.agentName).toBe(availableName);
+      const removed = db.select().from(agents).where(eq(agents.id, unavailableId)).get();
+      const kept = db.select().from(agents).where(eq(agents.id, availableId)).get();
+      expect(removed).toBeUndefined();
+      expect(kept?.agentName).toBe(availableName);
+    } finally {
+      if (previousClaudeRoot === undefined) {
+        delete process.env.TALKTO_CLAUDE_PROJECTS_DIR;
+      } else {
+        process.env.TALKTO_CLAUDE_PROJECTS_DIR = previousClaudeRoot;
+      }
+    }
+  });
+
+  it("GET /api/agents?reconcile=1 prunes stale agents before returning the list", async () => {
+    const db = getDb();
+    const now = new Date().toISOString();
+    const staleId = crypto.randomUUID();
+    const staleName = `api-reconcile-stale-${Date.now()}`;
+
+    db.insert(users)
+      .values({ id: staleId, name: staleName, type: "agent", createdAt: now })
+      .run();
+    db.insert(agents)
+      .values({
+        id: staleId,
+        agentName: staleName,
+        agentType: "codex",
+        projectPath: "/tmp/api-reconcile-stale",
+        projectName: "api-reconcile-stale",
+        status: "offline",
+        providerSessionId: "missing-thread-id",
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      })
+      .run();
+
+    const previousCodexIndex = process.env.TALKTO_CODEX_SESSION_INDEX;
+    process.env.TALKTO_CODEX_SESSION_INDEX = path.join(
+      mkdtempSync(path.join(tmpdir(), "talkto-api-codex-empty-")),
+      "session_index.jsonl"
+    );
+
+    try {
+      const res = await app.fetch(req("GET", "/api/agents?reconcile=1"));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.find((agent: { agent_name: string }) => agent.agent_name === staleName)).toBeUndefined();
+
+      const stored = db.select().from(agents).where(eq(agents.id, staleId)).get();
+      expect(stored).toBeUndefined();
+    } finally {
+      if (previousCodexIndex === undefined) {
+        delete process.env.TALKTO_CODEX_SESSION_INDEX;
+      } else {
+        process.env.TALKTO_CODEX_SESSION_INDEX = previousCodexIndex;
+      }
+    }
   });
 });
 

@@ -38,6 +38,7 @@ import {
   getLocalhostAuth,
   API_KEY_PREFIX,
 } from "./services/auth-service";
+import { reconcileAllAgents } from "./services/agent-reconciler";
 
 // Route modules
 import usersRoutes from "./routes/users";
@@ -329,9 +330,30 @@ async function reconnectOpenCodeMcpClients() {
   }
 }
 
+async function reconcilePersistedAgentsOnStartup() {
+  try {
+    const report = await reconcileAllAgents();
+    console.log(
+      `[AGENT-RECONCILE] checked=${report.checked} kept=${report.kept} deleted=${report.deleted}`
+    );
+    if (report.errors.length > 0) {
+      console.warn(
+        `[AGENT-RECONCILE] completed with ${report.errors.length} error(s): ${report.errors.join("; ")}`
+      );
+    }
+  } catch (err) {
+    console.error("[AGENT-RECONCILE] Startup reconciliation failed:", err);
+  }
+}
+
 // Run after a short delay so the HTTP server is fully ready to accept MCP connections
 if (!disableServerBootstrap) {
-  setTimeout(reconnectOpenCodeMcpClients, 2000);
+  setTimeout(() => {
+    void Promise.allSettled([
+      reconcilePersistedAgentsOnStartup(),
+      reconnectOpenCodeMcpClients(),
+    ]);
+  }, 2000);
 }
 
 // ---------------------------------------------------------------------------

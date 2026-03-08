@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { Agent } from "@/lib/types";
 import { useAppStore } from "@/stores/app-store";
 import { useDeleteAgent, useOpenDM, useChannels } from "@/hooks/use-queries";
-import { AlertTriangle, Bot, ChevronRight, Copy, MessageSquare, Trash2, WifiOff } from "lucide-react";
+import { AlertTriangle, Bot, ChevronRight, Copy, MessageSquare, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarBadge } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -55,8 +55,6 @@ interface AgentListProps {
 }
 
 export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps) {
-  const agentStatuses = useAppStore((s) => s.agentStatuses);
-
   if (isLoading) {
     return (
       <div className="px-3">
@@ -102,15 +100,7 @@ export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps
   const sortAlpha = (list: Agent[]) =>
     [...list].sort((a, b) => a.agent_name.localeCompare(b.agent_name));
 
-  const onlineAgents = invocableAgents.filter(
-    (a) => (agentStatuses.get(a.agent_name) ?? a.status) === "online",
-  );
-  const offlineAgents = invocableAgents.filter(
-    (a) => (agentStatuses.get(a.agent_name) ?? a.status) !== "online",
-  );
-
-  const sortedOnline = sortAlpha(onlineAgents);
-  const sortedOffline = sortAlpha(offlineAgents);
+  const sortedInvocable = sortAlpha(invocableAgents);
   const sortedUnavailable = sortAlpha(unavailableAgents);
 
   return (
@@ -123,19 +113,11 @@ export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps
 
       <div className="space-y-0.5">
         <TooltipProvider delayDuration={300}>
-          {sortedOnline.map((agent) => {
-            const status =
-              agentStatuses.get(agent.agent_name) ?? agent.status;
-            return (
-              <AgentItem key={agent.id} agent={agent} status={status} onSelectChannel={onSelectChannel} />
-            );
-          })}
+          {sortedInvocable.map((agent) => (
+            <AgentItem key={agent.id} agent={agent} onSelectChannel={onSelectChannel} />
+          ))}
         </TooltipProvider>
       </div>
-
-      {sortedOffline.length > 0 && (
-        <OfflineSection agents={sortedOffline} onSelectChannel={onSelectChannel} />
-      )}
 
       {sortedUnavailable.length > 0 && (
         <UnavailableSection agents={sortedUnavailable} onSelectChannel={onSelectChannel} />
@@ -144,51 +126,8 @@ export function AgentList({ agents, isLoading, onSelectChannel }: AgentListProps
   );
 }
 
-function OfflineSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectChannel?: (id: string) => void }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const agentStatuses = useAppStore((s) => s.agentStatuses);
-
-  return (
-    <div className="mt-2">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex w-full items-center gap-1.5 px-0 py-1 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/30 hover:text-sidebar-foreground/50 transition-colors"
-      >
-        <ChevronRight
-          className={cn(
-            "h-3 w-3 transition-transform duration-200",
-            isOpen && "rotate-90",
-          )}
-        />
-        <WifiOff className="h-3 w-3" />
-        <span>Offline ({agents.length})</span>
-      </button>
-
-      {isOpen && (
-        <div className="space-y-0.5 mt-0.5">
-          <TooltipProvider delayDuration={300}>
-            {agents.map((agent) => {
-              const status =
-                agentStatuses.get(agent.agent_name) ?? agent.status;
-              return (
-                <AgentItem
-                  key={agent.id}
-                  agent={agent}
-                  status={status}
-                  onSelectChannel={onSelectChannel}
-                />
-              );
-            })}
-          </TooltipProvider>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function UnavailableSection({ agents, onSelectChannel }: { agents: Agent[]; onSelectChannel?: (id: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
-  const agentStatuses = useAppStore((s) => s.agentStatuses);
 
   return (
     <div className="mt-2">
@@ -209,19 +148,14 @@ function UnavailableSection({ agents, onSelectChannel }: { agents: Agent[]; onSe
       {isOpen && (
         <div className="space-y-0.5 mt-0.5">
           <TooltipProvider delayDuration={300}>
-            {agents.map((agent) => {
-              const status =
-                agentStatuses.get(agent.agent_name) ?? agent.status;
-              return (
-                <AgentItem
-                  key={agent.id}
-                  agent={agent}
-                  status={status}
-                  isUnavailable
-                  onSelectChannel={onSelectChannel}
-                />
-              );
-            })}
+            {agents.map((agent) => (
+              <AgentItem
+                key={agent.id}
+                agent={agent}
+                isUnavailable
+                onSelectChannel={onSelectChannel}
+              />
+            ))}
           </TooltipProvider>
         </div>
       )}
@@ -231,16 +165,13 @@ function UnavailableSection({ agents, onSelectChannel }: { agents: Agent[]; onSe
 
 function AgentItem({
   agent,
-  status,
   isUnavailable = false,
   onSelectChannel,
 }: {
   agent: Agent;
-  status: "online" | "offline";
   isUnavailable?: boolean;
   onSelectChannel?: (id: string) => void;
 }) {
-  const isOnline = status === "online" && !isUnavailable;
   const hasProfile =
     agent.description || agent.personality || agent.current_task || agent.gender;
   const activeChannelId = useAppStore((s) => s.activeChannelId);
@@ -287,9 +218,7 @@ function AgentItem({
           className={cn(
             isUnavailable
               ? "bg-muted text-muted-foreground/20"
-              : isOnline
-                ? "bg-talkto-agent/12 text-talkto-agent"
-                : "bg-muted text-muted-foreground/40",
+              : "bg-talkto-agent/12 text-talkto-agent",
           )}
         >
           {isUnavailable ? (
@@ -303,9 +232,7 @@ function AgentItem({
             "ring-sidebar",
             isUnavailable
               ? "bg-muted-foreground/15"
-              : isOnline
-                ? "bg-talkto-online"
-                : "bg-muted-foreground/30",
+              : "bg-talkto-online",
           )}
         />
       </Avatar>
@@ -316,21 +243,14 @@ function AgentItem({
             "block truncate text-xs",
             isUnavailable
               ? "text-sidebar-foreground/25 line-through"
-              : isOnline
-                ? "text-sidebar-foreground"
-                : "text-sidebar-foreground/40",
+              : "text-sidebar-foreground",
           )}
         >
           {agent.agent_name}
         </span>
-        {!isUnavailable && agent.current_task && isOnline && (
+        {!isUnavailable && agent.current_task && (
           <span className="block truncate text-[10px] text-sidebar-foreground/30 max-w-[140px]">
             {agent.current_task}
-          </span>
-        )}
-        {!isUnavailable && !isOnline && agent.message_count != null && agent.message_count > 0 && (
-          <span className="block truncate text-[10px] text-sidebar-foreground/20">
-            {agent.message_count} message{agent.message_count !== 1 ? "s" : ""}
           </span>
         )}
       </div>

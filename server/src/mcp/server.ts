@@ -38,18 +38,15 @@ import {
   agentReactMessage,
 } from "../services/message-router";
 import { isSessionAlive as isOpenCodeSessionAlive } from "../sdk/opencode";
-import { promptSession as promptClaudeSession } from "../sdk/claude";
-import { promptSession as promptCodexSession } from "../sdk/codex";
-import { promptSession as promptCursorSession, setCursorSessionMeta } from "../sdk/cursor";
+import { hasRecoverableClaudeSession } from "../sdk/claude";
+import { hasRecoverableCodexSession } from "../sdk/codex";
+import { hasRecoverableCursorSession, setCursorSessionMeta } from "../sdk/cursor";
 
 // ---------------------------------------------------------------------------
 // Auto-discovery: find the OpenCode API server for session liveness checks
 // ---------------------------------------------------------------------------
 
 const OPENCODE_DEFAULT_PORT = 19877;
-const REGISTRATION_VERIFY_PROMPT = "Reply with OK only.";
-const REGISTRATION_VERIFY_TIMEOUT_MS = 120_000;
-
 /** Try to discover the OpenCode API server URL by probing the default port. */
 async function discoverOpenCodeServerUrl(sessionId: string): Promise<string | null> {
   const candidate = `http://127.0.0.1:${OPENCODE_DEFAULT_PORT}`;
@@ -259,13 +256,9 @@ async function verifyRegistrationSession(opts: {
     }
 
     case "claude_code": {
-      const result = await promptClaudeSession(
-        opts.sessionId,
-        REGISTRATION_VERIFY_PROMPT,
-        opts.projectPath,
-        REGISTRATION_VERIFY_TIMEOUT_MS
-      );
-      if (result?.text.trim() === "OK") return { ok: true };
+      if (hasRecoverableClaudeSession(opts.sessionId, opts.projectPath)) {
+        return { ok: true };
+      }
 
       return {
         ok: false,
@@ -277,12 +270,9 @@ async function verifyRegistrationSession(opts: {
     }
 
     case "codex": {
-      const result = await promptCodexSession(
-        opts.sessionId,
-        REGISTRATION_VERIFY_PROMPT,
-        REGISTRATION_VERIFY_TIMEOUT_MS
-      );
-      if (result?.text.trim() === "OK") return { ok: true };
+      if (hasRecoverableCodexSession(opts.sessionId)) {
+        return { ok: true };
+      }
 
       return {
         ok: false,
@@ -293,12 +283,9 @@ async function verifyRegistrationSession(opts: {
 
     case "cursor": {
       setCursorSessionMeta(opts.sessionId, { projectPath: opts.projectPath });
-      const result = await promptCursorSession(
-        opts.sessionId,
-        REGISTRATION_VERIFY_PROMPT,
-        REGISTRATION_VERIFY_TIMEOUT_MS
-      );
-      if (result?.text.trim() === "OK") return { ok: true };
+      if (hasRecoverableCursorSession(opts.sessionId, opts.projectPath)) {
+        return { ok: true };
+      }
 
       return {
         ok: false,

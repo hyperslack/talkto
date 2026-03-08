@@ -13,6 +13,9 @@
  */
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type {
   SDKMessage,
   SDKResultMessage,
@@ -37,6 +40,12 @@ export type {
 // Default timeout for prompt calls (10 minutes — matches opencode.ts)
 const PROMPT_TIMEOUT_MS = 600_000;
 
+export interface ClaudeSessionRecord {
+  sessionId: string;
+  cwd: string | null;
+  filePath: string;
+}
+
 type ClaudeQueryOptions = {
   resume: string;
   abortController: AbortController;
@@ -60,6 +69,91 @@ export function buildClaudeQueryOptions(opts: {
     ...(opts.cwd ? { cwd: opts.cwd } : {}),
     ...(opts.includePartialMessages ? { includePartialMessages: true } : {}),
   };
+}
+
+function normalizeComparablePath(value: string): string {
+  const normalized = path.normalize(value).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export function getClaudeProjectsRoot(homeDir: string = os.homedir()): string {
+  return process.env.TALKTO_CLAUDE_PROJECTS_DIR ?? path.join(homeDir, ".claude", "projects");
+}
+
+function walkJsonlFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkJsonlFiles(entryPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+function readFirstLine(filePath: string): string | null {
+  try {
+    const raw = readFileSync(filePath, "utf8");
+    if (!raw) return null;
+    const newline = raw.indexOf("\n");
+    return newline === -1 ? raw.trim() : raw.slice(0, newline).trim();
+  } catch {
+    return null;
+  }
+}
+
+export function readClaudeSessionIndex(
+  rootDir: string = getClaudeProjectsRoot()
+): Map<string, ClaudeSessionRecord[]> {
+  const records = new Map<string, ClaudeSessionRecord[]>();
+
+  for (const filePath of walkJsonlFiles(rootDir)) {
+    const firstLine = readFirstLine(filePath);
+    if (!firstLine) continue;
+
+    try {
+      const parsed = JSON.parse(firstLine) as {
+        sessionId?: unknown;
+        cwd?: unknown;
+      };
+      if (typeof parsed.sessionId !== "string" || !parsed.sessionId.trim()) {
+        continue;
+      }
+
+      const record: ClaudeSessionRecord = {
+        sessionId: parsed.sessionId,
+        cwd: typeof parsed.cwd === "string" ? parsed.cwd : null,
+        filePath,
+      };
+      const existing = records.get(record.sessionId) ?? [];
+      existing.push(record);
+      records.set(record.sessionId, existing);
+    } catch {
+      continue;
+    }
+  }
+
+  return records;
+}
+
+export function hasRecoverableClaudeSession(
+  sessionId: string,
+  projectPath: string,
+  index: Map<string, ClaudeSessionRecord[]> = readClaudeSessionIndex()
+): boolean {
+  const records = index.get(sessionId);
+  if (!records?.length) return false;
+
+  const normalizedProjectPath = normalizeComparablePath(projectPath);
+  return records.some((record) =>
+    record.cwd ? normalizeComparablePath(record.cwd) === normalizedProjectPath : false
+  );
 }
 
 // ---------------------------------------------------------------------------

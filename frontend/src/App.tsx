@@ -1,4 +1,4 @@
-import { useEffect, Component } from "react";
+import { useEffect, useState, Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,7 +9,7 @@ import { WorkspaceLayout } from "@/components/workspace/workspace-layout";
 import { MessageFeed } from "@/components/workspace/message-feed";
 import { useAppStore } from "@/stores/app-store";
 import { useMe, useAuthMe } from "@/hooks/use-queries";
-import { normalizeError } from "@/lib/api";
+import { normalizeError, reconcileAgents } from "@/lib/api";
 
 // Apply dark mode class on initial load (before first paint)
 if (localStorage.getItem("talkto-dark-mode") === "true") {
@@ -65,6 +65,7 @@ function AppContent() {
   const setActiveWorkspaceId = useAppStore((s) => s.setActiveWorkspaceId);
   const { data: me, isLoading, isError } = useMe();
   const { data: authInfo } = useAuthMe();
+  const [agentBootstrapComplete, setAgentBootstrapComplete] = useState(false);
 
   // Store auth context in Zustand when it loads
   useEffect(() => {
@@ -75,6 +76,30 @@ function AppContent() {
       }
     }
   }, [authInfo, setAuthInfo, setActiveWorkspaceId]);
+
+  useEffect(() => {
+    if (!isOnboarded) {
+      setAgentBootstrapComplete(false);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        await reconcileAgents();
+      } catch {
+        // Global API notices already surface this.
+      } finally {
+        if (!cancelled) {
+          setAgentBootstrapComplete(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOnboarded]);
 
   // Check for invite join flow
   const joinToken = getJoinToken();
@@ -95,6 +120,16 @@ function AppContent() {
 
   // Already onboarded this session — show workspace
   if (isOnboarded) {
+    if (!agentBootstrapComplete) {
+      return (
+        <div className="flex h-screen items-center justify-center bg-background">
+          <span className="text-sm text-muted-foreground animate-pulse">
+            Refreshing agents...
+          </span>
+        </div>
+      );
+    }
+
     return (
       <WorkspaceLayout>
         <MessageFeed />

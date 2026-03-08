@@ -245,8 +245,9 @@ export function pinMessage(channelId: string, messageId: string) {
 
 // ── Agents ─────────────────────────────────────────────
 
-export function listAgents() {
-  return request<Agent[]>("/agents");
+export function listAgents(opts?: { reconcile?: boolean }) {
+  const query = opts?.reconcile ? "?reconcile=1" : "";
+  return request<Agent[]>(`/agents${query}`);
 }
 
 export function updateAgent(
@@ -283,6 +284,10 @@ export function cleanupUnavailableAgents() {
   return request<{ deleted: number; agent_names: string[]; errors: string[] }>("/agents/cleanup-unavailable", {
     method: "POST",
   });
+}
+
+export function reconcileAgents() {
+  return listAgents({ reconcile: true });
 }
 
 export function getOrCreateDM(agentName: string) {

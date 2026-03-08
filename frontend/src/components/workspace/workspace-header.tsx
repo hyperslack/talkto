@@ -52,7 +52,6 @@ export function WorkspaceHeader({
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const darkMode = useAppStore((s) => s.darkMode);
   const toggleDarkMode = useAppStore((s) => s.toggleDarkMode);
-  const agentStatuses = useAppStore((s) => s.agentStatuses);
   const { data: me } = useMe();
   const { data: agents } = useAgents();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -85,9 +84,7 @@ export function WorkspaceHeader({
   const dmAgent = dmAgentName
     ? agents?.find((a) => a.agent_name === dmAgentName)
     : null;
-  const dmAgentStatus = dmAgentName
-    ? agentStatuses.get(dmAgentName) ?? dmAgent?.status ?? "offline"
-    : null;
+  const dmAgentStatus = dmAgent?.is_invocable ? "online" : "offline";
 
   return (
     <>

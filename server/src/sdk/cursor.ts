@@ -24,6 +24,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createInterface } from "node:readline";
@@ -295,6 +296,61 @@ export function findCursorCli(): { command: string; args: string[] } | null {
 /** Reset the cached CLI path (for testing). */
 export function resetCliCache(): void {
   cachedCliPath = null;
+}
+
+export function getCursorProjectsRoot(homeDir: string = os.homedir()): string {
+  return process.env.TALKTO_CURSOR_PROJECTS_DIR ?? path.join(homeDir, ".cursor", "projects");
+}
+
+export function encodeCursorProjectPath(projectPath: string): string {
+  const normalized = path.normalize(projectPath).replace(/[\\/]+$/, "");
+  const unixy = normalized.replace(/\\/g, "/");
+  const driveMatch = unixy.match(/^([A-Za-z]):\/(.*)$/);
+  if (driveMatch) {
+    const [, drive, rest] = driveMatch;
+    return `${drive.toLowerCase()}-${rest.replace(/[/:]+/g, "-")}`;
+  }
+  return unixy.replace(/^\/+/, "").replace(/[/:]+/g, "-");
+}
+
+export function readCursorSessionIndex(
+  rootDir: string = getCursorProjectsRoot()
+): Map<string, Set<string>> {
+  const sessions = new Map<string, Set<string>>();
+  if (!existsSync(rootDir)) return sessions;
+
+  for (const projectDir of readdirSync(rootDir, { withFileTypes: true })) {
+    if (!projectDir.isDirectory()) continue;
+
+    const transcriptsDir = path.join(rootDir, projectDir.name, "agent-transcripts");
+    if (!existsSync(transcriptsDir)) continue;
+
+    for (const sessionDir of readdirSync(transcriptsDir, { withFileTypes: true })) {
+      if (!sessionDir.isDirectory()) continue;
+
+      const sessionId = sessionDir.name;
+      const transcriptPath = path.join(transcriptsDir, sessionId, `${sessionId}.jsonl`);
+      if (!existsSync(transcriptPath)) continue;
+
+      const projects = sessions.get(sessionId) ?? new Set<string>();
+      projects.add(projectDir.name);
+      sessions.set(sessionId, projects);
+    }
+  }
+
+  return sessions;
+}
+
+export function hasRecoverableCursorSession(
+  sessionId: string,
+  projectPath: string,
+  sessionIndex: Map<string, Set<string>> = readCursorSessionIndex()
+): boolean {
+  const projectKeys = sessionIndex.get(sessionId);
+  if (!projectKeys?.size) return false;
+
+  const expectedProjectKey = encodeCursorProjectPath(projectPath);
+  return projectKeys.has(expectedProjectKey) || projectKeys.size === 1;
 }
 
 // ---------------------------------------------------------------------------

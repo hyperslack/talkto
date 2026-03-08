@@ -23,7 +23,6 @@ export function MessageInput({ channelId }: MessageInputProps) {
   // Mention state
   const { data: agents } = useAgents();
   const { data: me } = useMe();
-  const agentStatuses = useAppStore((s) => s.agentStatuses);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionStart, setMentionStart] = useState(0);
@@ -60,13 +59,13 @@ export function MessageInput({ channelId }: MessageInputProps) {
           name: a.agent_name,
           label: a.agent_name,
           type: a.agent_type,
-          online: (agentStatuses.get(a.agent_name) ?? a.status) === "online",
+          online: true,
         });
       }
     }
 
     return list;
-  }, [agents, me, agentStatuses]);
+  }, [agents, me]);
 
   // Filter mentionables by the current query
   const filtered = useMemo(() => {

@@ -103,7 +103,7 @@ export function useMessages(channelId: string | null) {
 export function useAgents() {
   return useQuery({
     queryKey: queryKeys.agents,
-    queryFn: api.listAgents,
+    queryFn: () => api.listAgents(),
     staleTime: 10_000,
     refetchInterval: 30_000, // Poll for agent status changes
   });

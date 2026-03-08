@@ -10,6 +10,9 @@
  */
 
 import { describe, test, expect, beforeEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   buildClaudeQueryOptions,
   markSessionAlive,
@@ -17,6 +20,9 @@ import {
   isSessionAlive,
   isSessionBusy,
   extractTextFromResult,
+  getClaudeProjectsRoot,
+  readClaudeSessionIndex,
+  hasRecoverableClaudeSession,
 } from "../src/sdk/claude";
 import type {
   SDKResultSuccess,
@@ -180,6 +186,40 @@ describe("buildClaudeQueryOptions", () => {
     });
 
     expect(options.cwd).toBe("B:\\projects\\sides\\talkto");
+  });
+});
+
+describe("Claude on-disk session recovery", () => {
+  test("indexes project-bound Claude sessions from ~/.claude/projects", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "talkto-claude-"));
+    const projectDir = path.join(root, "B--projects-sides-talkto");
+    mkdirSync(projectDir, { recursive: true });
+    const sessionId = "d9cd9c45-b5f9-4b5e-b555-c933d5f2d204";
+    writeFileSync(
+      path.join(projectDir, `${sessionId}.jsonl`),
+      `${JSON.stringify({ sessionId, cwd: "B:\\projects\\sides\\talkto" })}\n{"type":"user"}\n`,
+      "utf8"
+    );
+
+    const index = readClaudeSessionIndex(root);
+    expect(index.get(sessionId)?.[0]?.cwd).toBe("B:\\projects\\sides\\talkto");
+    expect(hasRecoverableClaudeSession(sessionId, "B:\\projects\\sides\\talkto", index)).toBe(true);
+    expect(hasRecoverableClaudeSession(sessionId, "B:\\projects\\other", index)).toBe(false);
+  });
+
+  test("uses TALKTO_CLAUDE_PROJECTS_DIR override when present", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "talkto-claude-env-"));
+    const previous = process.env.TALKTO_CLAUDE_PROJECTS_DIR;
+    process.env.TALKTO_CLAUDE_PROJECTS_DIR = root;
+    try {
+      expect(getClaudeProjectsRoot()).toBe(root);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TALKTO_CLAUDE_PROJECTS_DIR;
+      } else {
+        process.env.TALKTO_CLAUDE_PROJECTS_DIR = previous;
+      }
+    }
   });
 });
 

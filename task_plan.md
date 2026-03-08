@@ -395,3 +395,66 @@ Status: pending
 
 Exit criteria:
 - Tests pass and the new lifecycle model is documented.
+
+---
+
+## Task Plan: Startup Session Reconciliation / Active-Agent Model (2026-03-08)
+
+## Goal
+Make TalkTo treat "active agents" as agents with persisted provider session credentials that can be validated cheaply at startup, regardless of whether an MCP client or terminal is currently connected. Remove stale DB rows automatically on load instead of showing large unreachable backlogs in the UI.
+
+## Current Phase
+Phase 1 - provider health primitives and startup path audit.
+
+## Phases
+
+### Phase 1: Define the active-agent invariant
+Status: in_progress
+- Confirm current startup behavior in server bootstrap and frontend app load.
+- Identify all provider-specific non-interactive health checks available without full prompt invocation.
+- Decide which cleanup happens at server start vs frontend load-triggered reconciliation.
+
+Exit criteria:
+- A precise active-agent model is documented and mapped to concrete code paths.
+
+### Phase 2: Implement provider-specific cheap verification
+Status: completed
+- OpenCode: use direct session health API.
+- Claude Code: verify persisted session metadata from local Claude session storage and project path.
+- Codex: verify persisted thread metadata from local Codex storage if available.
+- Cursor: verify resumable chat metadata through local state/CLI-safe inspection if available.
+
+Exit criteria:
+- TalkTo can cheaply classify persisted agent credentials as reachable or stale without sending a real prompt.
+
+### Phase 3: Reconcile startup state automatically
+Status: completed
+- Add a backend startup reconciliation pass and/or explicit API hook invoked on initial app load.
+- Remove unreachable non-system agents automatically instead of leaving them in the database.
+- Ensure logs clearly distinguish MCP session initialization from successful agent registration and startup reconciliation.
+
+Exit criteria:
+- Opening TalkTo cleans up stale rows automatically and the agent list reflects only valid stored identities.
+
+### Phase 4: Align frontend semantics
+Status: completed
+- Remove remaining UI dependence on online/offline terminal concepts.
+- Ensure "active" and mentionable agents are driven by verified persisted reachability only.
+- Hide or eliminate transitional unreachable sections once startup cleanup is in place.
+
+Exit criteria:
+- Frontend matches the new architecture and no longer surfaces the old stale-agent backlog after reconciliation.
+
+### Phase 5: Validate and document
+Status: completed
+- Run targeted tests and typecheck.
+- Update planning files with the final architecture.
+- Post the final operational model to TalkTo if feasible.
+
+Exit criteria:
+- Reconciliation behavior is validated and documented.
+
+Outcome:
+- Cheap verification is implemented for OpenCode, Claude, Codex, and Cursor.
+- Startup and app-load reconciliation now auto-delete unreachable non-system agents.
+- Frontend startup no longer renders the stale agent backlog before reconciliation completes.

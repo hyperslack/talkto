@@ -211,3 +211,31 @@
 2. Move subprocess verification to `register()`.
 3. Remove proactive subprocess liveness checks while keeping failure-time invalidation.
 4. Revalidate backend behavior and update operator-facing status semantics if needed.
+
+---
+
+## Session: 2026-03-08 - Startup session reconciliation / active-agent model
+
+### Status
+- Follow-up architecture pass started.
+- Planning files refreshed for a startup reconciliation refactor.
+- Provider health primitive audit underway.
+
+### Actions Completed
+1. Confirmed the remaining stale-agent problem is not just frontend rendering: TalkTo still lacks a startup reconciliation pass for persisted subprocess credentials.
+2. Verified that the frontend loads `/api/agents` immediately and therefore faithfully shows any stale rows left in the database.
+3. Confirmed OpenCode already has a cheap session health API, while Claude/Codex/Cursor wrappers currently do not.
+4. Reframed the product model around "active = persisted credentials that pass cheap provider verification", not "active terminal" or "open MCP connection".
+
+### Next Actions
+1. Probe local Claude/Codex/Cursor storage and CLI surfaces for non-interactive session verification options.
+2. Implement a reconciliation pass that runs automatically at startup and/or first app load.
+3. Auto-delete stale non-system agent rows and align the frontend to the new active-agent model.
+
+### Completed
+1. Added cheap provider-backed verification helpers for Claude, Codex, and Cursor using local session/transcript metadata instead of real prompts.
+2. Added a backend reconciliation pass and wired it into startup bootstrapping.
+3. Added app-load reconciliation before the workspace renders, so stale agent rows are removed before the UI fetches its steady-state agent list.
+4. Added `GET /api/agents?reconcile=1` and upgraded bulk cleanup to use the same provider-backed reconcile path.
+5. Updated the DM header to derive agent reachability from `is_invocable` instead of transient websocket status noise.
+6. Validated the new behavior with targeted server tests and a clean `bun run typecheck`.
