@@ -10,6 +10,7 @@ import { ChannelCreateSchema, ChannelTopicSchema } from "../types";
 import type { AppBindings, ChannelResponse } from "../types";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
+import { getChannelLinks } from "../services/channel-links";
 
 const app = new Hono<AppBindings>();
 
@@ -349,6 +350,22 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// ---------------------------------------------------------------------------
+// GET /channels/:channelId/links — list all URLs shared in a channel
+// ---------------------------------------------------------------------------
+
+app.get("/:channelId/links", (c) => {
+  const auth = c.get("auth");
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  const links = getChannelLinks(channel.id, limit);
+  return c.json({ channel_id: channel.id, links, count: links.length });
 });
 
 export default app;
