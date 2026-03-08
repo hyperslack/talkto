@@ -16,7 +16,7 @@ import type { AppBindings } from "./types/index";
 import { config, BASE_DIR } from "./lib/config";
 import { getDb, closeDb, DEFAULT_WORKSPACE_ID } from "./db";
 import { agents, messages, channels, users } from "./db/schema";
-import { eq, like, desc, sql, and } from "drizzle-orm";
+import { eq, like, desc, sql, and, gte, lte } from "drizzle-orm";
 import { seedDefaults } from "./db/seed";
 import {
   acceptClient,
@@ -111,6 +111,8 @@ app.get("/api/search", (c) => {
   }
   const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 50);
   const channelFilter = c.req.query("channel"); // optional channel name filter
+  const afterFilter = c.req.query("after"); // optional ISO date lower bound
+  const beforeFilter = c.req.query("before"); // optional ISO date upper bound
 
   const db = getDb();
 
@@ -124,6 +126,12 @@ app.get("/api/search", (c) => {
   ];
   if (channelFilter) {
     conditions.push(eq(channels.name, channelFilter));
+  }
+  if (afterFilter) {
+    conditions.push(gte(messages.createdAt, afterFilter));
+  }
+  if (beforeFilter) {
+    conditions.push(lte(messages.createdAt, beforeFilter));
   }
 
   const baseQuery = db
