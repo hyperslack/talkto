@@ -90,6 +90,14 @@ app.get("/", async (c) => {
   return c.json(responses);
 });
 
+// GET /agents/uptime — uptime stats for all agents
+import { getAllAgentUptime, getAgentUptime } from "../services/agent-uptime";
+
+app.get("/uptime", (c) => {
+  const auth = c.get("auth");
+  return c.json(getAllAgentUptime(auth.workspaceId));
+});
+
 // GET /agents/health — aggregated health summary
 app.get("/health", (c) => {
   const auth = c.get("auth");
@@ -188,6 +196,24 @@ app.get("/:agentName/stats", (c) => {
     current_session_started: activeSession?.startedAt ?? null,
     last_heartbeat: activeSession?.lastHeartbeat ?? null,
   });
+});
+
+// GET /agents/:agentName/uptime — uptime for a specific agent
+app.get("/:agentName/uptime", (c) => {
+  const auth = c.get("auth");
+  const agentName = c.req.param("agentName");
+  const db = getDb();
+
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, agentName), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+
+  if (!agent) return c.json({ detail: "Agent not found" }, 404);
+
+  const uptime = getAgentUptime(agent.id);
+  return c.json(uptime);
 });
 
 // POST /agents/cleanup-unavailable — bulk-remove unreachable agents in this workspace
