@@ -250,6 +250,23 @@ app.post("/", async (c) => {
     }
   }
 
+  // Process slash commands
+  const { parseSlashCommand } = await import("../services/slash-commands");
+  const slashResult = parseSlashCommand(parsed.data.content, human.displayName ?? human.name);
+  if (slashResult) {
+    if (!slashResult.recognized) {
+      return c.json({ detail: slashResult.error ?? "Unknown command" }, 400);
+    }
+    if (slashResult.error) {
+      return c.json({ detail: slashResult.error }, 400);
+    }
+    if (slashResult.content === null) {
+      return c.json({ detail: "Command produced no output" }, 400);
+    }
+    // Replace content with transformed version
+    parsed.data.content = slashResult.content;
+  }
+
   const msgId = crypto.randomUUID();
   const now = new Date().toISOString();
   const mentionsJson = parsed.data.mentions
