@@ -123,12 +123,36 @@ app.get("/", (c) => {
     .all();
   const messageCountMap = new Map(messageCountRows.map((row) => [row.channelId, row.messageCount]));
 
+  // Fetch last message preview per channel (sender + truncated content)
+  const lastMessageMap = new Map<string, { sender_name: string; content: string; sent_at: string }>();
+  if (result.length > 0) {
+    const lastMsgRows = db.all(sql`
+      SELECT m.channel_id, m.content, m.created_at, u.name AS sender_name
+      FROM messages m
+      INNER JOIN (
+        SELECT channel_id, MAX(created_at) AS max_ts
+        FROM messages
+        GROUP BY channel_id
+      ) latest ON m.channel_id = latest.channel_id AND m.created_at = latest.max_ts
+      INNER JOIN users u ON m.sender_id = u.id
+    `) as Array<{ channel_id: string; content: string; created_at: string; sender_name: string }>;
+
+    for (const row of lastMsgRows) {
+      lastMessageMap.set(row.channel_id, {
+        sender_name: row.sender_name,
+        content: row.content.length > 100 ? row.content.slice(0, 100) + "…" : row.content,
+        sent_at: row.created_at,
+      });
+    }
+  }
+
   return c.json(
     result.map((channel) => ({
       ...channelToResponse(channel, { pinned_count: pinnedCounts.get(channel.id) ?? 0 }),
       last_active_at: lastActiveMap.get(channel.id) ?? null,
       member_count: memberCountMap.get(channel.id) ?? 0,
       message_count: messageCountMap.get(channel.id) ?? 0,
+      last_message: lastMessageMap.get(channel.id) ?? null,
     }))
   );
 });
