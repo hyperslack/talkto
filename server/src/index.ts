@@ -170,6 +170,18 @@ app.get("/api/search", (c) => {
     conditions.push(eq(channels.name, channelFilter));
   }
 
+  // Optional sender filter (by username)
+  const senderFilter = c.req.query("from");
+  if (senderFilter) {
+    conditions.push(eq(users.name, senderFilter));
+  }
+
+  // Optional sender type filter (human or agent)
+  const typeFilter = c.req.query("type");
+  if (typeFilter && (typeFilter === "human" || typeFilter === "agent")) {
+    conditions.push(eq(users.type, typeFilter));
+  }
+
   const baseQuery = db
     .select({
       id: messages.id,
