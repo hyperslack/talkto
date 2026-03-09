@@ -1,0 +1,25 @@
+name: Protect Main Branch Merges
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  verify-merger:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check merger identity
+        run: |
+          MERGER="${{ github.event.pull_request.merged_by.login }}"
+          ALLOWED="yashkhare0"
+          
+          if [ "$MERGER" != "$ALLOWED" ]; then
+            echo "❌ ERROR: Only @$ALLOWED can merge to main."
+            echo "   Merged by: @$MERGER"
+            echo "   This merge should not have happened."
+            exit 1
+          fi
+          
+          echo "✅ Merge by @$MERGER is authorized."
