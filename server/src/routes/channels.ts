@@ -631,6 +631,36 @@ app.get("/:channelId/top-senders", (c) => {
   );
 });
 
+// GET /channels/:channelId/active-hours — hourly message distribution for a channel
+app.get("/:channelId/active-hours", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const rows = db.all(sql`
+    SELECT cast(strftime('%H', created_at) as integer) AS hour, COUNT(*) AS count
+    FROM messages
+    WHERE channel_id = ${channelId}
+    GROUP BY cast(strftime('%H', created_at) as integer)
+    ORDER BY cast(strftime('%H', created_at) as integer)
+  `) as Array<{ hour: number; count: number }>;
+
+  const hourMap = new Map(rows.map((r) => [r.hour, r.count]));
+  const hours = Array.from({ length: 24 }, (_, h) => ({
+    hour: h,
+    message_count: hourMap.get(h) ?? 0,
+  }));
+
+  const peakHour = rows.length > 0
+    ? rows.reduce((max, r) => r.count > max.count ? r : max, rows[0]).hour
+    : null;
+
+  return c.json({ channel_id: channelId, hours, peak_hour: peakHour });
+});
+
 // POST /channels/:channelId/archive
 app.post("/:channelId/archive", (c) => {
   const auth = c.get("auth");
