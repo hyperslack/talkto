@@ -143,6 +143,39 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+// Hourly message activity — returns message counts grouped by hour (0-23)
+app.get("/api/activity/hourly", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const days = Math.min(parseInt(c.req.query("days") ?? "30", 10) || 30, 365);
+
+  const rows = db
+    .select({
+      hour: sql<number>`cast(strftime('%H', ${messages.createdAt}) as integer)`.as("hour"),
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`date(${messages.createdAt}) >= date('now', '-' || ${days} || ' days')`
+      )
+    )
+    .groupBy(sql`cast(strftime('%H', ${messages.createdAt}) as integer)`)
+    .orderBy(sql`cast(strftime('%H', ${messages.createdAt}) as integer)`)
+    .all();
+
+  // Fill in missing hours with 0
+  const hourMap = new Map(rows.map((r) => [r.hour, r.count]));
+  const activity = Array.from({ length: 24 }, (_, h) => ({
+    hour: h,
+    message_count: hourMap.get(h) ?? 0,
+  }));
+
+  return c.json({ days, activity });
+});
+
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
