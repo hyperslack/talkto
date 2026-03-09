@@ -143,6 +143,38 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+// Activity by sender type — message counts split by human vs agent
+app.get("/api/activity/by-sender-type", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const days = Math.min(parseInt(c.req.query("days") ?? "30", 10) || 30, 365);
+
+  const rows = db.all(sql`
+    SELECT u.type AS sender_type, COUNT(*) AS count
+    FROM messages m
+    INNER JOIN channels c ON m.channel_id = c.id
+    INNER JOIN users u ON m.sender_id = u.id
+    WHERE c.workspace_id = ${auth.workspaceId}
+      AND date(m.created_at) >= date('now', '-' || ${days} || ' days')
+    GROUP BY u.type
+  `) as Array<{ sender_type: string; count: number }>;
+
+  const result: Record<string, number> = { human: 0, agent: 0 };
+  for (const row of rows) {
+    result[row.sender_type] = row.count;
+  }
+
+  return c.json({
+    days,
+    human_messages: result.human,
+    agent_messages: result.agent,
+    total: result.human + result.agent,
+    agent_ratio: result.human + result.agent > 0
+      ? Math.round((result.agent / (result.human + result.agent)) * 100) / 100
+      : 0,
+  });
+});
+
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
