@@ -16,6 +16,7 @@ import {
   Search,
   X,
   Loader2,
+  Users,
 } from "lucide-react";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -149,6 +150,24 @@ export function WorkspaceHeader({
                   <span className="hidden sm:inline truncate text-xs text-muted-foreground/50 max-w-[300px]">
                     {channel.topic}
                   </span>
+                )}
+                {/* Online member count */}
+                {agents && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-muted-foreground/40">
+                        <Users className="h-3 w-3" />
+                        <span className="text-talkto-online font-medium">
+                          {agents.filter((a) => !a.is_ghost && (agentStatuses.get(a.agent_name) ?? a.status) === "online").length + 1}
+                        </span>
+                        <span>/</span>
+                        <span>{agents.filter((a) => !a.is_ghost).length + 1}</span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <p>Online / total members</p>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 {!channel.topic && channel.type === "project" && channel.project_path && (
                   <Badge variant="outline" className="hidden sm:inline-flex h-5 max-w-[300px] truncate text-[10px] font-mono font-normal text-muted-foreground/50">
