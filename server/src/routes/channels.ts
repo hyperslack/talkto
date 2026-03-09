@@ -437,6 +437,43 @@ app.get("/categories/list", (c) => {
   return c.json({ categories });
 });
 
+// ---------------------------------------------------------------------------
+// Starred channels
+// ---------------------------------------------------------------------------
+
+import { starChannel, unstarChannel, listStarredChannels } from "../services/starred-channels";
+
+// GET /channels/starred — list starred channels for current user
+app.get("/starred", (c) => {
+  const auth = c.get("auth");
+  const starred = listStarredChannels(auth.userId);
+  return c.json(starred);
+});
+
+// POST /channels/:channelId/star — star a channel
+app.post("/:channelId/star", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  starChannel(auth.userId, channelId);
+  return c.json({ channel_id: channelId, starred: true });
+});
+
+// DELETE /channels/:channelId/star — unstar a channel
+app.delete("/:channelId/star", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  unstarChannel(auth.userId, channelId);
+  return c.json({ channel_id: channelId, starred: false });
+});
+
 // GET /channels/:channelId
 app.get("/:channelId", (c) => {
   const auth = c.get("auth");
