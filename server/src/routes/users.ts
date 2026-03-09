@@ -465,4 +465,30 @@ app.patch("/me/preferences", async (c) => {
   });
 });
 
+// GET /users/me/reactions — list all reactions given by current user
+app.get("/me/reactions", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+
+  const rows = db.all(sql`
+    SELECT mr.message_id, mr.emoji, mr.created_at, m.content, m.channel_id, u.name AS message_sender
+    FROM message_reactions mr
+    INNER JOIN messages m ON mr.message_id = m.id
+    INNER JOIN users u ON m.sender_id = u.id
+    WHERE mr.user_id = ${auth.userId}
+    ORDER BY mr.created_at DESC
+    LIMIT ${limit}
+  `) as Array<{
+    message_id: string;
+    emoji: string;
+    created_at: string;
+    content: string;
+    channel_id: string;
+    message_sender: string;
+  }>;
+
+  return c.json(rows);
+});
+
 export default app;
