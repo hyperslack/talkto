@@ -143,6 +143,72 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+// Workspace summary — combined dashboard stats
+app.get("/api/workspace/summary", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  // Total channels (non-archived)
+  const channelCount = (db.all(sql`
+    SELECT COUNT(*) AS count FROM channels
+    WHERE workspace_id = ${auth.workspaceId} AND is_archived = 0
+  `) as Array<{ count: number }>)[0]?.count ?? 0;
+
+  // Total members
+  const memberCount = (db.all(sql`
+    SELECT COUNT(*) AS count FROM workspace_members
+    WHERE workspace_id = ${auth.workspaceId}
+  `) as Array<{ count: number }>)[0]?.count ?? 0;
+
+  // Total messages (last 30 days)
+  const recentMessages = (db.all(sql`
+    SELECT COUNT(*) AS count FROM messages m
+    INNER JOIN channels c ON m.channel_id = c.id
+    WHERE c.workspace_id = ${auth.workspaceId}
+      AND date(m.created_at) >= date('now', '-30 days')
+  `) as Array<{ count: number }>)[0]?.count ?? 0;
+
+  // Total messages (all time)
+  const totalMessages = (db.all(sql`
+    SELECT COUNT(*) AS count FROM messages m
+    INNER JOIN channels c ON m.channel_id = c.id
+    WHERE c.workspace_id = ${auth.workspaceId}
+  `) as Array<{ count: number }>)[0]?.count ?? 0;
+
+  // Online agents
+  const onlineAgents = (db.all(sql`
+    SELECT COUNT(*) AS count FROM agents
+    WHERE workspace_id = ${auth.workspaceId} AND status = 'online'
+  `) as Array<{ count: number }>)[0]?.count ?? 0;
+
+  // Total agents
+  const totalAgents = (db.all(sql`
+    SELECT COUNT(*) AS count FROM agents
+    WHERE workspace_id = ${auth.workspaceId}
+  `) as Array<{ count: number }>)[0]?.count ?? 0;
+
+  // Most active channel (last 7 days)
+  const mostActive = db.all(sql`
+    SELECT c.name, COUNT(*) AS count FROM messages m
+    INNER JOIN channels c ON m.channel_id = c.id
+    WHERE c.workspace_id = ${auth.workspaceId}
+      AND date(m.created_at) >= date('now', '-7 days')
+    GROUP BY c.name ORDER BY count DESC LIMIT 1
+  `) as Array<{ name: string; count: number }>;
+
+  return c.json({
+    channels: channelCount,
+    members: memberCount,
+    messages_last_30d: recentMessages,
+    messages_total: totalMessages,
+    agents_online: onlineAgents,
+    agents_total: totalAgents,
+    most_active_channel: mostActive.length > 0
+      ? { name: mostActive[0].name, messages_7d: mostActive[0].count }
+      : null,
+  });
+});
+
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
