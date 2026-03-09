@@ -193,6 +193,13 @@ app.get("/api/search", (c) => {
     .limit(limit)
     .all();
 
+  // Build highlighted version of content with <mark> tags
+  const highlightContent = (content: string, q: string): string => {
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`(${escaped})`, "gi");
+    return content.replace(regex, "<mark>$1</mark>");
+  };
+
   const results = rows.map((row: Record<string, unknown>) => ({
     id: row.id,
     channel_id: row.channelId,
@@ -201,6 +208,7 @@ app.get("/api/search", (c) => {
     sender_name: row.senderName,
     sender_type: row.senderType,
     content: row.content,
+    content_highlighted: highlightContent(row.content as string, query),
     mentions: row.mentions ? JSON.parse(row.mentions as string) : null,
     parent_id: row.parentId,
     created_at: row.createdAt,
