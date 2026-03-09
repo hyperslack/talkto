@@ -146,6 +146,12 @@ app.get("/api/activity/daily", (c) => {
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
+// Slash commands — list available commands
+import { listSlashCommands } from "./services/slash-commands";
+app.get("/api/slash-commands", (c) => {
+  return c.json(listSlashCommands());
+});
+
 // Search messages across all channels
 app.get("/api/search", (c) => {
   const auth = c.get("auth");
