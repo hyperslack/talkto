@@ -745,4 +745,48 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// ── Export channel messages as JSON ────────────────────
+
+app.get("/:channelId/export", (c) => {
+  const auth = c.get("auth");
+  const workspaceId = auth.workspaceId;
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.id, channelId), eq(channels.workspaceId, workspaceId)))
+    .get();
+
+  if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+  const limitParam = Number(c.req.query("limit")) || 10000;
+  const limit = Math.min(Math.max(limitParam, 1), 50000);
+
+  const rows = db
+    .select({
+      id: messages.id,
+      sender_name: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      sender_type: users.type,
+      content: messages.content,
+      created_at: messages.createdAt,
+      parent_id: messages.parentId,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .orderBy(asc(messages.createdAt))
+    .limit(limit)
+    .all();
+
+  return c.json({
+    channel_id: channelId,
+    channel_name: channel.name,
+    exported_at: new Date().toISOString(),
+    message_count: rows.length,
+    messages: rows,
+  });
+});
+
 export default app;
