@@ -115,6 +115,42 @@ app.route("/api/webhooks", webhooksRoutes);
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
 
+// Search suggestion endpoints
+import {
+  recordSearch,
+  getRecentSearches,
+  getPopularSearches,
+  clearSearchHistory,
+} from "./services/search-suggestions";
+
+app.post("/api/search/record", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  if (!body.query || typeof body.query !== "string" || body.query.trim().length === 0) {
+    return c.json({ error: "Query is required" }, 400);
+  }
+  recordSearch(auth.userId ?? "human", auth.workspaceId, body.query.trim());
+  return c.json({ ok: true });
+});
+
+app.get("/api/search/suggestions/recent", (c) => {
+  const auth = c.get("auth");
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "10", 10) || 10, 50);
+  return c.json(getRecentSearches(auth.userId ?? "human", auth.workspaceId, limit));
+});
+
+app.get("/api/search/suggestions/popular", (c) => {
+  const auth = c.get("auth");
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "10", 10) || 10, 50);
+  return c.json(getPopularSearches(auth.workspaceId, limit));
+});
+
+app.delete("/api/search/history", (c) => {
+  const auth = c.get("auth");
+  const cleared = clearSearchHistory(auth.userId ?? "human", auth.workspaceId);
+  return c.json({ cleared });
+});
+
 // Daily message activity — returns message counts grouped by date
 app.get("/api/activity/daily", (c) => {
   const auth = c.get("auth");
