@@ -13,6 +13,10 @@ import {
   deleteAgentFromWorkspace,
   updateAgentAdminProfile,
 } from "../services/admin-manager";
+import {
+  getConversationStarters,
+  setConversationStarters,
+} from "../services/conversation-starters";
 import { reconcileWorkspaceAgents } from "../services/agent-reconciler";
 
 const app = new Hono<AppBindings>();
@@ -334,6 +338,48 @@ app.post("/:agentName/dm", (c) => {
     created_at: channel.createdAt,
   };
   return c.json(resp);
+});
+
+// GET /agents/:agentName/conversation-starters
+app.get("/:agentName/conversation-starters", (c) => {
+  const agentName = c.req.param("agentName");
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, agentName), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) return c.json({ error: "Agent not found" }, 404);
+
+  return c.json(getConversationStarters(agent.id));
+});
+
+// PUT /agents/:agentName/conversation-starters
+app.put("/:agentName/conversation-starters", async (c) => {
+  const agentName = c.req.param("agentName");
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, agentName), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) return c.json({ error: "Agent not found" }, 404);
+
+  const body = await c.req.json();
+  if (!Array.isArray(body.starters)) {
+    return c.json({ error: "Expected { starters: [...] }" }, 400);
+  }
+
+  try {
+    const result = setConversationStarters(agent.id, body.starters);
+    return c.json(result);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 400);
+  }
 });
 
 export default app;
