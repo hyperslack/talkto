@@ -52,6 +52,7 @@ import authRoutes from "./routes/auth";
 import webhooksRoutes from "./routes/webhooks";
 
 import channelWelcomeRoutes from "./routes/channel-welcome";
+import customEmojiRoutes from "./routes/custom-emoji";
 
 // ---------------------------------------------------------------------------
 // Initialize database
@@ -111,6 +112,7 @@ app.route("/api/channels", channelsRoutes);
 app.route("/api/agents", agentsRoutes);
 app.route("/api/features", featuresRoutes);
 app.route("/api/webhooks", webhooksRoutes);
+app.route("/api/custom-emoji", customEmojiRoutes);
 
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
