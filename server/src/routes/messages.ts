@@ -22,6 +22,11 @@ import type {
   MessageResponse,
 } from "../types";
 import { and } from "drizzle-orm";
+import {
+  subscribeToThread,
+  unsubscribeFromThread,
+  getThreadSubscribers,
+} from "../services/thread-subscriptions";
 
 const app = new Hono<AppBindings>();
 
@@ -959,6 +964,31 @@ app.post("/:messageId/forward", async (c) => {
     content: forwardedContent,
     created_at: now,
   }, 201);
+});
+
+// POST /:messageId/subscribe — subscribe to thread
+app.post("/:messageId/subscribe", (c) => {
+  const auth = c.get("auth");
+  const messageId = c.req.param("messageId");
+  const userId = auth.userId ?? "human";
+  const subscribed = subscribeToThread(userId, messageId);
+  return c.json({ subscribed });
+});
+
+// DELETE /:messageId/subscribe — unsubscribe from thread
+app.delete("/:messageId/subscribe", (c) => {
+  const auth = c.get("auth");
+  const messageId = c.req.param("messageId");
+  const userId = auth.userId ?? "human";
+  const unsubscribed = unsubscribeFromThread(userId, messageId);
+  return c.json({ unsubscribed });
+});
+
+// GET /:messageId/subscribers — list thread subscribers
+app.get("/:messageId/subscribers", (c) => {
+  const messageId = c.req.param("messageId");
+  const subscribers = getThreadSubscribers(messageId);
+  return c.json(subscribers);
 });
 
 export default app;
