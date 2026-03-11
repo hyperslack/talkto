@@ -745,4 +745,54 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// Channel invite endpoints
+import {
+  createChannelInvite,
+  getChannelInvites,
+  useChannelInvite,
+  revokeChannelInvite,
+} from "../services/channel-invites";
+
+// POST /:channelId/invites — create an invite
+app.post("/:channelId/invites", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+  const body = await c.req.json().catch(() => ({}));
+  const invite = createChannelInvite(channelId, auth.userId ?? "human", {
+    maxUses: body.max_uses,
+    expiresInHours: body.expires_in_hours,
+  });
+  return c.json(invite, 201);
+});
+
+// GET /:channelId/invites — list invites
+app.get("/:channelId/invites", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ error: "Channel not found" }, 404);
+  return c.json(getChannelInvites(channelId));
+});
+
+// DELETE /:channelId/invites/:inviteId — revoke invite
+app.delete("/:channelId/invites/:inviteId", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const inviteId = c.req.param("inviteId");
+  const revoked = revokeChannelInvite(inviteId, channelId);
+  if (!revoked) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
+// POST /join-invite/:token — use a channel invite
+app.post("/join-invite/:token", (c) => {
+  const token = c.req.param("token");
+  const channelId = useChannelInvite(token);
+  if (!channelId) return c.json({ error: "Invalid or expired invite" }, 404);
+  return c.json({ channel_id: channelId, joined: true });
+});
+
 export default app;
