@@ -115,6 +115,14 @@ app.route("/api/webhooks", webhooksRoutes);
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
 
+// Member directory
+import { getMemberDirectory } from "./services/member-directory";
+
+app.get("/api/members/directory", (c) => {
+  const auth = c.get("auth");
+  return c.json(getMemberDirectory(auth.workspaceId));
+});
+
 // Daily message activity — returns message counts grouped by date
 app.get("/api/activity/daily", (c) => {
   const auth = c.get("auth");
