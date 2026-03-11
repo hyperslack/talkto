@@ -115,6 +115,48 @@ app.route("/api/webhooks", webhooksRoutes);
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
 
+// Message attachment endpoints
+import {
+  addAttachment,
+  getMessageAttachments,
+  getChannelAttachments,
+  deleteAttachment,
+} from "./services/message-attachments";
+
+app.post("/api/channels/:channelId/messages/:messageId/attachments", async (c) => {
+  const body = await c.req.json();
+  if (!body.filename || !body.url) {
+    return c.json({ error: "filename and url are required" }, 400);
+  }
+  try {
+    const attachment = addAttachment(
+      c.req.param("messageId"),
+      body.filename,
+      body.url,
+      body.mime_type,
+      body.size_bytes
+    );
+    return c.json(attachment, 201);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 400);
+  }
+});
+
+app.get("/api/channels/:channelId/messages/:messageId/attachments", (c) => {
+  return c.json(getMessageAttachments(c.req.param("messageId")));
+});
+
+app.get("/api/channels/:channelId/attachments", (c) => {
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  return c.json(getChannelAttachments(c.req.param("channelId"), limit));
+});
+
+app.delete("/api/channels/:channelId/messages/:messageId/attachments/:attachmentId", (c) => {
+  const deleted = deleteAttachment(c.req.param("attachmentId"));
+  if (!deleted) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
 // Daily message activity — returns message counts grouped by date
 app.get("/api/activity/daily", (c) => {
   const auth = c.get("auth");
