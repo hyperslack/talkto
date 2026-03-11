@@ -745,4 +745,32 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// GET /:channelId/privacy — get channel privacy status
+app.get("/:channelId/privacy", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+  const { isChannelPrivate } = require("../services/private-channels");
+  return c.json({ channel_id: channelId, is_private: isChannelPrivate(channelId) });
+});
+
+// PATCH /:channelId/privacy — set channel privacy
+app.patch("/:channelId/privacy", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+  const body = await c.req.json();
+  if (typeof body.is_private !== "boolean") {
+    return c.json({ error: "Expected { is_private: boolean }" }, 400);
+  }
+
+  const { setChannelPrivacy } = require("../services/private-channels");
+  setChannelPrivacy(channelId, body.is_private);
+  return c.json({ channel_id: channelId, is_private: body.is_private });
+});
+
 export default app;
