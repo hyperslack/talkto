@@ -382,6 +382,66 @@ app.get("/pinned", (c) => {
   return c.json(result);
 });
 
+// GET /code-snippets — extract code blocks from channel messages
+app.get("/code-snippets", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  const language = c.req.query("language") ?? null;
+
+  const channel = db
+    .select()
+    .from(channels)
+    .where(and(eq(channels.id, channelId), eq(channels.workspaceId, auth.workspaceId)))
+    .get();
+  if (!channel) return c.json({ error: "Channel not found" }, 404);
+
+  const rows = db
+    .select({
+      id: messages.id,
+      content: messages.content,
+      senderId: messages.senderId,
+      createdAt: messages.createdAt,
+      senderName: users.name,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .orderBy(desc(messages.createdAt))
+    .limit(limit * 3)
+    .all();
+
+  const FENCED_RE = /```(\w+)?\n?([\s\S]*?)```/g;
+  const snippets: Array<{
+    message_id: string;
+    sender_name: string;
+    language: string | null;
+    code: string;
+    created_at: string;
+  }> = [];
+
+  for (const row of rows) {
+    let match: RegExpExecArray | null;
+    FENCED_RE.lastIndex = 0;
+    while ((match = FENCED_RE.exec(row.content)) !== null) {
+      const lang = match[1] ?? null;
+      if (language && lang !== language) continue;
+      snippets.push({
+        message_id: row.id,
+        sender_name: row.senderName,
+        language: lang,
+        code: match[2].trimEnd(),
+        created_at: row.createdAt,
+      });
+      if (snippets.length >= limit) break;
+    }
+    if (snippets.length >= limit) break;
+  }
+
+  return c.json(snippets);
+});
+
 // POST /channels/:channelId/messages
 app.post("/", async (c) => {
   const auth = c.get("auth");
