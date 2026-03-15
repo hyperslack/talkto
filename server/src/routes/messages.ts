@@ -868,6 +868,96 @@ app.get("/:messageId/reactions", (c) => {
   return c.json(result);
 });
 
+// GET /channels/:channelId/messages/:messageId/permalink — get a shareable link context
+app.get("/:messageId/permalink", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const contextSize = Math.min(parseInt(c.req.query("context") ?? "3", 10) || 3, 10);
+
+  // Get the target message
+  const target = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      parentId: messages.parentId,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.id, messageId))
+    .get();
+
+  if (!target || target.channelId !== channelId) {
+    return c.json({ detail: "Message not found" }, 404);
+  }
+
+  // Get surrounding messages for context
+  const before = db
+    .select({
+      id: messages.id,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), sql`${messages.createdAt} < ${target.createdAt}`))
+    .orderBy(desc(messages.createdAt))
+    .limit(contextSize)
+    .all()
+    .reverse();
+
+  const after = db
+    .select({
+      id: messages.id,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), sql`${messages.createdAt} > ${target.createdAt}`))
+    .orderBy(messages.createdAt)
+    .limit(contextSize)
+    .all();
+
+  return c.json({
+    message: {
+      id: target.id,
+      channel_id: target.channelId,
+      sender_name: target.senderName,
+      sender_type: target.senderType,
+      content: target.content,
+      parent_id: target.parentId,
+      created_at: target.createdAt,
+    },
+    channel_name: channel.name,
+    context_before: before.map((r) => ({
+      id: r.id,
+      sender_name: r.senderName,
+      content: r.content,
+      created_at: r.createdAt,
+    })),
+    context_after: after.map((r) => ({
+      id: r.id,
+      sender_name: r.senderName,
+      content: r.content,
+      created_at: r.createdAt,
+    })),
+    permalink: `/channels/${channelId}/messages/${messageId}`,
+  });
+});
+
 // POST /channels/:channelId/messages/:messageId/forward — forward message to another channel
 app.post("/:messageId/forward", async (c) => {
   const auth = c.get("auth");
