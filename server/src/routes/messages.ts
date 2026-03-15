@@ -708,6 +708,45 @@ app.delete("/:messageId", (c) => {
   return c.json({ deleted: true, id: messageId });
 });
 
+// POST /channels/:channelId/messages/bulk-delete — delete multiple messages at once (admin)
+app.post("/bulk-delete", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const body = await safeJsonBody(c);
+  if (body === null) return c.json({ detail: "Invalid JSON body" }, 400);
+
+  const parsed = z.object({
+    message_ids: z.array(z.string().min(1)).min(1).max(100),
+  }).safeParse(body);
+  if (!parsed.success) return c.json({ detail: parsed.error.message }, 400);
+
+  const db = getDb();
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const deleted: string[] = [];
+  const notFound: string[] = [];
+
+  for (const msgId of parsed.data.message_ids) {
+    const msg = db.select().from(messages).where(eq(messages.id, msgId)).get();
+    if (!msg || msg.channelId !== channelId) {
+      notFound.push(msgId);
+      continue;
+    }
+
+    db.delete(messages).where(eq(messages.id, msgId)).run();
+    cleanupChannelSessionAfterMessageDelete(msg.channelSessionId, msgId);
+    broadcastEvent(messageDeletedEvent({ messageId: msgId, channelId }), channel.workspaceId);
+    deleted.push(msgId);
+  }
+
+  return c.json({
+    deleted_count: deleted.length,
+    deleted,
+    not_found: notFound,
+  });
+});
+
 // GET /channels/:channelId/messages/:messageId/thread — get thread summary and replies
 app.get("/:messageId/thread", (c) => {
   const auth = c.get("auth");
