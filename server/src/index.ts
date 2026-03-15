@@ -52,6 +52,7 @@ import authRoutes from "./routes/auth";
 import webhooksRoutes from "./routes/webhooks";
 
 import channelWelcomeRoutes from "./routes/channel-welcome";
+import exportRoutes from "./routes/export";
 
 // ---------------------------------------------------------------------------
 // Initialize database
@@ -145,6 +146,7 @@ app.get("/api/activity/daily", (c) => {
 });
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
+app.route("/api/channels/:channelId/export", exportRoutes);
 
 // Search messages across all channels
 app.get("/api/search", (c) => {
