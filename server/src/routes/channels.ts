@@ -745,4 +745,72 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// POST /channels/:channelId/join — join a channel
+app.post("/:channelId/join", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  // Get current user
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  // Check if already a member
+  const existing = db
+    .select()
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, user.id)))
+    .get();
+  if (existing) return c.json({ detail: "Already a member" }, 409);
+
+  const now = new Date().toISOString();
+  db.insert(channelMembers)
+    .values({ channelId, userId: user.id, joinedAt: now })
+    .run();
+
+  return c.json({
+    channel_id: channelId,
+    user_id: user.id,
+    joined_at: now,
+  }, 201);
+});
+
+// POST /channels/:channelId/leave — leave a channel
+app.post("/:channelId/leave", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  // Prevent leaving #general
+  if (channel.name === "#general") {
+    return c.json({ detail: "Cannot leave #general" }, 400);
+  }
+
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  const membership = db
+    .select()
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, user.id)))
+    .get();
+  if (!membership) return c.json({ detail: "Not a member" }, 404);
+
+  db.delete(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, user.id)))
+    .run();
+
+  return c.json({ channel_id: channelId, user_id: user.id, left: true });
+});
+
 export default app;
