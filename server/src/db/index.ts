@@ -352,6 +352,7 @@ function createTables(sqlite: Database) {
   const migrations = [
     "ALTER TABLE feature_requests ADD COLUMN reason TEXT",
     "ALTER TABLE feature_requests ADD COLUMN updated_at TEXT",
+    "ALTER TABLE channels ADD COLUMN description TEXT",
   ];
   for (const stmt of migrations) {
     try { sqlite.exec(stmt); } catch { /* column already exists */ }
