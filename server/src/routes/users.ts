@@ -26,6 +26,7 @@ import {
   resolveChannelSessionForWrite,
 } from "../services/channel-sessions";
 import type { AppBindings, UserResponse } from "../types";
+import { updateLastSeen, getLastSeen, getPresenceStatus } from "../services/last-seen";
 
 const app = new Hono<AppBindings>();
 
@@ -347,6 +348,33 @@ app.patch("/me/avatar", async (c) => {
 
   const updated = db.select().from(users).where(eq(users.id, user.id)).get()!;
   return c.json(userToResponse(updated));
+});
+
+// POST /users/me/heartbeat — update last-seen timestamp
+app.post("/me/heartbeat", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  updateLastSeen(user.id);
+  return c.json({ status: "ok", last_seen: getLastSeen(user.id) });
+});
+
+// GET /users/:userId/presence — get user presence status
+app.get("/:userId/presence", (c) => {
+  const userId = c.req.param("userId");
+  const db = getDb();
+  const user = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!user) return c.json({ detail: "User not found" }, 404);
+
+  return c.json({
+    user_id: userId,
+    status: getPresenceStatus(userId),
+    last_seen: getLastSeen(userId),
+  });
 });
 
 // DELETE /users/me
