@@ -7,8 +7,9 @@ import { eq, desc, lt, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelSessions, messages, users, messageReactions } from "../db/schema";
 import { z } from "zod";
-import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema } from "../types";
+import { MessageCreateSchema, MessageEditSchema, ReactionToggleSchema, BookmarkToggleSchema } from "../types";
 import { broadcastEvent, newMessageEvent, messageDeletedEvent, messageEditedEvent, reactionEvent } from "../services/broadcaster";
+import { messageBookmarks } from "../db/schema";
 import { invokeForMessage } from "../services/agent-invoker";
 import {
   attachRootMessageToSession,
@@ -959,6 +960,96 @@ app.post("/:messageId/forward", async (c) => {
     content: forwardedContent,
     created_at: now,
   }, 201);
+});
+
+// ---------------------------------------------------------------------------
+// Bookmarks
+// ---------------------------------------------------------------------------
+
+/** POST /:messageId/bookmark — toggle bookmark on a message */
+app.post("/:messageId/bookmark", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const msg = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!msg || msg.channelId !== channelId) {
+    return c.json({ detail: "Message not found" }, 404);
+  }
+
+  const existing = db
+    .select()
+    .from(messageBookmarks)
+    .where(and(eq(messageBookmarks.userId, auth.userId), eq(messageBookmarks.messageId, messageId)))
+    .get();
+
+  if (existing) {
+    db.delete(messageBookmarks)
+      .where(and(eq(messageBookmarks.userId, auth.userId), eq(messageBookmarks.messageId, messageId)))
+      .run();
+    return c.json({ bookmarked: false, message_id: messageId });
+  }
+
+  const body = await safeJsonBody(c);
+  const parsed = BookmarkToggleSchema.safeParse(body ?? {});
+  const note = parsed.success ? parsed.data.note ?? null : null;
+
+  db.insert(messageBookmarks).values({
+    userId: auth.userId,
+    messageId,
+    note,
+    createdAt: new Date().toISOString(),
+  }).run();
+
+  return c.json({ bookmarked: true, message_id: messageId, note }, 201);
+});
+
+/** GET /bookmarks — list all bookmarked messages for the current user in this channel */
+app.get("/bookmarks", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const rows = db
+    .select({
+      messageId: messageBookmarks.messageId,
+      note: messageBookmarks.note,
+      bookmarkedAt: messageBookmarks.createdAt,
+      content: messages.content,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      messageCreatedAt: messages.createdAt,
+    })
+    .from(messageBookmarks)
+    .innerJoin(messages, eq(messageBookmarks.messageId, messages.id))
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(
+      and(
+        eq(messageBookmarks.userId, auth.userId),
+        eq(messages.channelId, channelId),
+      )
+    )
+    .orderBy(desc(messageBookmarks.createdAt))
+    .all();
+
+  return c.json(
+    rows.map((r) => ({
+      message_id: r.messageId,
+      note: r.note,
+      bookmarked_at: r.bookmarkedAt,
+      content: r.content,
+      sender_id: r.senderId,
+      sender_name: r.senderName,
+      message_created_at: r.messageCreatedAt,
+    }))
+  );
 });
 
 export default app;

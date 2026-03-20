@@ -348,6 +348,18 @@ function createTables(sqlite: Database) {
     CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
   `);
 
+  // message_bookmarks table
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS message_bookmarks (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON message_bookmarks(user_id);
+  `);
+
   // Migrate existing databases: add new columns if missing
   const migrations = [
     "ALTER TABLE feature_requests ADD COLUMN reason TEXT",
