@@ -709,6 +709,72 @@ app.delete("/:messageId", (c) => {
 });
 
 // GET /channels/:channelId/messages/:messageId/thread — get thread summary and replies
+/** GET /threads — list all threads (messages with replies) in a channel */
+app.get("/threads", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 50);
+
+  // Find messages that have replies (are parents)
+  const threads = db
+    .select({
+      parentId: messages.parentId,
+      replyCount: sql<number>`count(*)`,
+      lastReplyAt: sql<string>`max(${messages.createdAt})`,
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.channelId, channelId),
+        sql`${messages.parentId} IS NOT NULL`
+      )
+    )
+    .groupBy(messages.parentId)
+    .orderBy(desc(sql`max(${messages.createdAt})`))
+    .limit(limit)
+    .all();
+
+  if (threads.length === 0) {
+    return c.json({ threads: [], count: 0 });
+  }
+
+  // Get parent messages
+  const parentIds = threads.map((t) => t.parentId!);
+  const parents = db
+    .select({
+      id: messages.id,
+      content: messages.content,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(sql`${messages.id} IN (${sql.join(parentIds.map((id) => sql`${id}`), sql`, `)})`)
+    .all();
+
+  const parentMap = new Map(parents.map((p) => [p.id, p]));
+
+  const result = threads.map((t) => {
+    const parent = parentMap.get(t.parentId!);
+    return {
+      parent_id: t.parentId,
+      parent_content: parent?.content ?? null,
+      parent_sender_name: parent?.senderName ?? null,
+      parent_created_at: parent?.createdAt ?? null,
+      reply_count: t.replyCount,
+      last_reply_at: t.lastReplyAt,
+    };
+  });
+
+  return c.json({ threads: result, count: result.length });
+});
+
 app.get("/:messageId/thread", (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
