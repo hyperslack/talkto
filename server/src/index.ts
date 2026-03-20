@@ -143,6 +143,73 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+/** GET /api/stats — workspace overview statistics */
+app.get("/api/stats", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const totalMessages = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .get()!.count;
+
+  const totalChannels = db
+    .select({ count: sql<number>`count(*)` })
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .get()!.count;
+
+  const totalUsers = db
+    .select({ count: sql<number>`count(distinct ${users.id})` })
+    .from(users)
+    .innerJoin(messages, eq(messages.senderId, users.id))
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .get()!.count;
+
+  const mostActiveChannel = db
+    .select({
+      channelId: channels.id,
+      channelName: channels.name,
+      messageCount: sql<number>`count(*)`,
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .groupBy(channels.id)
+    .orderBy(desc(sql`count(*)`))
+    .limit(1)
+    .get();
+
+  const messagesLast24h = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`${messages.createdAt} >= datetime('now', '-1 day')`
+      )
+    )
+    .get()!.count;
+
+  return c.json({
+    total_messages: totalMessages,
+    total_channels: totalChannels,
+    active_users: totalUsers,
+    messages_last_24h: messagesLast24h,
+    most_active_channel: mostActiveChannel
+      ? {
+          id: mostActiveChannel.channelId,
+          name: mostActiveChannel.channelName,
+          message_count: mostActiveChannel.messageCount,
+        }
+      : null,
+  });
+});
+
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
