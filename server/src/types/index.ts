@@ -65,11 +65,17 @@ export const ChannelTopicSchema = z.object({
 });
 export type ChannelTopic = z.infer<typeof ChannelTopicSchema>;
 
+export const ChannelDescriptionSchema = z.object({
+  description: z.string().max(2000),
+});
+export type ChannelDescription = z.infer<typeof ChannelDescriptionSchema>;
+
 export interface ChannelResponse {
   id: string;
   name: string;
   type: string;
   topic?: string | null;
+  description?: string | null;
   position?: number;
   category?: string | null;
   slow_mode_seconds?: number;
