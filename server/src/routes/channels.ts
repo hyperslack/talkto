@@ -745,4 +745,57 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// ---------------------------------------------------------------------------
+// Channel join/leave
+// ---------------------------------------------------------------------------
+
+/** POST /:channelId/join — join a channel */
+app.post("/:channelId/join", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const existing = db
+    .select()
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, auth.userId)))
+    .get();
+
+  if (existing) {
+    return c.json({ detail: "Already a member" }, 409);
+  }
+
+  db.insert(channelMembers).values({
+    channelId,
+    userId: auth.userId,
+    joinedAt: new Date().toISOString(),
+  }).run();
+
+  return c.json({ channel_id: channelId, user_id: auth.userId, joined: true }, 201);
+});
+
+/** POST /:channelId/leave — leave a channel */
+app.post("/:channelId/leave", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const result = db
+    .delete(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, auth.userId)))
+    .run();
+
+  if (result.changes === 0) {
+    return c.json({ detail: "Not a member" }, 404);
+  }
+
+  return c.json({ channel_id: channelId, user_id: auth.userId, left: true });
+});
+
 export default app;
