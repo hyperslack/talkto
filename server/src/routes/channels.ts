@@ -8,6 +8,7 @@ import { getDb } from "../db";
 import {
   agents,
   channelMembers,
+  channelMutes,
   channels,
   messages,
   readReceipts,
@@ -743,6 +744,103 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// ---------------------------------------------------------------------------
+// Channel mute
+// ---------------------------------------------------------------------------
+
+/** POST /:channelId/mute — mute a channel for the current user */
+app.post("/:channelId/mute", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const existing = db
+    .select()
+    .from(channelMutes)
+    .where(and(eq(channelMutes.userId, auth.userId), eq(channelMutes.channelId, channelId)))
+    .get();
+
+  if (existing) {
+    return c.json({ detail: "Channel already muted" }, 409);
+  }
+
+  let expiresAt: string | null = null;
+  try {
+    const body = await c.req.json();
+    if (body?.expires_at) expiresAt = body.expires_at;
+  } catch { /* no body is fine */ }
+
+  const now = new Date().toISOString();
+  db.insert(channelMutes).values({
+    userId: auth.userId,
+    channelId,
+    mutedAt: now,
+    expiresAt,
+  }).run();
+
+  return c.json({ channel_id: channelId, muted: true, muted_at: now, expires_at: expiresAt }, 201);
+});
+
+/** DELETE /:channelId/mute — unmute a channel */
+app.delete("/:channelId/mute", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const result = db
+    .delete(channelMutes)
+    .where(and(eq(channelMutes.userId, auth.userId), eq(channelMutes.channelId, channelId)))
+    .run();
+
+  if (result.changes === 0) {
+    return c.json({ detail: "Channel not muted" }, 404);
+  }
+
+  return c.json({ channel_id: channelId, muted: false });
+});
+
+/** GET /muted — list muted channels for the current user */
+app.get("/muted/list", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const rows = db
+    .select({
+      channelId: channelMutes.channelId,
+      channelName: channels.name,
+      mutedAt: channelMutes.mutedAt,
+      expiresAt: channelMutes.expiresAt,
+    })
+    .from(channelMutes)
+    .innerJoin(channels, eq(channelMutes.channelId, channels.id))
+    .where(
+      and(
+        eq(channelMutes.userId, auth.userId),
+        eq(channels.workspaceId, auth.workspaceId),
+      )
+    )
+    .all();
+
+  // Filter out expired mutes
+  const active = rows.filter((r) => !r.expiresAt || r.expiresAt > now);
+
+  return c.json(
+    active.map((r) => ({
+      channel_id: r.channelId,
+      channel_name: r.channelName,
+      muted_at: r.mutedAt,
+      expires_at: r.expiresAt,
+    }))
+  );
 });
 
 export default app;
