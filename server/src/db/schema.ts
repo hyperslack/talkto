@@ -212,6 +212,7 @@ export const users = sqliteTable("users", {
   avatarUrl: text("avatar_url"),
   statusEmoji: text("status_emoji"), // e.g. "🏠", "🎯", "🔴"
   statusText: text("status_text"), // e.g. "In a meeting", "On vacation"
+  lastSeenAt: text("last_seen_at"), // last activity timestamp
 });
 
 export const usersRelations = relations(users, ({ one, many }) => ({
