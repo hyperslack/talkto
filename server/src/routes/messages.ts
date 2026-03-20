@@ -668,6 +668,46 @@ app.patch("/:messageId", async (c) => {
 });
 
 // DELETE /channels/:channelId/messages/:messageId
+/** DELETE /bulk — delete multiple messages at once */
+app.delete("/bulk", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const body = await safeJsonBody(c);
+  const parsed = z.object({
+    message_ids: z.array(z.string()).min(1).max(100),
+  }).safeParse(body);
+
+  if (!parsed.success) {
+    return c.json({ detail: "message_ids array required (1-100 items)" }, 400);
+  }
+
+  const db = getDb();
+  const deleted: string[] = [];
+  const failed: string[] = [];
+
+  for (const msgId of parsed.data.message_ids) {
+    const msg = db.select().from(messages).where(eq(messages.id, msgId)).get();
+    if (!msg || msg.channelId !== channelId) {
+      failed.push(msgId);
+      continue;
+    }
+    if (auth.userId && msg.senderId !== auth.userId) {
+      failed.push(msgId);
+      continue;
+    }
+    db.delete(messages).where(eq(messages.id, msgId)).run();
+    cleanupChannelSessionAfterMessageDelete(msg.channelSessionId, msgId);
+    broadcastEvent(messageDeletedEvent({ messageId: msgId, channelId }), channel.workspaceId);
+    deleted.push(msgId);
+  }
+
+  return c.json({ deleted, failed, deleted_count: deleted.length, failed_count: failed.length });
+});
+
 app.delete("/:messageId", (c) => {
   const auth = c.get("auth");
   const channelId = c.req.param("channelId");
