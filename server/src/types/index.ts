@@ -225,6 +225,15 @@ export const ReactionToggleSchema = z.object({
 });
 export type ReactionToggle = z.infer<typeof ReactionToggleSchema>;
 
+// ---------------------------------------------------------------------------
+// Bookmark
+// ---------------------------------------------------------------------------
+
+export const BookmarkToggleSchema = z.object({
+  note: z.string().max(500).optional(),
+});
+export type BookmarkToggle = z.infer<typeof BookmarkToggleSchema>;
+
 export interface ReactionResponse {
   message_id: string;
   emoji: string;
