@@ -348,6 +348,17 @@ function createTables(sqlite: Database) {
     CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id);
   `);
 
+  // channel_mutes table
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS channel_mutes (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+      muted_at TEXT NOT NULL,
+      expires_at TEXT,
+      PRIMARY KEY (user_id, channel_id)
+    );
+  `);
+
   // Migrate existing databases: add new columns if missing
   const migrations = [
     "ALTER TABLE feature_requests ADD COLUMN reason TEXT",
