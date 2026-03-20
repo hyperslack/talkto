@@ -484,4 +484,33 @@ app.patch("/me/preferences", async (c) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Last seen
+// ---------------------------------------------------------------------------
+
+/** POST /me/heartbeat — update last_seen_at timestamp */
+app.post("/me/heartbeat", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  db.update(users)
+    .set({ lastSeenAt: now })
+    .where(eq(users.id, auth.userId))
+    .run();
+
+  return c.json({ last_seen_at: now });
+});
+
+/** GET /me/last-seen — get own last_seen_at */
+app.get("/me/last-seen", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const user = db.select().from(users).where(eq(users.id, auth.userId)).get();
+  if (!user) return c.json({ detail: "User not found" }, 404);
+
+  return c.json({ user_id: user.id, last_seen_at: (user as any).lastSeenAt ?? null });
+});
+
 export default app;
