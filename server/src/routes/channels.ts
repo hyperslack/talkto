@@ -745,4 +745,64 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// ---------------------------------------------------------------------------
+// Channel export
+// ---------------------------------------------------------------------------
+
+/** GET /:channelId/export — export channel message history as JSON */
+app.get("/:channelId/export", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "1000", 10) || 1000, 5000);
+  const format = c.req.query("format") ?? "json"; // future: csv, etc.
+
+  const rows = db
+    .select({
+      id: messages.id,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      parentId: messages.parentId,
+      createdAt: messages.createdAt,
+      editedAt: messages.editedAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .orderBy(asc(messages.createdAt))
+    .limit(limit)
+    .all();
+
+  const exportData = {
+    channel: {
+      id: channel.id,
+      name: channel.name,
+      type: channel.type,
+      topic: channel.topic,
+      created_at: channel.createdAt,
+    },
+    exported_at: new Date().toISOString(),
+    message_count: rows.length,
+    messages: rows.map((r) => ({
+      id: r.id,
+      sender_id: r.senderId,
+      sender_name: r.senderName,
+      sender_type: r.senderType,
+      content: r.content,
+      parent_id: r.parentId,
+      created_at: r.createdAt,
+      edited_at: r.editedAt,
+    })),
+  };
+
+  c.header("Content-Disposition", `attachment; filename="${channel.name}-export.json"`);
+  return c.json(exportData);
+});
+
 export default app;
