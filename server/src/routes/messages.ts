@@ -25,6 +25,8 @@ import { and } from "drizzle-orm";
 
 const app = new Hono<AppBindings>();
 
+const DUPLICATE_WINDOW_SECONDS = 5;
+
 /** Safely parse JSON body, returning null on malformed input */
 async function safeJsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown | null> {
   try {
@@ -406,6 +408,28 @@ app.post("/", async (c) => {
     : null;
   if (!human) {
     return c.json({ detail: "No user onboarded" }, 400);
+  }
+
+  // Duplicate message prevention: reject identical content from same sender in same channel within 5 seconds
+  // Always active — prevents accidental double-sends from the UI
+  {
+    const windowStart = new Date(Date.now() - DUPLICATE_WINDOW_SECONDS * 1000).toISOString();
+    const recentDuplicate = db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          eq(messages.senderId, human.id),
+          eq(messages.content, parsed.data.content),
+          sql`${messages.createdAt} > ${windowStart}`
+        )
+      )
+      .limit(1)
+      .get();
+    if (recentDuplicate) {
+      return c.json({ detail: "Duplicate message detected. Please wait before sending the same message." }, 409);
+    }
   }
 
   // Enforce slow mode

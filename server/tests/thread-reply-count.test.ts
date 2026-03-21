@@ -49,7 +49,7 @@ describe("Thread reply count", () => {
 
   it("returns correct reply_count for a parent message", async () => {
     const parentRes = await app.fetch(
-      req("POST", `/api/channels/${generalChannelId}/messages`, { content: "I am the parent" })
+      req("POST", `/api/channels/${generalChannelId}/messages`, { content: `I am the parent thread-reply-${Date.now()}` })
     );
     expect(parentRes.status).toBe(201);
     const parent = await parentRes.json();
@@ -79,7 +79,7 @@ describe("Thread reply count", () => {
 
     const replyRes = await app.fetch(
       req("POST", `/api/channels/${generalChannelId}/messages`, {
-        content: "will be deleted",
+        content: `will be deleted thread-${Date.now()}`,
         parent_id: parent.id,
       })
     );
