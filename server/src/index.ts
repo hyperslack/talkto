@@ -95,11 +95,22 @@ app.use("/api/*", authMiddleware);
 // Health check (before other routes — authMiddleware skips /api/health)
 app.get("/api/health", (c) => {
   const wsClients = getClientCount();
+  const database = getDb();
+  const memberCount = database
+    .select({ count: sql<number>`count(*)` })
+    .from(users)
+    .get();
+  const channelCount = database
+    .select({ count: sql<number>`count(*)` })
+    .from(channels)
+    .get();
   return c.json({
     status: "ok",
     version: "0.1.0",
     ws_clients: wsClients,
     uptime_seconds: Math.floor(process.uptime()),
+    member_count: memberCount?.count ?? 0,
+    channel_count: channelCount?.count ?? 0,
   });
 });
 
