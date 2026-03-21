@@ -546,6 +546,20 @@ app.get("/:channelId/stats", (c) => {
     .limit(1)
     .get();
 
+  // Sender breakdown: human vs agent messages
+  const humanMsgCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), eq(users.type, "human")))
+    .get();
+  const agentMsgCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), eq(users.type, "agent")))
+    .get();
+
   return c.json({
     channel_id: channelId,
     message_count: msgCount?.count ?? 0,
@@ -553,6 +567,10 @@ app.get("/:channelId/stats", (c) => {
     pinned_count: pinnedCount?.count ?? 0,
     last_message_at: lastMsg?.createdAt ?? null,
     created_at: channel.createdAt,
+    sender_breakdown: {
+      human_messages: humanMsgCount?.count ?? 0,
+      agent_messages: agentMsgCount?.count ?? 0,
+    },
   });
 });
 
