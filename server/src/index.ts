@@ -181,6 +181,7 @@ app.get("/api/search", (c) => {
       content: messages.content,
       mentions: messages.mentions,
       parentId: messages.parentId,
+      editedAt: messages.editedAt,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -203,6 +204,7 @@ app.get("/api/search", (c) => {
     content: row.content,
     mentions: row.mentions ? JSON.parse(row.mentions as string) : null,
     parent_id: row.parentId,
+    edited_at: row.editedAt ?? null,
     created_at: row.createdAt,
   }));
 
