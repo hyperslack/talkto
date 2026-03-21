@@ -142,7 +142,7 @@ describe("Messages — POST (Send)", () => {
     // First create a parent message
     const parentRes = await app.fetch(
       req("POST", `/api/channels/${generalChannelId}/messages`, {
-        content: "I am the parent message",
+        content: `I am the parent message write-${Date.now()}`,
       })
     );
     const parent = await parentRes.json();
@@ -150,7 +150,7 @@ describe("Messages — POST (Send)", () => {
     // Reply to it
     const replyRes = await app.fetch(
       req("POST", `/api/channels/${generalChannelId}/messages`, {
-        content: "I am the reply",
+        content: `I am the reply write-${Date.now()}`,
         parent_id: parent.id,
       })
     );
