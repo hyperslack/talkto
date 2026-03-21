@@ -181,6 +181,7 @@ app.get("/api/search", (c) => {
       content: messages.content,
       mentions: messages.mentions,
       parentId: messages.parentId,
+      isPinned: messages.isPinned,
       createdAt: messages.createdAt,
     })
     .from(messages)
@@ -203,6 +204,7 @@ app.get("/api/search", (c) => {
     content: row.content,
     mentions: row.mentions ? JSON.parse(row.mentions as string) : null,
     parent_id: row.parentId,
+    is_pinned: Boolean(row.isPinned),
     created_at: row.createdAt,
   }));
 
