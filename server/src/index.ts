@@ -188,6 +188,16 @@ app.get("/api/search", (c) => {
     .innerJoin(channels, eq(messages.channelId, channels.id))
     .where(and(...conditions));
 
+  // Count total matches (before limit)
+  const totalCountRow = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(...conditions))
+    .get();
+  const totalCount = totalCountRow?.count ?? 0;
+
   const rows = baseQuery
     .orderBy(desc(messages.createdAt))
     .limit(limit)
@@ -206,7 +216,7 @@ app.get("/api/search", (c) => {
     created_at: row.createdAt,
   }));
 
-  return c.json({ query, results, count: results.length });
+  return c.json({ query, results, count: results.length, total_count: totalCount });
 });
 
 // ---------------------------------------------------------------------------
