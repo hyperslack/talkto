@@ -123,9 +123,28 @@ app.get("/", (c) => {
     .all();
   const messageCountMap = new Map(messageCountRows.map((row) => [row.channelId, row.messageCount]));
 
+  // Resolve created_by_name for each channel
+  const creatorIds = [...new Set(result.map((ch) => ch.createdBy).filter(Boolean))];
+  const creatorNameMap = new Map<string, string>();
+  for (const cid of creatorIds) {
+    if (cid === "system" || cid === "human") {
+      creatorNameMap.set(cid, cid);
+    } else {
+      const creator = db
+        .select({ name: users.name, displayName: users.displayName })
+        .from(users)
+        .where(eq(users.id, cid))
+        .get();
+      if (creator) {
+        creatorNameMap.set(cid, creator.displayName ?? creator.name);
+      }
+    }
+  }
+
   return c.json(
     result.map((channel) => ({
       ...channelToResponse(channel, { pinned_count: pinnedCounts.get(channel.id) ?? 0 }),
+      created_by_name: creatorNameMap.get(channel.createdBy) ?? null,
       last_active_at: lastActiveMap.get(channel.id) ?? null,
       member_count: memberCountMap.get(channel.id) ?? 0,
       message_count: messageCountMap.get(channel.id) ?? 0,
