@@ -162,6 +162,17 @@ app.get("/unread/counts", (c) => {
     .all();
   const receiptMap = new Map(receipts.map((receipt) => [receipt.channelId, receipt.lastReadAt]));
 
+  // Pre-fetch member counts for all channels
+  const memberCountRows = db
+    .select({
+      channelId: channelMembers.channelId,
+      memberCount: sql<number>`count(*)`.as("member_count"),
+    })
+    .from(channelMembers)
+    .groupBy(channelMembers.channelId)
+    .all();
+  const memberCountMap = new Map(memberCountRows.map((row) => [row.channelId, row.memberCount]));
+
   return c.json(
     allChannels.map((channel) => {
       const lastReadAt = receiptMap.get(channel.id);
@@ -188,6 +199,7 @@ app.get("/unread/counts", (c) => {
         channel_name: channel.name,
         unread_count: unreadCount,
         last_read_at: lastReadAt ?? null,
+        member_count: memberCountMap.get(channel.id) ?? 0,
       };
     })
   );
