@@ -695,6 +695,61 @@ app.delete("/:channelId", requireAdmin, (c) => {
   return c.json(deleteChannelGraph(channel));
 });
 
+// POST /channels/read-all — mark all channels as read
+app.post("/read-all", async (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  let userId = auth.userId ?? "";
+  if (!userId) {
+    try {
+      const body = await c.req.json();
+      userId = body.user_id ?? "";
+    } catch {
+      userId = "";
+    }
+  }
+
+  if (!userId) {
+    const human = db.select().from(users).where(eq(users.type, "human")).get();
+    if (!human) {
+      return c.json({ detail: "No user found" }, 400);
+    }
+    userId = human.id;
+  }
+
+  const allChannels = db
+    .select({ id: channels.id })
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .all();
+
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  for (const channel of allChannels) {
+    const existing = db
+      .select()
+      .from(readReceipts)
+      .where(and(eq(readReceipts.userId, userId), eq(readReceipts.channelId, channel.id)))
+      .get();
+
+    if (existing) {
+      db.update(readReceipts)
+        .set({ lastReadAt: now })
+        .where(and(eq(readReceipts.userId, userId), eq(readReceipts.channelId, channel.id)))
+        .run();
+    } else {
+      db.insert(readReceipts)
+        .values({ userId, channelId: channel.id, lastReadAt: now })
+        .run();
+    }
+    updated++;
+  }
+
+  return c.json({ user_id: userId, channels_marked: updated, last_read_at: now });
+});
+
 // POST /channels/:channelId/read
 app.post("/:channelId/read", async (c) => {
   const auth = c.get("auth");
