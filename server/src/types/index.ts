@@ -103,7 +103,7 @@ export const MessageEditSchema = z.object({
 export type MessageEdit = z.infer<typeof MessageEditSchema>;
 
 export const MessageCreateSchema = z.object({
-  content: z.string().min(1).max(32000),
+  content: z.string().transform((s) => s.trim()).pipe(z.string().min(1, "Content must not be empty after trimming").max(4000, "Content must be at most 4000 characters")),
   mentions: z.array(z.string()).max(50).optional(),
   parent_id: z.string().uuid().optional(),
 });
