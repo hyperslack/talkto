@@ -155,6 +155,7 @@ app.get("/api/search", (c) => {
   }
   const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 50);
   const channelFilter = c.req.query("channel"); // optional channel name filter
+  const exact = c.req.query("exact") === "true"; // exact phrase match (case-sensitive)
 
   const db = getDb();
 
@@ -162,8 +163,13 @@ app.get("/api/search", (c) => {
   const escapedQuery = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
 
   // Base conditions: text match + workspace scoping
+  // When exact=true, use INSTR for case-sensitive matching instead of LIKE (case-insensitive)
+  const textCondition = exact
+    ? sql`INSTR(${messages.content}, ${query}) > 0`
+    : like(messages.content, `%${escapedQuery}%`);
+
   const conditions = [
-    like(messages.content, `%${escapedQuery}%`),
+    textCondition,
     eq(channels.workspaceId, auth.workspaceId),
   ];
   if (channelFilter) {
@@ -206,7 +212,7 @@ app.get("/api/search", (c) => {
     created_at: row.createdAt,
   }));
 
-  return c.json({ query, results, count: results.length });
+  return c.json({ query, exact, results, count: results.length });
 });
 
 // ---------------------------------------------------------------------------
