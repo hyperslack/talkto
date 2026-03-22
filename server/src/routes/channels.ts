@@ -592,6 +592,49 @@ app.get("/:channelId/mentionable", (c) => {
   );
 });
 
+// GET /channels/:channelId/latest-message — single most recent message
+app.get("/:channelId/latest-message", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const row = db
+    .select({
+      id: messages.id,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .orderBy(desc(messages.createdAt))
+    .limit(1)
+    .get();
+
+  if (!row) {
+    return c.json({ message: null });
+  }
+
+  return c.json({
+    message: {
+      id: row.id,
+      sender_id: row.senderId,
+      sender_name: row.senderName,
+      sender_type: row.senderType,
+      content: row.content,
+      created_at: row.createdAt,
+    },
+  });
+});
+
 // GET /channels/:channelId/top-senders
 app.get("/:channelId/top-senders", (c) => {
   const auth = c.get("auth");
