@@ -745,4 +745,40 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// GET /channels/:channelId/members/by-type — member count breakdown by user type
+app.get("/:channelId/members/by-type", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const rows = db
+    .select({
+      type: users.type,
+      count: sql<number>`count(*)`,
+    })
+    .from(channelMembers)
+    .innerJoin(users, eq(channelMembers.userId, users.id))
+    .where(eq(channelMembers.channelId, channelId))
+    .groupBy(users.type)
+    .all();
+
+  const breakdown: Record<string, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    breakdown[row.type] = row.count;
+    total += row.count;
+  }
+
+  return c.json({
+    channel_id: channelId,
+    total,
+    breakdown,
+  });
+});
+
 export default app;
