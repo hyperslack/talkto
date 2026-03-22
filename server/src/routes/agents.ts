@@ -336,4 +336,45 @@ app.post("/:agentName/dm", (c) => {
   return c.json(resp);
 });
 
+// PATCH /agents/:agentName/description — update agent description
+app.patch("/:agentName/description", async (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const agentName = c.req.param("agentName");
+
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, agentName), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) {
+    return c.json({ detail: "Agent not found" }, 404);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json() as Record<string, unknown>;
+  } catch {
+    return c.json({ detail: "Invalid JSON body" }, 400);
+  }
+
+  const description = body.description;
+  if (description !== null && description !== undefined && typeof description !== "string") {
+    return c.json({ detail: "description must be a string or null" }, 400);
+  }
+  if (typeof description === "string" && description.length > 2000) {
+    return c.json({ detail: "description must be 2000 characters or less" }, 400);
+  }
+
+  db.update(agents)
+    .set({ description: description as string | null ?? null })
+    .where(eq(agents.id, agent.id))
+    .run();
+
+  return c.json({
+    agent_name: agentName,
+    description: description ?? null,
+  });
+});
+
 export default app;
