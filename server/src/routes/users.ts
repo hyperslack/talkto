@@ -484,4 +484,41 @@ app.patch("/me/preferences", async (c) => {
   });
 });
 
+// GET /users/me/channels — list channels the current user belongs to
+app.get("/me/channels", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  const rows = db
+    .select({
+      channelId: channels.id,
+      channelName: channels.name,
+      channelType: channels.type,
+      topic: channels.topic,
+      joinedAt: channelMembers.joinedAt,
+      isArchived: channels.isArchived,
+    })
+    .from(channelMembers)
+    .innerJoin(channels, eq(channelMembers.channelId, channels.id))
+    .where(and(eq(channelMembers.userId, user.id), eq(channels.workspaceId, auth.workspaceId)))
+    .orderBy(channels.name)
+    .all();
+
+  return c.json({
+    channels: rows.map((r) => ({
+      id: r.channelId,
+      name: r.channelName,
+      type: r.channelType,
+      topic: r.topic,
+      joined_at: r.joinedAt,
+      is_archived: Boolean(r.isArchived),
+    })),
+    count: rows.length,
+  });
+});
+
 export default app;
