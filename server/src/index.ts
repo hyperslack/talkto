@@ -209,6 +209,49 @@ app.get("/api/search", (c) => {
   return c.json({ query, results, count: results.length });
 });
 
+// Workspace-wide pinned messages across all channels
+app.get("/api/pinned", (c) => {
+  const auth = c.get("auth");
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  const db = getDb();
+
+  const rows = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      channelName: channels.name,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      pinnedAt: messages.pinnedAt,
+      pinnedBy: messages.pinnedBy,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(eq(messages.isPinned, 1), eq(channels.workspaceId, auth.workspaceId)))
+    .orderBy(desc(messages.pinnedAt))
+    .limit(limit)
+    .all();
+
+  const results = rows.map((row: Record<string, unknown>) => ({
+    id: row.id,
+    channel_id: row.channelId,
+    channel_name: row.channelName,
+    sender_id: row.senderId,
+    sender_name: row.senderName,
+    sender_type: row.senderType,
+    content: row.content,
+    pinned_at: row.pinnedAt,
+    pinned_by: row.pinnedBy,
+    created_at: row.createdAt,
+  }));
+
+  return c.json({ results, count: results.length });
+});
+
 // ---------------------------------------------------------------------------
 // MCP Server — streamable HTTP transport at /mcp
 // ---------------------------------------------------------------------------
