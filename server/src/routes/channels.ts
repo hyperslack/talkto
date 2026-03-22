@@ -745,4 +745,62 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// POST /channels/batch-archive — archive multiple channels at once
+app.post("/batch-archive", async (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json() as Record<string, unknown>;
+  } catch {
+    return c.json({ detail: "Invalid JSON body" }, 400);
+  }
+
+  const channelIds = body.channel_ids;
+  if (!Array.isArray(channelIds) || channelIds.length === 0) {
+    return c.json({ detail: "channel_ids must be a non-empty array" }, 400);
+  }
+  if (channelIds.length > 50) {
+    return c.json({ detail: "Maximum 50 channels per batch" }, 400);
+  }
+
+  const now = new Date().toISOString();
+  const archived: string[] = [];
+  const skipped: Array<{ id: string; reason: string }> = [];
+
+  for (const id of channelIds) {
+    if (typeof id !== "string") {
+      skipped.push({ id: String(id), reason: "invalid_id" });
+      continue;
+    }
+    const channel = getChannelInWorkspace(id, auth.workspaceId);
+    if (!channel) {
+      skipped.push({ id, reason: "not_found" });
+      continue;
+    }
+    if (channel.type === "general") {
+      skipped.push({ id, reason: "cannot_archive_general" });
+      continue;
+    }
+    if (channel.isArchived === 1) {
+      skipped.push({ id, reason: "already_archived" });
+      continue;
+    }
+
+    db.update(channels)
+      .set({ isArchived: 1, archivedAt: now })
+      .where(eq(channels.id, id))
+      .run();
+    archived.push(id);
+  }
+
+  return c.json({
+    archived_count: archived.length,
+    skipped_count: skipped.length,
+    archived,
+    skipped,
+  });
+});
+
 export default app;
