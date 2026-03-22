@@ -484,4 +484,37 @@ app.patch("/me/preferences", async (c) => {
   });
 });
 
+// GET /users/me/reaction-stats — emoji usage breakdown for current user
+app.get("/me/reaction-stats", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) return c.json({ detail: "No user onboarded" }, 404);
+
+  const rows = db
+    .select({
+      emoji: messageReactions.emoji,
+      count: sql<number>`count(*)`,
+    })
+    .from(messageReactions)
+    .where(eq(messageReactions.userId, user.id))
+    .groupBy(messageReactions.emoji)
+    .orderBy(sql`count(*) DESC`)
+    .all();
+
+  const totalReactions = rows.reduce((sum, r) => sum + r.count, 0);
+
+  return c.json({
+    user_id: user.id,
+    total_reactions: totalReactions,
+    unique_emojis: rows.length,
+    emoji_breakdown: rows.map((r) => ({
+      emoji: r.emoji,
+      count: r.count,
+    })),
+  });
+});
+
 export default app;
