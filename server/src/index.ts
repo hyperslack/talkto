@@ -15,7 +15,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import type { AppBindings } from "./types/index";
 import { config, BASE_DIR } from "./lib/config";
 import { getDb, closeDb, DEFAULT_WORKSPACE_ID } from "./db";
-import { agents, messages, channels, users } from "./db/schema";
+import { agents, messages, channels, users, workspaceMembers } from "./db/schema";
 import { eq, like, desc, sql, and } from "drizzle-orm";
 import { seedDefaults } from "./db/seed";
 import {
@@ -111,6 +111,45 @@ app.route("/api/channels", channelsRoutes);
 app.route("/api/agents", agentsRoutes);
 app.route("/api/features", featuresRoutes);
 app.route("/api/webhooks", webhooksRoutes);
+
+// Workspace member list — all users in the workspace
+app.get("/api/members", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const rows = db
+    .select({
+      userId: users.id,
+      name: users.name,
+      displayName: users.displayName,
+      type: users.type,
+      role: workspaceMembers.role,
+      joinedAt: workspaceMembers.joinedAt,
+      about: users.about,
+      statusEmoji: users.statusEmoji,
+      statusText: users.statusText,
+    })
+    .from(workspaceMembers)
+    .innerJoin(users, eq(workspaceMembers.userId, users.id))
+    .where(eq(workspaceMembers.workspaceId, auth.workspaceId))
+    .orderBy(users.name)
+    .all();
+
+  return c.json({
+    members: rows.map((r) => ({
+      id: r.userId,
+      name: r.name,
+      display_name: r.displayName,
+      type: r.type,
+      role: r.role,
+      joined_at: r.joinedAt,
+      about: r.about,
+      status_emoji: r.statusEmoji,
+      status_text: r.statusText,
+    })),
+    count: rows.length,
+  });
+});
 
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
