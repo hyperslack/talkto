@@ -143,6 +143,35 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+// Hourly message volume for last N hours
+app.get("/api/activity/hourly", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const hours = Math.min(parseInt(c.req.query("hours") ?? "24", 10) || 24, 168);
+
+  const rows = db
+    .select({
+      hour: sql<string>`strftime('%Y-%m-%dT%H:00:00', ${messages.createdAt})`.as("hour"),
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`${messages.createdAt} >= datetime('now', '-' || ${hours} || ' hours')`
+      )
+    )
+    .groupBy(sql`strftime('%Y-%m-%dT%H:00:00', ${messages.createdAt})`)
+    .orderBy(sql`strftime('%Y-%m-%dT%H:00:00', ${messages.createdAt})`)
+    .all();
+
+  return c.json({
+    hours,
+    volume: rows.map((r) => ({ hour: r.hour, message_count: r.count })),
+  });
+});
+
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
