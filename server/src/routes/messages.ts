@@ -131,6 +131,8 @@ app.get("/", (c) => {
   const channelId = c.req.param("channelId");
   const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 100);
   const before = c.req.query("before");
+  const since = c.req.query("since"); // ISO date — messages after this time
+  const until = c.req.query("until"); // ISO date — messages before this time
   const db = getDb();
 
   // Verify channel exists and belongs to current workspace
@@ -162,6 +164,18 @@ app.get("/", (c) => {
     .innerJoin(users, eq(messages.senderId, users.id))
     .where(eq(messages.channelId, channelId))
     .$dynamic();
+
+  // Date range filters
+  if (since) {
+    query = query.where(
+      and(eq(messages.channelId, channelId), sql`${messages.createdAt} >= ${since}`)
+    );
+  }
+  if (until) {
+    query = query.where(
+      and(eq(messages.channelId, channelId), sql`${messages.createdAt} <= ${until}`)
+    );
+  }
 
   // Cursor pagination — use and() to preserve the channelId filter
   if (before) {
