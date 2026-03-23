@@ -143,6 +143,70 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+// GET /api/workspace/overview — combined workspace overview stats
+app.get("/api/workspace/overview", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const totalChannels = db
+    .select({ count: sql<number>`count(*)` })
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .get();
+
+  const activeChannels = db
+    .select({ count: sql<number>`count(*)` })
+    .from(channels)
+    .where(and(eq(channels.workspaceId, auth.workspaceId), eq(channels.isArchived, 0)))
+    .get();
+
+  const totalMembers = db
+    .select({ count: sql<number>`count(*)` })
+    .from(users)
+    .get();
+
+  const totalMessages = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .get();
+
+  const messagesLast24h = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`${messages.createdAt} >= datetime('now', '-1 day')`
+      )
+    )
+    .get();
+
+  const activeSendersLast24h = db
+    .select({ count: sql<number>`count(DISTINCT ${messages.senderId})` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`${messages.createdAt} >= datetime('now', '-1 day')`
+      )
+    )
+    .get();
+
+  return c.json({
+    total_channels: totalChannels?.count ?? 0,
+    active_channels: activeChannels?.count ?? 0,
+    total_members: totalMembers?.count ?? 0,
+    total_messages: totalMessages?.count ?? 0,
+    messages_last_24h: messagesLast24h?.count ?? 0,
+    active_senders_last_24h: activeSendersLast24h?.count ?? 0,
+    ws_clients: getClientCount(),
+  });
+});
+
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
