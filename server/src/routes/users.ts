@@ -484,4 +484,14 @@ app.patch("/me/preferences", async (c) => {
   });
 });
 
+// GET /users/:userId — public profile for any user by ID
+app.get("/:userId", (c) => {
+  const db = getDb();
+  const user = db.select().from(users).where(eq(users.id, c.req.param("userId"))).get();
+  if (!user) {
+    return c.json({ detail: "User not found" }, 404);
+  }
+  return c.json(userToResponse(user));
+});
+
 export default app;
