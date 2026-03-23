@@ -263,6 +263,39 @@ app.delete("/:agentName", requireAdmin, (c) => {
   return c.json(result);
 });
 
+// GET /agents/:agentName/channels — list channels this agent belongs to
+app.get("/:agentName/channels", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, c.req.param("agentName")), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) return c.json({ detail: "Agent not found" }, 404);
+
+  const memberChannels = db
+    .select({
+      channelId: channelMembers.channelId,
+      joinedAt: channelMembers.joinedAt,
+      channelName: channels.name,
+      channelType: channels.type,
+    })
+    .from(channelMembers)
+    .innerJoin(channels, eq(channelMembers.channelId, channels.id))
+    .where(eq(channelMembers.userId, agent.id))
+    .all();
+
+  return c.json(
+    memberChannels.map((mc) => ({
+      channel_id: mc.channelId,
+      channel_name: mc.channelName,
+      channel_type: mc.channelType,
+      joined_at: mc.joinedAt,
+    }))
+  );
+});
+
 // POST /agents/:agentName/dm — get or create DM channel
 app.post("/:agentName/dm", (c) => {
   const auth = c.get("auth");
