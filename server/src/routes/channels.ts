@@ -631,6 +631,44 @@ app.get("/:channelId/top-senders", (c) => {
   );
 });
 
+// GET /channels/:channelId/contributors — unique message senders with stats
+app.get("/:channelId/contributors", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const rows = db
+    .select({
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      messageCount: sql<number>`count(*)`,
+      firstMessageAt: sql<string>`min(${messages.createdAt})`,
+      lastMessageAt: sql<string>`max(${messages.createdAt})`,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .groupBy(messages.senderId)
+    .orderBy(desc(sql`count(*)`))
+    .all();
+
+  return c.json({
+    channel_id: channelId,
+    contributor_count: rows.length,
+    contributors: rows.map((r) => ({
+      sender_id: r.senderId,
+      sender_name: r.senderName,
+      sender_type: r.senderType,
+      message_count: r.messageCount,
+      first_message_at: r.firstMessageAt,
+      last_message_at: r.lastMessageAt,
+    })),
+  });
+});
+
 // POST /channels/:channelId/archive
 app.post("/:channelId/archive", (c) => {
   const auth = c.get("auth");
