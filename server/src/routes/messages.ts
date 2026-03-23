@@ -3,7 +3,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, desc, lt, sql } from "drizzle-orm";
+import { eq, desc, lt, asc, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { channels, channelSessions, messages, users, messageReactions } from "../db/schema";
 import { z } from "zod";
@@ -21,7 +21,6 @@ import type {
   ChannelSessionSummaryResponse,
   MessageResponse,
 } from "../types";
-import { and } from "drizzle-orm";
 
 const app = new Hono<AppBindings>();
 
@@ -762,6 +761,83 @@ app.get("/:messageId/thread", (c) => {
       content: r.content,
       created_at: r.createdAt,
     })),
+  });
+});
+
+// GET /channels/:channelId/messages/:messageId/context — message with surrounding context
+app.get("/:messageId/context", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+  const surrounding = Math.min(parseInt(c.req.query("surrounding") ?? "3", 10) || 3, 10);
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const target = db.select().from(messages).where(eq(messages.id, messageId)).get();
+  if (!target) return c.json({ detail: "Message not found" }, 404);
+  if (target.channelId !== channelId) return c.json({ detail: "Message does not belong to this channel" }, 400);
+
+  // Get messages before
+  const before = db
+    .select({
+      id: messages.id,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), sql`${messages.createdAt} < ${target.createdAt}`))
+    .orderBy(desc(messages.createdAt))
+    .limit(surrounding)
+    .all()
+    .reverse();
+
+  // Get messages after
+  const after = db
+    .select({
+      id: messages.id,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.channelId, channelId), sql`${messages.createdAt} > ${target.createdAt}`))
+    .orderBy(asc(messages.createdAt))
+    .limit(surrounding)
+    .all();
+
+  // Target message with sender
+  const targetWithSender = db
+    .select({
+      id: messages.id,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.id, messageId))
+    .get()!;
+
+  const fmt = (row: any) => ({
+    id: row.id,
+    sender_id: row.senderId,
+    sender_name: row.senderName,
+    content: row.content,
+    created_at: row.createdAt,
+  });
+
+  return c.json({
+    target: fmt(targetWithSender),
+    before: before.map(fmt),
+    after: after.map(fmt),
   });
 });
 
