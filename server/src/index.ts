@@ -143,6 +143,71 @@ app.get("/api/activity/daily", (c) => {
     activity: rows.map((r) => ({ date: r.date, message_count: r.count })),
   });
 });
+// Weekly activity summary — message counts, active users, top channels for the last N weeks
+app.get("/api/activity/weekly", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const weeks = Math.min(parseInt(c.req.query("weeks") ?? "4", 10) || 4, 52);
+  const days = weeks * 7;
+
+  // Messages per week
+  const weeklyRows = db
+    .select({
+      week: sql<string>`strftime('%Y-W%W', ${messages.createdAt})`.as("week"),
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`date(${messages.createdAt}) >= date('now', '-' || ${days} || ' days')`
+      )
+    )
+    .groupBy(sql`strftime('%Y-W%W', ${messages.createdAt})`)
+    .orderBy(sql`strftime('%Y-W%W', ${messages.createdAt})`)
+    .all();
+
+  // Active unique senders
+  const activeSenders = db
+    .select({ count: sql<number>`count(DISTINCT ${messages.senderId})` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`date(${messages.createdAt}) >= date('now', '-' || ${days} || ' days')`
+      )
+    )
+    .get();
+
+  // Top channel by messages
+  const topChannel = db
+    .select({
+      channelName: channels.name,
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(
+      and(
+        eq(channels.workspaceId, auth.workspaceId),
+        sql`date(${messages.createdAt}) >= date('now', '-' || ${days} || ' days')`
+      )
+    )
+    .groupBy(channels.name)
+    .orderBy(desc(sql`count(*)`))
+    .limit(1)
+    .get();
+
+  return c.json({
+    weeks,
+    activity: weeklyRows.map((r) => ({ week: r.week, message_count: r.count })),
+    active_senders: activeSenders?.count ?? 0,
+    top_channel: topChannel ? { name: topChannel.channelName, message_count: topChannel.count } : null,
+  });
+});
+
 // Channel welcome messages
 app.route("/api/channels/:channelId/welcome", channelWelcomeRoutes);
 
