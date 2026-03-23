@@ -631,6 +631,41 @@ app.get("/:channelId/top-senders", (c) => {
   );
 });
 
+// GET /channels/:channelId/sender-type-stats — message counts by sender type
+app.get("/:channelId/sender-type-stats", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const db = getDb();
+  const rows = db
+    .select({
+      senderType: users.type,
+      count: sql<number>`count(*)`,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .groupBy(users.type)
+    .all();
+
+  const stats: Record<string, number> = {};
+  let total = 0;
+  for (const row of rows) {
+    stats[row.senderType] = row.count;
+    total += row.count;
+  }
+
+  return c.json({
+    channel_id: channelId,
+    total_messages: total,
+    human_messages: stats["human"] ?? 0,
+    agent_messages: stats["agent"] ?? 0,
+    agent_ratio: total > 0 ? Number(((stats["agent"] ?? 0) / total).toFixed(3)) : 0,
+  });
+});
+
 // POST /channels/:channelId/archive
 app.post("/:channelId/archive", (c) => {
   const auth = c.get("auth");
