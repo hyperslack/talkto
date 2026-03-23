@@ -79,7 +79,7 @@ app.get("/", async (c) => {
 
   const statsMap = new Map(stats.map((s) => [s.senderId, s]));
 
-  const responses = allAgents.map((a) => {
+  let responses = allAgents.map((a) => {
     const agentStats = statsMap.get(a.id);
     return {
       ...agentToResponse(a),
@@ -87,6 +87,19 @@ app.get("/", async (c) => {
       last_message_at: agentStats?.lastAt ?? null,
     };
   });
+
+  // Optional status filter
+  const statusFilter = c.req.query("status");
+  if (statusFilter) {
+    responses = responses.filter((a) => a.status === statusFilter);
+  }
+
+  // Optional type filter
+  const typeFilter = c.req.query("type");
+  if (typeFilter) {
+    responses = responses.filter((a) => a.agent_type === typeFilter);
+  }
+
   return c.json(responses);
 });
 
