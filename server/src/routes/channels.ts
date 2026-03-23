@@ -513,6 +513,63 @@ app.get("/:channelId/members", (c) => {
   );
 });
 
+// POST /channels/:channelId/members — add a member to channel
+app.post("/:channelId/members", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  if (!body?.user_id) return c.json({ detail: "user_id is required" }, 400);
+
+  const user = db.select().from(users).where(eq(users.id, body.user_id)).get();
+  if (!user) return c.json({ detail: "User not found" }, 404);
+
+  // Check if already a member
+  const existing = db
+    .select()
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, body.user_id)))
+    .get();
+  if (existing) return c.json({ detail: "User is already a member" }, 409);
+
+  const now = new Date().toISOString();
+  db.insert(channelMembers).values({ channelId, userId: body.user_id, joinedAt: now }).run();
+
+  return c.json({ channel_id: channelId, user_id: body.user_id, joined_at: now }, 201);
+});
+
+// DELETE /channels/:channelId/members/:userId — remove a member from channel
+app.delete("/:channelId/members/:userId", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const userId = c.req.param("userId");
+  const db = getDb();
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) return c.json({ detail: "Channel not found" }, 404);
+
+  if (channel.name === "#general") {
+    return c.json({ detail: "Cannot remove members from #general" }, 400);
+  }
+
+  const existing = db
+    .select()
+    .from(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)))
+    .get();
+  if (!existing) return c.json({ detail: "User is not a member" }, 404);
+
+  db.delete(channelMembers)
+    .where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.userId, userId)))
+    .run();
+
+  return c.body(null, 204);
+});
+
 // GET /channels/:channelId/stats
 app.get("/:channelId/stats", (c) => {
   const auth = c.get("auth");
