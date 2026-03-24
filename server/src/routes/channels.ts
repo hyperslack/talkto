@@ -16,6 +16,7 @@ import {
 } from "../db/schema";
 import { requireAdmin } from "../middleware/auth";
 import { deleteChannelGraph } from "../services/admin-manager";
+import { broadcastEvent } from "../services/broadcaster";
 import {
   ChannelCategorySchema,
   ChannelCreateSchema,
@@ -743,6 +744,40 @@ app.post("/:channelId/read", async (c) => {
   }
 
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
+});
+
+// POST /channels/:channelId/typing — broadcast that the current user is typing
+app.post("/:channelId/typing", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  const user = auth.userId
+    ? db.select().from(users).where(eq(users.id, auth.userId)).get()
+    : db.select().from(users).where(eq(users.type, "human")).get();
+  if (!user) {
+    return c.json({ detail: "No user found" }, 400);
+  }
+
+  broadcastEvent(
+    {
+      type: "user_typing",
+      data: {
+        user_id: user.id,
+        user_name: user.displayName ?? user.name,
+        channel_id: channelId,
+        is_typing: true,
+      },
+    },
+    auth.workspaceId,
+  );
+
+  return c.json({ ok: true });
 });
 
 export default app;
