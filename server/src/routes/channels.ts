@@ -64,6 +64,7 @@ app.get("/", (c) => {
   const auth = c.get("auth");
   const db = getDb();
   const includeArchived = c.req.query("include_archived") === "true";
+  const sortBy = c.req.query("sort"); // "activity" | default (position)
 
   let result = db
     .select()
@@ -123,14 +124,23 @@ app.get("/", (c) => {
     .all();
   const messageCountMap = new Map(messageCountRows.map((row) => [row.channelId, row.messageCount]));
 
-  return c.json(
-    result.map((channel) => ({
-      ...channelToResponse(channel, { pinned_count: pinnedCounts.get(channel.id) ?? 0 }),
-      last_active_at: lastActiveMap.get(channel.id) ?? null,
-      member_count: memberCountMap.get(channel.id) ?? 0,
-      message_count: messageCountMap.get(channel.id) ?? 0,
-    }))
-  );
+  let mapped = result.map((channel) => ({
+    ...channelToResponse(channel, { pinned_count: pinnedCounts.get(channel.id) ?? 0 }),
+    last_active_at: lastActiveMap.get(channel.id) ?? null,
+    member_count: memberCountMap.get(channel.id) ?? 0,
+    message_count: messageCountMap.get(channel.id) ?? 0,
+  }));
+
+  // Sort by most recent activity if requested
+  if (sortBy === "activity") {
+    mapped = mapped.sort((a, b) => {
+      const aTime = a.last_active_at ?? "";
+      const bTime = b.last_active_at ?? "";
+      return bTime.localeCompare(aTime); // descending (most recent first)
+    });
+  }
+
+  return c.json(mapped);
 });
 
 // GET /channels/unread/counts
