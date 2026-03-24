@@ -70,6 +70,7 @@ export interface ChannelResponse {
   name: string;
   type: string;
   topic?: string | null;
+  description?: string | null;
   position?: number;
   category?: string | null;
   slow_mode_seconds?: number;
@@ -82,6 +83,11 @@ export interface ChannelResponse {
   archived_at?: string | null;
   pinned_count?: number;
 }
+
+export const ChannelDescriptionSchema = z.object({
+  description: z.string().max(2000).nullable(),
+});
+export type ChannelDescription = z.infer<typeof ChannelDescriptionSchema>;
 
 export const ChannelCategorySchema = z.object({
   category: z.string().max(100).nullable(),
