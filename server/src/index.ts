@@ -155,6 +155,7 @@ app.get("/api/search", (c) => {
   }
   const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 50);
   const channelFilter = c.req.query("channel"); // optional channel name filter
+  const senderTypeFilter = c.req.query("sender_type"); // optional: "human" | "agent"
 
   const db = getDb();
 
@@ -168,6 +169,9 @@ app.get("/api/search", (c) => {
   ];
   if (channelFilter) {
     conditions.push(eq(channels.name, channelFilter));
+  }
+  if (senderTypeFilter === "human" || senderTypeFilter === "agent") {
+    conditions.push(eq(users.type, senderTypeFilter));
   }
 
   const baseQuery = db
