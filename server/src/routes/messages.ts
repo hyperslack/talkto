@@ -708,6 +708,81 @@ app.delete("/:messageId", (c) => {
   return c.json({ deleted: true, id: messageId });
 });
 
+// GET /channels/:channelId/messages/:messageId — get a single message by ID (permalink)
+app.get("/:messageId", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const messageId = c.req.param("messageId");
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  const row = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      channelSessionId: messages.channelSessionId,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      mentions: messages.mentions,
+      parentId: messages.parentId,
+      isPinned: messages.isPinned,
+      pinnedAt: messages.pinnedAt,
+      pinnedBy: messages.pinnedBy,
+      editedAt: messages.editedAt,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(and(eq(messages.id, messageId), eq(messages.channelId, channelId)))
+    .get();
+
+  if (!row) {
+    return c.json({ detail: "Message not found" }, 404);
+  }
+
+  // Get reactions
+  const reactionsByMessage = getReactionsByMessage([messageId]);
+  const emojiMap = reactionsByMessage.get(messageId);
+  const reactionsList = emojiMap
+    ? Array.from(emojiMap.entries()).map(([emoji, reactionUsers]) => ({
+        emoji,
+        users: reactionUsers,
+        count: reactionUsers.length,
+      }))
+    : [];
+
+  // Get reply count if it's a parent
+  const replyCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.parentId, messageId))
+    .get();
+
+  return c.json({
+    id: row.id,
+    channel_id: row.channelId,
+    sender_id: row.senderId,
+    sender_name: row.senderName,
+    sender_type: row.senderType,
+    content: row.content,
+    mentions: row.mentions ? JSON.parse(row.mentions as string) : null,
+    parent_id: row.parentId,
+    is_pinned: Boolean(row.isPinned),
+    pinned_at: row.pinnedAt,
+    pinned_by: row.pinnedBy,
+    edited_at: row.editedAt,
+    reactions: reactionsList,
+    reply_count: replyCount?.count ?? 0,
+    created_at: row.createdAt,
+  });
+});
+
 // GET /channels/:channelId/messages/:messageId/thread — get thread summary and replies
 app.get("/:messageId/thread", (c) => {
   const auth = c.get("auth");
