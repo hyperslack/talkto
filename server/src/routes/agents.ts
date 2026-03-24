@@ -90,6 +90,32 @@ app.get("/", async (c) => {
   return c.json(responses);
 });
 
+// GET /agents/counts — online/offline/total counts
+app.get("/counts", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const allAgents = db
+    .select()
+    .from(agents)
+    .where(eq(agents.workspaceId, auth.workspaceId))
+    .all();
+
+  const responses = allAgents.map(agentToResponse);
+  const online = responses.filter((a) => a.status === "online").length;
+  const offline = responses.filter((a) => a.status === "offline").length;
+  const byType = new Map<string, number>();
+  for (const a of responses) {
+    byType.set(a.agent_type, (byType.get(a.agent_type) ?? 0) + 1);
+  }
+
+  return c.json({
+    total: responses.length,
+    online,
+    offline,
+    by_type: Object.fromEntries(byType),
+  });
+});
+
 // GET /agents/health — aggregated health summary
 app.get("/health", (c) => {
   const auth = c.get("auth");
