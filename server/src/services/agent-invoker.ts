@@ -573,6 +573,35 @@ async function promptByProvider(
  * Also handles agent-to-agent chaining: if the response contains @mentions
  * of other agents, those agents are automatically invoked (up to MAX_CHAIN_DEPTH).
  */
+/** Max agent messages per channel per minute */
+const AGENT_RATE_LIMIT = 10;
+const AGENT_RATE_WINDOW_MS = 60_000;
+
+/** In-memory sliding window: key = "agentName:channelId", value = timestamps */
+const agentMessageTimestamps = new Map<string, number[]>();
+
+/**
+ * Check if an agent has exceeded the per-channel rate limit.
+ * Returns true if the agent should be blocked.
+ */
+export function isAgentRateLimited(agentName: string, channelId: string): boolean {
+  const key = `${agentName}:${channelId}`;
+  const now = Date.now();
+  const cutoff = now - AGENT_RATE_WINDOW_MS;
+  const timestamps = (agentMessageTimestamps.get(key) ?? []).filter(t => t > cutoff);
+  agentMessageTimestamps.set(key, timestamps);
+  return timestamps.length >= AGENT_RATE_LIMIT;
+}
+
+function recordAgentMessage(agentName: string, channelId: string): void {
+  const key = `${agentName}:${channelId}`;
+  const now = Date.now();
+  const cutoff = now - AGENT_RATE_WINDOW_MS;
+  const timestamps = (agentMessageTimestamps.get(key) ?? []).filter(t => t > cutoff);
+  timestamps.push(now);
+  agentMessageTimestamps.set(key, timestamps);
+}
+
 function postAgentResponse(
   agentName: string,
   channelId: string,
@@ -581,6 +610,14 @@ function postAgentResponse(
   depth: number = 0,
   channelSessionId: string | null = null
 ): void {
+  // Check rate limit before posting
+  if (isAgentRateLimited(agentName, channelId)) {
+    console.warn(
+      `[INVOKE] Agent '${agentName}' rate-limited in ${channelName} (>${AGENT_RATE_LIMIT} msgs/min)`
+    );
+    return;
+  }
+
   const db = getDb();
 
   // Look up agent's user ID
@@ -647,6 +684,9 @@ function postAgentResponse(
     }),
     workspaceId
   );
+
+  // Record for rate limiting
+  recordAgentMessage(agentName, channelId);
 
   console.log(
     `[INVOKE] Posted response from '${agentName}' to ${channelName} (${content.length} chars, mentions: ${mentionedAgents.length > 0 ? mentionedAgents.join(", ") : "none"})`
