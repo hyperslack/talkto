@@ -556,6 +556,79 @@ app.get("/:channelId/stats", (c) => {
   });
 });
 
+// GET /channels/:channelId/threads — list all threads (messages with replies)
+app.get("/:channelId/threads", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+
+  // Find messages that have replies (are parents)
+  const threads = db
+    .select({
+      parentId: messages.parentId,
+      replyCount: sql<number>`count(*)`.as("reply_count"),
+      lastReplyAt: sql<string>`max(${messages.createdAt})`.as("last_reply_at"),
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.channelId, channelId),
+        sql`${messages.parentId} IS NOT NULL`
+      )
+    )
+    .groupBy(messages.parentId)
+    .orderBy(sql`max(${messages.createdAt}) DESC`)
+    .limit(limit)
+    .all();
+
+  // Get the parent messages
+  const parentIds = threads.map((t) => t.parentId).filter(Boolean) as string[];
+  if (parentIds.length === 0) {
+    return c.json({ threads: [], count: 0 });
+  }
+
+  const parents = db
+    .select({
+      id: messages.id,
+      content: messages.content,
+      senderId: messages.senderId,
+      senderName: sql<string>`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(sql`${messages.id} IN (${sql.join(parentIds.map((id) => sql`${id}`), sql`, `)})`)
+    .all();
+
+  const parentMap = new Map(parents.map((p) => [p.id, p]));
+
+  const result = threads
+    .map((t) => {
+      const parent = parentMap.get(t.parentId!);
+      if (!parent) return null;
+      return {
+        parent_id: parent.id,
+        parent_content: parent.content.slice(0, 200),
+        parent_sender_name: parent.senderName,
+        parent_sender_type: parent.senderType,
+        parent_created_at: parent.createdAt,
+        reply_count: t.replyCount,
+        last_reply_at: t.lastReplyAt,
+      };
+    })
+    .filter(Boolean);
+
+  return c.json({ threads: result, count: result.length });
+});
+
 // GET /channels/:channelId/mentionable
 app.get("/:channelId/mentionable", (c) => {
   const auth = c.get("auth");
