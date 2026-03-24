@@ -133,6 +133,50 @@ app.get("/", (c) => {
   );
 });
 
+// POST /channels/read-all — mark all channels as read in one call
+app.post("/read-all", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  let userId = auth.userId ?? "";
+  if (!userId) {
+    const human = db.select().from(users).where(eq(users.type, "human")).get();
+    if (!human) return c.json({ detail: "No user found" }, 400);
+    userId = human.id;
+  }
+
+  const allChannels = db
+    .select({ id: channels.id })
+    .from(channels)
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .all();
+
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  for (const ch of allChannels) {
+    const existing = db
+      .select()
+      .from(readReceipts)
+      .where(and(eq(readReceipts.userId, userId), eq(readReceipts.channelId, ch.id)))
+      .get();
+
+    if (existing) {
+      db.update(readReceipts)
+        .set({ lastReadAt: now })
+        .where(and(eq(readReceipts.userId, userId), eq(readReceipts.channelId, ch.id)))
+        .run();
+    } else {
+      db.insert(readReceipts)
+        .values({ userId, channelId: ch.id, lastReadAt: now })
+        .run();
+    }
+    updated++;
+  }
+
+  return c.json({ channels_marked: updated, last_read_at: now });
+});
+
 // GET /channels/unread/counts
 // NOTE: Must stay before /:channelId to avoid route conflicts.
 app.get("/unread/counts", (c) => {
