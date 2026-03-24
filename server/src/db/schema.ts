@@ -297,6 +297,7 @@ export const channels = sqliteTable(
     name: text("name").notNull(),
     type: text("type").notNull(), // "general" | "project" | "custom" | "dm"
     topic: text("topic"), // channel topic/description shown in header
+    description: text("description"), // longer channel purpose/description (max 2000 chars)
     category: text("category"), // grouping label, e.g. "Projects", "DMs", "General"
     projectPath: text("project_path"),
     createdBy: text("created_by").notNull(), // user UUID or "system" — NOT a FK

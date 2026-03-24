@@ -229,6 +229,7 @@ function createTables(sqlite: Database) {
       name TEXT NOT NULL,
       type TEXT NOT NULL,
       topic TEXT,
+      description TEXT,
       category TEXT,
       project_path TEXT,
       created_by TEXT NOT NULL,
@@ -412,6 +413,11 @@ function migrateUp(sqlite: Database) {
   // Migration: add is_read_only to channels
   if (!hasColumn("channels", "is_read_only")) {
     sqlite.exec("ALTER TABLE channels ADD COLUMN is_read_only INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Migration: add description to channels
+  if (!hasColumn("channels", "description")) {
+    sqlite.exec("ALTER TABLE channels ADD COLUMN description TEXT");
   }
 }
 
@@ -632,6 +638,7 @@ function migrateCascadeFks(sqlite: Database) {
         name TEXT NOT NULL,
         type TEXT NOT NULL,
         topic TEXT,
+        description TEXT,
         category TEXT,
         project_path TEXT,
         created_by TEXT NOT NULL,
@@ -645,7 +652,7 @@ function migrateCascadeFks(sqlite: Database) {
         UNIQUE(name, workspace_id)
       )`,
       "channels",
-      "id, name, type, topic, category, project_path, created_by, created_at, position, slow_mode_seconds, is_read_only, is_archived, archived_at, workspace_id",
+      "id, name, type, topic, description, category, project_path, created_by, created_at, position, slow_mode_seconds, is_read_only, is_archived, archived_at, workspace_id",
       [
         "CREATE INDEX IF NOT EXISTS idx_channels_name ON channels(name)",
         "CREATE INDEX IF NOT EXISTS idx_channels_workspace ON channels(workspace_id)",

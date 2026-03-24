@@ -19,6 +19,7 @@ import { deleteChannelGraph } from "../services/admin-manager";
 import {
   ChannelCategorySchema,
   ChannelCreateSchema,
+  ChannelDescriptionSchema,
   ChannelRenameSchema,
   ChannelSlowModeSchema,
   ChannelTopicSchema,
@@ -46,6 +47,7 @@ function channelToResponse(
     name: channel.name,
     type: channel.type,
     topic: channel.topic,
+    description: channel.description ?? null,
     position: channel.position ?? 0,
     category: channel.category ?? null,
     slow_mode_seconds: channel.slowModeSeconds ?? 0,
@@ -291,6 +293,30 @@ app.patch("/:channelId/topic", async (c) => {
   const db = getDb();
   db.update(channels)
     .set({ topic: parsed.data.topic || null })
+    .where(eq(channels.id, channel.id))
+    .run();
+
+  const updated = db.select().from(channels).where(eq(channels.id, channel.id)).get()!;
+  return c.json(channelToResponse(updated));
+});
+
+// PATCH /channels/:channelId/description
+app.patch("/:channelId/description", async (c) => {
+  const auth = c.get("auth");
+  const body = await c.req.json();
+  const parsed = ChannelDescriptionSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ detail: parsed.error.message }, 400);
+  }
+
+  const channel = getChannelInWorkspace(c.req.param("channelId"), auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ description: parsed.data.description || null })
     .where(eq(channels.id, channel.id))
     .run();
 

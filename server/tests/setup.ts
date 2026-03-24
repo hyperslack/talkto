@@ -169,6 +169,7 @@ export function createTestDb(): TestDb {
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     topic TEXT,
+    description TEXT,
     category TEXT,
     project_path TEXT,
     created_by TEXT NOT NULL,
