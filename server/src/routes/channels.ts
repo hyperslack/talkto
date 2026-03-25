@@ -745,4 +745,54 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// GET /channels/:channelId/thread-roots — list messages that have replies
+app.get("/:channelId/thread-roots", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+  const db = getDb();
+
+  // Find messages that have at least one reply (parent_id points to them)
+  const rows = db.all(sql`
+    SELECT
+      m.id,
+      m.channel_id,
+      m.sender_id,
+      COALESCE(u.display_name, u.name) AS sender_name,
+      u.type AS sender_type,
+      m.content,
+      m.created_at,
+      COUNT(r.id) AS reply_count,
+      MAX(r.created_at) AS last_reply_at
+    FROM messages m
+    INNER JOIN users u ON m.sender_id = u.id
+    INNER JOIN messages r ON r.parent_id = m.id
+    WHERE m.channel_id = ${channelId}
+    GROUP BY m.id
+    ORDER BY last_reply_at DESC
+    LIMIT ${limit}
+  `);
+
+  return c.json({
+    channel_id: channelId,
+    count: rows.length,
+    threads: rows.map((r: any) => ({
+      id: r.id,
+      channel_id: r.channel_id,
+      sender_id: r.sender_id,
+      sender_name: r.sender_name,
+      sender_type: r.sender_type,
+      content: r.content,
+      created_at: r.created_at,
+      reply_count: r.reply_count,
+      last_reply_at: r.last_reply_at,
+    })),
+  });
+});
+
 export default app;
