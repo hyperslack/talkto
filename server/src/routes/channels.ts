@@ -437,6 +437,47 @@ app.get("/categories/list", (c) => {
   return c.json({ categories });
 });
 
+// GET /channels/recent — channels sorted by most recent message
+app.get("/recent", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+
+  const rows = db.all(sql`
+    SELECT
+      c.id,
+      c.name,
+      c.type,
+      c.topic,
+      c.created_at,
+      c.is_archived,
+      MAX(m.created_at) AS last_message_at,
+      COUNT(m.id) AS message_count
+    FROM channels c
+    LEFT JOIN messages m ON m.channel_id = c.id
+    WHERE c.workspace_id = ${auth.workspaceId}
+      AND c.is_archived = 0
+    GROUP BY c.id
+    HAVING last_message_at IS NOT NULL
+    ORDER BY last_message_at DESC
+    LIMIT ${limit}
+  `);
+
+  return c.json({
+    count: rows.length,
+    channels: rows.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      topic: r.topic,
+      created_at: r.created_at,
+      is_archived: Boolean(r.is_archived),
+      last_message_at: r.last_message_at,
+      message_count: r.message_count,
+    })),
+  });
+});
+
 // GET /channels/:channelId
 app.get("/:channelId", (c) => {
   const auth = c.get("auth");
