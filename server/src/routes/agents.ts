@@ -263,6 +263,57 @@ app.delete("/:agentName", requireAdmin, (c) => {
   return c.json(result);
 });
 
+// GET /agents/:agentName/messages — list messages sent by this agent
+app.get("/:agentName/messages", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const agent = db
+    .select()
+    .from(agents)
+    .where(and(eq(agents.agentName, c.req.param("agentName")), eq(agents.workspaceId, auth.workspaceId)))
+    .get();
+  if (!agent) {
+    return c.json({ detail: "Agent not found" }, 404);
+  }
+
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  const channelFilter = c.req.query("channel_id");
+
+  const conditions = [eq(messages.senderId, agent.id)];
+  if (channelFilter) {
+    conditions.push(eq(messages.channelId, channelFilter));
+  }
+
+  const rows = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      channelName: channels.name,
+      content: messages.content,
+      parentId: messages.parentId,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(...conditions))
+    .orderBy(desc(messages.createdAt))
+    .limit(limit)
+    .all();
+
+  return c.json({
+    agent_name: agent.agentName,
+    count: rows.length,
+    messages: rows.map((r) => ({
+      id: r.id,
+      channel_id: r.channelId,
+      channel_name: r.channelName,
+      content: r.content,
+      parent_id: r.parentId,
+      created_at: r.createdAt,
+    })),
+  });
+});
+
 // POST /agents/:agentName/dm — get or create DM channel
 app.post("/:agentName/dm", (c) => {
   const auth = c.get("auth");
