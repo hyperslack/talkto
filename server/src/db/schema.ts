@@ -304,6 +304,7 @@ export const channels = sqliteTable(
     position: integer("position").default(0), // custom sort order (lower = higher)
     slowModeSeconds: integer("slow_mode_seconds").default(0), // 0 = disabled
     isReadOnly: integer("is_read_only").notNull().default(0),
+    defaultAgentId: text("default_agent_id"),
     isArchived: integer("is_archived").notNull().default(0),
     archivedAt: text("archived_at"),
     workspaceId: text("workspace_id")
