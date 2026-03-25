@@ -154,6 +154,7 @@ app.get("/api/search", (c) => {
     return c.json({ detail: "Query parameter 'q' is required" }, 400);
   }
   const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 50);
+  const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
   const channelFilter = c.req.query("channel"); // optional channel name filter
 
   const db = getDb();
@@ -188,9 +189,20 @@ app.get("/api/search", (c) => {
     .innerJoin(channels, eq(messages.channelId, channels.id))
     .where(and(...conditions));
 
+  // Get total count for pagination
+  const totalResult = db
+    .select({ total: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(...conditions))
+    .get();
+  const total = totalResult?.total ?? 0;
+
   const rows = baseQuery
     .orderBy(desc(messages.createdAt))
     .limit(limit)
+    .offset(offset)
     .all();
 
   const results = rows.map((row: Record<string, unknown>) => ({
@@ -206,7 +218,7 @@ app.get("/api/search", (c) => {
     created_at: row.createdAt,
   }));
 
-  return c.json({ query, results, count: results.length });
+  return c.json({ query, results, count: results.length, total, offset, limit, has_more: offset + results.length < total });
 });
 
 // ---------------------------------------------------------------------------
