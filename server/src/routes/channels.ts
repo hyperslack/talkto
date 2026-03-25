@@ -745,4 +745,46 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// GET /channels/:channelId/first-message — get the first message in a channel
+app.get("/:channelId/first-message", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const db = getDb();
+  const row = db
+    .select({
+      id: messages.id,
+      channelId: messages.channelId,
+      senderId: messages.senderId,
+      senderName: sql`coalesce(${users.displayName}, ${users.name})`,
+      senderType: users.type,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.channelId, channelId))
+    .orderBy(asc(messages.createdAt))
+    .limit(1)
+    .get();
+
+  if (!row) {
+    return c.json({ detail: "No messages in this channel" }, 404);
+  }
+
+  return c.json({
+    id: row.id,
+    channel_id: row.channelId,
+    sender_id: row.senderId,
+    sender_name: row.senderName,
+    sender_type: row.senderType,
+    content: row.content,
+    created_at: row.createdAt,
+  });
+});
+
 export default app;
