@@ -745,4 +745,45 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// GET /channels/:channelId/hourly-activity — message distribution by hour of day
+app.get("/:channelId/hourly-activity", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const days = Math.min(parseInt(c.req.query("days") ?? "30", 10) || 30, 365);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const db = getDb();
+  const rows = db
+    .select({
+      hour: sql<number>`cast(strftime('%H', ${messages.createdAt}) as integer)`,
+      count: sql<number>`count(*)`,
+    })
+    .from(messages)
+    .where(and(eq(messages.channelId, channelId), gt(messages.createdAt, since)))
+    .groupBy(sql`strftime('%H', ${messages.createdAt})`)
+    .all();
+
+  // Fill all 24 hours
+  const hourMap = new Map(rows.map((r) => [r.hour, r.count]));
+  const hours = Array.from({ length: 24 }, (_, i) => ({
+    hour: i,
+    message_count: hourMap.get(i) ?? 0,
+  }));
+
+  const peakHour = hours.reduce((a, b) => (b.message_count > a.message_count ? b : a));
+
+  return c.json({
+    channel_id: channelId,
+    days,
+    hours,
+    peak_hour: peakHour.hour,
+    total_messages: hours.reduce((s, h) => s + h.message_count, 0),
+  });
+});
+
 export default app;
