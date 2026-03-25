@@ -127,6 +127,42 @@ app.get("/health", (c) => {
   });
 });
 
+// GET /agents/leaderboard — rank agents by message count
+app.get("/leaderboard", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+
+  const rows = db
+    .select({
+      agentName: agents.agentName,
+      agentType: agents.agentType,
+      agentId: agents.id,
+      messageCount: sql<number>`count(${messages.id})`,
+      lastMessageAt: sql<string>`max(${messages.createdAt})`,
+      channelCount: sql<number>`count(DISTINCT ${messages.channelId})`,
+    })
+    .from(agents)
+    .leftJoin(messages, eq(agents.id, messages.senderId))
+    .where(eq(agents.workspaceId, auth.workspaceId))
+    .groupBy(agents.id)
+    .orderBy(sql`count(${messages.id}) DESC`)
+    .limit(limit)
+    .all();
+
+  return c.json({
+    count: rows.length,
+    leaderboard: rows.map((r, i) => ({
+      rank: i + 1,
+      agent_name: r.agentName,
+      agent_type: r.agentType,
+      message_count: r.messageCount,
+      channel_count: r.channelCount,
+      last_message_at: r.lastMessageAt,
+    })),
+  });
+});
+
 // GET /agents/:agentName/stats — activity stats for an agent
 app.get("/:agentName/stats", (c) => {
   const auth = c.get("auth");
