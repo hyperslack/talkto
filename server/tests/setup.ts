@@ -176,6 +176,7 @@ export function createTestDb(): TestDb {
     position INTEGER DEFAULT 0,
     slow_mode_seconds INTEGER DEFAULT 0,
     is_read_only INTEGER NOT NULL DEFAULT 0,
+    default_agent_id TEXT,
     is_archived INTEGER NOT NULL DEFAULT 0,
     archived_at TEXT,
     workspace_id TEXT NOT NULL REFERENCES workspaces(id),

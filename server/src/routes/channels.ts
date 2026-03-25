@@ -745,4 +745,78 @@ app.post("/:channelId/read", async (c) => {
   return c.json({ channel_id: channelId, user_id: userId, last_read_at: now });
 });
 
+// PATCH /channels/:channelId/default-agent — set or clear default agent for a channel
+app.patch("/:channelId/default-agent", async (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  if (!body) return c.json({ detail: "Invalid JSON body" }, 400);
+
+  const agentId = body.agent_id ?? null;
+
+  // If setting an agent, validate it exists
+  if (agentId) {
+    const db = getDb();
+    const agent = db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.workspaceId, auth.workspaceId)))
+      .get();
+    if (!agent) {
+      return c.json({ detail: "Agent not found" }, 404);
+    }
+  }
+
+  const db = getDb();
+  db.update(channels)
+    .set({ defaultAgentId: agentId })
+    .where(eq(channels.id, channelId))
+    .run();
+
+  return c.json({
+    channel_id: channelId,
+    default_agent_id: agentId,
+  });
+});
+
+// GET /channels/:channelId/default-agent — get default agent for a channel
+app.get("/:channelId/default-agent", (c) => {
+  const auth = c.get("auth");
+  const channelId = c.req.param("channelId");
+  const channel = getChannelInWorkspace(channelId, auth.workspaceId);
+  if (!channel) {
+    return c.json({ detail: "Channel not found" }, 404);
+  }
+
+  const agentId = channel.defaultAgentId;
+  let agentInfo = null;
+
+  if (agentId) {
+    const db = getDb();
+    const agent = db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .get();
+    if (agent) {
+      agentInfo = {
+        id: agent.id,
+        agent_name: agent.agentName,
+        agent_type: agent.agentType,
+      };
+    }
+  }
+
+  return c.json({
+    channel_id: channelId,
+    default_agent_id: agentId,
+    agent: agentInfo,
+  });
+});
+
 export default app;
