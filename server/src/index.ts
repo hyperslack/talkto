@@ -115,6 +115,75 @@ app.route("/api/webhooks", webhooksRoutes);
 // Messages are nested under channels: /api/channels/:channelId/messages
 app.route("/api/channels/:channelId/messages", messagesRoutes);
 
+// Workspace summary dashboard
+app.get("/api/workspace/summary", (c) => {
+  const auth = c.get("auth");
+  const db = getDb();
+
+  const totalChannels = db
+    .select({ count: sql<number>`count(*)` })
+    .from(channels)
+    .where(and(eq(channels.workspaceId, auth.workspaceId), eq(channels.isArchived, 0)))
+    .get();
+
+  const totalMessages = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .get();
+
+  const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const messagesLast24h = db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(eq(channels.workspaceId, auth.workspaceId), sql`${messages.createdAt} > ${last24h}`))
+    .get();
+
+  const totalAgents = db
+    .select({ count: sql<number>`count(*)` })
+    .from(agents)
+    .where(eq(agents.workspaceId, auth.workspaceId))
+    .get();
+
+  const totalMembers = db
+    .select({ count: sql<number>`count(*)` })
+    .from(users)
+    .where(eq(users.type, "human"))
+    .get();
+
+  const activeSenders24h = db
+    .select({ count: sql<number>`count(DISTINCT ${messages.senderId})` })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(and(eq(channels.workspaceId, auth.workspaceId), sql`${messages.createdAt} > ${last24h}`))
+    .get();
+
+  const mostActiveChannel = db
+    .select({
+      name: channels.name,
+      count: sql<number>`count(${messages.id})`,
+    })
+    .from(messages)
+    .innerJoin(channels, eq(messages.channelId, channels.id))
+    .where(eq(channels.workspaceId, auth.workspaceId))
+    .groupBy(channels.id)
+    .orderBy(sql`count(${messages.id}) DESC`)
+    .limit(1)
+    .get();
+
+  return c.json({
+    total_channels: totalChannels?.count ?? 0,
+    total_messages: totalMessages?.count ?? 0,
+    messages_last_24h: messagesLast24h?.count ?? 0,
+    total_agents: totalAgents?.count ?? 0,
+    total_members: totalMembers?.count ?? 0,
+    active_senders_last_24h: activeSenders24h?.count ?? 0,
+    most_active_channel: mostActiveChannel?.name ?? null,
+  });
+});
+
 // Daily message activity — returns message counts grouped by date
 app.get("/api/activity/daily", (c) => {
   const auth = c.get("auth");
