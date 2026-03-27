@@ -1,7 +1,7 @@
 /** Message input with @-mention autocomplete. */
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useSendMessage, useAgents, useMe } from "@/hooks/use-queries";
-import { getMentionQuery } from "@/lib/message-utils";
+import { getMentionQuery, getCharCountInfo, MAX_MESSAGE_LENGTH } from "@/lib/message-utils";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -88,7 +88,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
   // setState in effect is intentional — we need to reset the dropdown index
   // when the filter results change, which is driven by user input.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setSelectedIdx(0);
   }, [filtered.length, mentionQuery]);
 
@@ -294,7 +294,7 @@ export function MessageInput({ channelId }: MessageInputProps) {
               : "text-muted-foreground hover:text-foreground disabled:opacity-30",
           )}
           onClick={handleSubmit}
-          disabled={!content.trim() || sendMessage.isPending}
+          disabled={!content.trim() || sendMessage.isPending || content.length > MAX_MESSAGE_LENGTH}
         >
           {sendMessage.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -303,6 +303,20 @@ export function MessageInput({ channelId }: MessageInputProps) {
           )}
         </Button>
       </div>
+
+      {/* Character counter */}
+      {(() => {
+        const info = getCharCountInfo(content);
+        if (!info.shouldShow) return null;
+        return (
+          <div className={cn(
+            "mt-1 text-right text-[11px] tabular-nums",
+            info.overLimit ? "text-destructive font-medium" : "text-muted-foreground/50",
+          )}>
+            {info.remaining.toLocaleString()} characters remaining
+          </div>
+        );
+      })()}
 
       {sendMessage.isError && (
         <button
