@@ -160,6 +160,27 @@ export function formatRelativeTime(iso: string): string {
   }
 }
 
+/** Maximum allowed message length. */
+export const MAX_MESSAGE_LENGTH = 4000;
+
+/**
+ * Get character count info for display in the composer.
+ * Returns remaining chars, whether over limit, and whether to show the counter.
+ * Counter becomes visible when within 200 chars of the limit.
+ */
+export function getCharCountInfo(content: string): {
+  length: number;
+  remaining: number;
+  overLimit: boolean;
+  shouldShow: boolean;
+} {
+  const length = content.length;
+  const remaining = MAX_MESSAGE_LENGTH - length;
+  const overLimit = remaining < 0;
+  const shouldShow = remaining <= 200;
+  return { length, remaining, overLimit, shouldShow };
+}
+
 /** Extract the @-mention query being typed at the cursor position. */
 export function getMentionQuery(
   text: string,
