@@ -105,15 +105,19 @@ app.get("/health", (c) => {
   let ghost = 0;
 
   const agentStatuses = allAgents.map((a) => {
-    const isGhost = ghostCache.get(a.id) ?? false;
+    const isInvocable = isAgentInvocable(a);
+    const isGhost = a.agentType === "system" ? false : !isInvocable;
+    const effectiveStatus =
+      a.agentType === "system" ? a.status : isInvocable ? "online" : "offline";
+
     if (isGhost) ghost++;
-    else if (a.status === "online") online++;
+    else if (effectiveStatus === "online") online++;
     else offline++;
 
     return {
       agent_name: a.agentName,
       agent_type: a.agentType,
-      status: a.status,
+      status: effectiveStatus,
       is_ghost: isGhost,
     };
   });

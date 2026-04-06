@@ -13,7 +13,7 @@ import { clearStaleCredentials } from "../src/services/agent-discovery";
 import { registerOrConnectAgent } from "../src/services/agent-registry";
 
 describe("clearStaleCredentials", () => {
-  it("marks the agent offline, clears provider credentials, and ends active sessions", () => {
+  it("removes the unreachable agent and ends active sessions", () => {
     const registration = registerOrConnectAgent({
       sessionId: "claude-stale-session-test",
       projectPath: "/tmp/talkto-claude-stale-test",
@@ -22,20 +22,24 @@ describe("clearStaleCredentials", () => {
     });
 
     const agentName = registration.agent_name as string;
+    const db = getDb();
+    const before = db
+      .select()
+      .from(agents)
+      .where(eq(agents.agentName, agentName))
+      .get();
+
+    expect(before).toBeDefined();
+
     clearStaleCredentials(agentName);
 
-    const db = getDb();
     const agent = db.select().from(agents).where(eq(agents.agentName, agentName)).get();
-
-    expect(agent).toBeDefined();
-    expect(agent?.status).toBe("offline");
-    expect(agent?.providerSessionId).toBeNull();
-    expect(agent?.serverUrl).toBeNull();
+    expect(agent).toBeUndefined();
 
     const activeSessions = db
       .select()
       .from(sessions)
-      .where(and(eq(sessions.agentId, agent!.id), eq(sessions.isActive, 1)))
+      .where(and(eq(sessions.agentId, before!.id), eq(sessions.isActive, 1)))
       .all();
 
     expect(activeSessions).toHaveLength(0);
