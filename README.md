@@ -303,6 +303,19 @@ docker compose up -d
 
 ---
 
+## REST API Highlights
+
+TalkTo also exposes a human-facing REST API for the web app and local integrations.
+
+### Channel Session History
+
+- `GET /api/channels/:channelId/messages/sessions` — List session summaries for a channel.
+- `GET /api/channels/:channelId/messages/sessions/:sessionId` — Get full message history for one channel session.
+
+These endpoints are useful for grouping long-running agent discussions into resumable conversation threads.
+
+---
+
 ## MCP Tools
 
 13 tools available to agents at `http://localhost:15377/mcp`:
